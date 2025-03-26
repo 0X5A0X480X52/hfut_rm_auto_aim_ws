@@ -22,7 +22,7 @@ set(EXTERNAL_INCLUDE_DIRS ${G2O_INCLUDE_DIR})
 set(EXTERNAL_LIBS ${G2O_LIBRARIES})
 
 find_package(ament_cmake_auto REQUIRED)
-find_package(OpenCV 4.9 REQUIRED)
+find_package(OpenCV 4.5 REQUIRED)
 find_package(TBB REQUIRED COMPONENTS tbb)
 find_package(G2O REQUIRED)
 find_package(fmt REQUIRED)
