@@ -1,0 +1,27 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${default}",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/opt/ros/foxy/include/**",
+        "/home/amatrix2005/UserFiles/Robomaster/hfut_rm_auto_aim_ws/src/basic_models/include/**",
+        "/home/amatrix2005/UserFiles/Robomaster/hfut_rm_auto_aim_ws/src/combined_models/include/**",
+        "/home/amatrix2005/UserFiles/Robomaster/hfut_rm_auto_aim_ws/src/models/include/**",
+        "/home/amatrix2005/UserFiles/Robomaster/hfut_rm_auto_aim_ws/src/rm_auto_aim/armor_detector/include/**",
+        "/home/amatrix2005/UserFiles/Robomaster/hfut_rm_auto_aim_ws/src/rm_auto_aim/armor_solver/include/**",
+        "/home/amatrix2005/UserFiles/Robomaster/hfut_rm_auto_aim_ws/src/rm_hardware_driver/rm_serial_driver/include/**",
+        "/home/amatrix2005/UserFiles/Robomaster/hfut_rm_auto_aim_ws/src/rm_utils/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ROS",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++14"
+    }
+  ],
+  "version": 4
+}
