@@ -99,7 +99,28 @@
     ```
     source /opt/ros/humble/setup.bash
     ```
-    
+
+## 使用 Docker 初始化容器
+
+可以使用类似以下命令初始化 docker 容器：
+``` bash
+docker run -it --privileged -v /dev/bus/usb/:/dev/bus/usb/ --device=/dev/bus/usb/ --network host --name <new comtainer name> <image name>
+```
+
+## 使用 foxglove_bridge 进行可视化调试
+
+下载安装 foxglove_bridge：
+
+```
+sudo apt install ros-$ROS_DISTRO-foxglove-bridge
+```
+
+启动  foxglove_bridge：
+```
+ros2 launch foxglove_bridge foxglove_bridge_launch.xml
+```
+
+启动后可使用 foxglove_bridge 相应接收终端进行可视化调试
 
 ## 参考项目：
 - [中南 FYT2024_vision 开源](https://github.com/CSU-FYT-Vision/FYT2024_vision.git)

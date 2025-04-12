@@ -11,7 +11,7 @@ namespace: ''
 # true: 读取视频 false: 读取相机
 video_play: false
 # true: 虚拟下位机 false: 实车 
-virtual_serial: false
+virtual_serial: true
 # true: 英雄解算 false: 传统解算
 hero_solver: false
 # true: 开启打符 false：关闭打符
