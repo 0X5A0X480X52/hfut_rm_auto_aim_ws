@@ -16,6 +16,7 @@
 
 #include "armor_solver/armor_solver.hpp"
 // std
+#include <Eigen/SVD>
 #include <cmath>
 #include <cstddef>
 #include <stdexcept>
@@ -54,6 +55,8 @@ Solver::Solver(std::weak_ptr<rclcpp::Node> n) : node_(n) {
   transfer_thresh_ = 5;
 
   node.reset();
+
+  _armorPredictedSecquence = std::make_shared<std::vector<std::vector<Eigen::Vector3d>>>();
 }
 
 rm_interfaces::msg::GimbalCmd Solver::solve(const rm_interfaces::msg::Target &target,
@@ -106,6 +109,7 @@ rm_interfaces::msg::GimbalCmd Solver::solve(const rm_interfaces::msg::Target &ta
                                                                    target.d_zc,
                                                                    target.d_za,
                                                                    target.armors_num);
+  _armorPositionSets = armor_positions;
 
   int idx =
     selectBestArmor(armor_positions, target_position, target_yaw, target.v_yaw, target.armors_num);
@@ -249,6 +253,8 @@ rm_interfaces::msg::GimbalCmd Solver::solve_withArmorFliter(
                                       target.d_za,
                                       target.id,
                                       target.armors_num);
+
+  _armorPositionSets = armor_positions;
 
   // 通过 ArmorFliter 生成一系列装甲板的位置预测值，在当前值与预测值之间选择云台移动最小的作为打击目标
   std::pair<Eigen::Vector3d, Eigen::Vector3d> selected_pair = selectBestArmor_withArmorFliter(
@@ -432,7 +438,7 @@ std::vector<Eigen::Vector3d> Solver::getArmorPositions_withArmorFliter(
   std::vector<Eigen::Vector3d> armor_positions_predicted_by_measurement =
     armorFliter->update(armor_positions, id, armors_num);
 
-  return armor_positions_predicted_by_measurement ;
+  return armor_positions_predicted_by_measurement;
 }
 
 int Solver::selectBestArmor(const std::vector<Eigen::Vector3d> &armor_positions,
@@ -446,12 +452,12 @@ int Solver::selectBestArmor(const std::vector<Eigen::Vector3d> &armor_positions,
   double beta = target_yaw;
 
   // clang-format off
-  Eigen::Matrix2d R_odom2center;
-  Eigen::Matrix2d R_odom2armor;
-  R_odom2center << std::cos(alpha), std::sin(alpha), 
-                  -std::sin(alpha), std::cos(alpha);
-  R_odom2armor << std::cos(beta), std::sin(beta), 
-                 -std::sin(beta), std::cos(beta);
+Eigen::Matrix2d R_odom2center;
+Eigen::Matrix2d R_odom2armor;
+R_odom2center << std::cos(alpha), std::sin(alpha), 
+-std::sin(alpha), std::cos(alpha);
+R_odom2armor << std::cos(beta), std::sin(beta), 
+-std::sin(beta), std::cos(beta);
   // clang-format on
   Eigen::Matrix2d R_center2armor = R_odom2center.transpose() * R_odom2armor;
 
@@ -476,6 +482,7 @@ int Solver::selectBestArmor(const std::vector<Eigen::Vector3d> &armor_positions,
   return selected_id;
 }
 
+#ifdef Flag_SelectBestArmor_v1
 // 使用 ArmorFliter 对装甲板可能运行轨迹进行预测，并在预测位置及当前位置中选择云台移动最小的作为最终选板
 std::pair<Eigen::Vector3d, Eigen::Vector3d> Solver::selectBestArmor_withArmorFliter(
   const rm_interfaces::msg::Target &target,
@@ -526,7 +533,7 @@ R_odom2armor << std::cos(beta), std::sin(beta),
   /* armor_positions 是装甲板的当前位置，去除其中距离最远的一个，在其中选择云台移动最小的作为候选方案之一 */
 
   std::vector<Eigen::Vector3d> armor_current_positions =
-      armorFliter->predict(armor_positions, armor_current_positions_predicted_iter);
+    armorFliter->predict(armor_positions, armor_current_positions_predicted_iter);
 
   // 基于实际位置选板
   double maxDist = 0;
@@ -696,6 +703,392 @@ R_odom2armor << std::cos(beta), std::sin(beta),
 
   return output_pair;
 }
+
+#endif  // Flag_SelectBestArmor_v1
+
+#ifdef Flag_SelectBestArmor_v2
+// 在原版 getArmorPositions 的基础上在最后添加 ArmorFliter 进行修正
+std::pair<Eigen::Vector3d, Eigen::Vector3d> Solver::selectBestArmor_withArmorFliter(
+  const rm_interfaces::msg::Target &target,
+  const std::vector<Eigen::Vector3d> &armor_positions,
+  const Eigen::Vector3d &target_center,
+  const double target_yaw,
+  const double target_v_yaw,
+  const std::size_t armors_num) const noexcept {
+  _armorPredictedSecquence->clear();
+
+  // 原始选板逻辑
+  const auto [selected_id, decision_angle] =
+    calculateBaseSelection(target_center, target_yaw, target_v_yaw, armors_num);
+
+  // 处理当前装甲板
+  auto [current_diff, current_id, current_distance] = processArmorCandidates(
+    armor_positions,
+    armorFliter->predict(armor_positions, armor_current_positions_predicted_iter),
+    armors_num);
+
+  // 处理预测装甲板
+  auto [predicted_diff, predicted_id, predicted_distance] =
+    processPredictedArmors(armor_positions, armors_num);
+
+  // 最终决策逻辑
+  return makeFinalDecision(
+    armor_positions, selected_id, current_id, current_diff, predicted_id, predicted_diff);
+}
+
+// 基于原始方案的选板逻辑
+std::pair<int, double> Solver::calculateBaseSelection(const Eigen::Vector3d &target_center,
+                                                      double target_yaw,
+                                                      double target_v_yaw,
+                                                      std::size_t armors_num) const {
+  // Angle between the car's center and the X-axis
+  double alpha = std::atan2(target_center.y(), target_center.x());
+  // Angle between the front of observed armor and the X-axis
+  double beta = target_yaw;
+
+  // clang-format off
+  Eigen::Matrix2d R_odom2center;
+  Eigen::Matrix2d R_odom2armor;
+  R_odom2center << std::cos(alpha), std::sin(alpha), 
+  -std::sin(alpha), std::cos(alpha);
+  R_odom2armor << std::cos(beta), std::sin(beta), 
+  -std::sin(beta), std::cos(beta);
+  // clang-format on
+  Eigen::Matrix2d R_center2armor = R_odom2center.transpose() * R_odom2armor;
+
+  // Equal to (alpha - beta) in most cases
+  double decision_angle = -std::asin(R_center2armor(0, 1));
+
+  // Angle thresh of the armor jump
+  double theta = (target_v_yaw > 0 ? side_angle_ : -side_angle_) / 180.0 * M_PI;
+
+  // Avoid the frequent switch between two armor
+  if (std::abs(target_v_yaw) < min_switching_v_yaw_) {
+    theta = 0;
+  }
+
+  double temp_angle = decision_angle + M_PI / armors_num - theta;
+
+  if (temp_angle < 0) {
+    temp_angle += 2 * M_PI;
+  }
+
+  int selected_id = static_cast<int>(temp_angle / (2 * M_PI / armors_num));
+  return {selected_id, decision_angle};
+}
+
+// 对于装甲板当前位置选择云台移动最小的作为候选方案之一
+Solver::SelectionResult Solver::processArmorCandidates(const std::vector<Eigen::Vector3d> &original,
+                                                       const std::vector<Eigen::Vector3d> &filtered,
+                                                       std::size_t armors_num) const {
+  auto valid_positions = filterArmor(filtered, armors_num);
+  _armorPredictedSecquence->push_back(original);
+
+  return evaluateCandidates(original, valid_positions);
+}
+
+// 对于预测装甲板位置选择云台移动最小的作为候选方案之一
+Solver::SelectionResult Solver::processPredictedArmors(const std::vector<Eigen::Vector3d> &original,
+                                                       std::size_t armors_num) const {
+  std::vector<Eigen::Vector3d> all_predicted;
+  std::vector<Eigen::Vector3d> all_predicted_flitered;
+  for (int iter : armor_predicted_iter_list) {
+    auto predicted = armorFliter->predict(original, iter);
+    auto valid_positions = filterArmor(predicted, armors_num);
+    all_predicted.insert(all_predicted.end(), valid_positions.begin(), valid_positions.end());
+
+    _armorPredictedSecquence->push_back(valid_positions);
+  }
+
+  return evaluateCandidates(original, all_predicted);
+}
+
+// 判断是否需要更新选板
+bool Solver::shouldUpdateSelection(double current_diff,
+                                   double current_min_diff,
+                                   double current_distance,
+                                   double min_distance) const {
+  // 情况1：差异在阈值范围内且距离更近
+  if (std::abs(current_diff - current_min_diff) < diff_threshold_to_use_minDist) {
+    return current_distance < min_distance;
+  }
+  // 情况2：差异明显更小
+  else {
+    return current_diff < current_min_diff;
+  }
+}
+
+// 在原始装甲板位置中找到与预测位置最接近的装甲板索引
+int Solver::findOriginalIndex(const std::vector<Eigen::Vector3d> &original,
+                              const Eigen::Vector3d &predicted,
+                              double position_tolerance) const {
+  for (size_t i = 0; i < original.size(); ++i) {
+    if ((original[i] - predicted).norm() < position_tolerance) {
+      return static_cast<int>(i);
+    }
+  }
+
+  // 容错机制：若未找到则返回第一个
+  FYT_WARN("armor_solver", "Failed to map predicted position to original index");
+  return 0;
+}
+
+#endif  // Flag_SelectBestArmor_v2
+
+// 对得到的装甲板位置进行过滤
+// 输入应为某一时刻的一组装甲板位置
+#if defined(Flag_ARMOR_FLITER_v1) && defined(Flag_SelectBestArmor_v2)
+std::vector<Eigen::Vector3d> Solver::filterArmor(const std::vector<Eigen::Vector3d> &positions,
+                                                 std::size_t armors_num) const {
+  int maxDist_id = -1;
+  double maxDist = 0;
+  for (std::size_t i = 0; i < positions.size(); ++i) {
+    if (double dist = positions[i].head(2).norm(); dist > maxDist) {
+      maxDist = dist;
+      maxDist_id = i;
+    }
+  }
+
+  std::vector<Eigen::Vector3d> filtered;
+  for (std::size_t i = 0; i < positions.size(); ++i) {
+    if (i != static_cast<std::size_t>(maxDist_id)) {
+      filtered.push_back(positions[i]);
+    }
+  }
+  return filtered;
+}
+#endif  // Flag_ARMOR_FLITER_v1
+
+#if defined(Flag_ARMOR_FLITER_v2) && defined(Flag_SelectBestArmor_v2)
+std::vector<Eigen::Vector3d> Solver::filterArmor(const std::vector<Eigen::Vector3d> &positions,
+                                                 std::size_t armors_num) const {
+  // 1. 计算旋转中心 ----------------------------------------------------------
+  Eigen::Vector3d O = Eigen::Vector3d::Zero();
+  for (const auto &pos : positions) {
+    O += pos;
+  }
+  O /= positions.size();
+
+  // 2. 观测参数设置 ----------------------------------------------------------
+  const Eigen::Vector3d A = Eigen::Vector3d::Zero();  // 观测者位置（原点）
+  const Eigen::Vector3d OA = O - A;                   // 观测方向向量
+  const double angle_threshold = 45.0;                // 示例阈值45度（可配置为类成员）
+
+  // 3. 夹角计算与过滤 --------------------------------------------------------
+  double max_violation_angle = 0.0;  // 最大违规角度
+  std::vector<Eigen::Vector3d> filtered;
+
+  for (size_t i = 0; i < positions.size(); ++i) {
+    const Eigen::Vector3d Z = positions[i];
+    const Eigen::Vector3d OZ = O - Z;
+
+    // 处理零向量特殊情况
+    if (OA.norm() < 1e-6 || OZ.norm() < 1e-6) {
+      filtered.push_back(Z);
+      continue;
+    }
+
+    // 计算锐角夹角（0~90度）
+    const double cos_theta = OA.normalized().dot(OZ.normalized());
+    const double theta = std::acos(cos_theta) * 180.0 / M_PI;
+
+    // 决策逻辑
+    if (theta <= angle_threshold) {
+      filtered.push_back(Z);
+    } else if (theta > max_violation_angle) {
+      max_violation_angle = theta;
+    }
+  }
+
+  // 4. 返回过滤结果 ----------------------------------------------------------
+  return filtered;
+}
+#endif  // Flag_ARMOR_FLITER_v2
+
+#if defined(Flag_ARMOR_FLITER_v3) && defined(Flag_SelectBestArmor_v2)
+std::vector<Eigen::Vector3d> Solver::filterArmor(const std::vector<Eigen::Vector3d> &positions,
+                                                 std::size_t armors_num) const {
+  // ================== 1. 椭圆拟合旋转中心 ==================
+  Eigen::Vector3d O = Eigen::Vector3d::Zero();
+
+  // 仅在有效点数足够时进行椭圆拟合
+  if (positions.size() >= 5) {  // 椭圆拟合至少需要5个点
+    // 构造系数矩阵
+    Eigen::MatrixXd D(positions.size(), 6);
+
+    // 提取XY坐标（假设水平面旋转）
+    std::vector<Eigen::Vector2d> points;
+    for (const auto &p : positions) {
+      points.emplace_back(p.x(), p.y());
+    }
+
+    // 构建椭圆方程 Ax² + Bxy + Cy² + Dx + Ey + F = 0 的系数矩阵
+    for (size_t i = 0; i < points.size(); ++i) {
+      const double x = points[i].x();
+      const double y = points[i].y();
+      D.row(i) << x * x, x * y, y * y, x, y, 1;
+    }
+
+    // 使用SVD求解最小二乘解
+    Eigen::JacobiSVD<Eigen::MatrixXd> svd(D, Eigen::ComputeFullV);
+    Eigen::VectorXd coeffs = svd.matrixV().rightCols<1>();
+
+    // 解析椭圆参数
+    const double A = coeffs[0], B = coeffs[1], C = coeffs[2];
+    const double Dc = coeffs[3], Ec = coeffs[4];
+    // const double F = coeffs[5]; // F不需要用于计算中心
+
+    // 计算椭圆中心 (h,k)
+    const double denominator = B * B - 4 * A * C;
+    if (std::abs(denominator) > 1e-6) {  // 确保非退化椭圆
+      const double h = (2 * C * Dc - B * Ec) / denominator;
+      const double k = (2 * A * Ec - B * Dc) / denominator;
+      O << h, k, 0.0;  // Z坐标为0（水平面假设）
+    } else {
+      // 退化为圆的情况，使用几何中心
+      O = positions[0];
+      for (size_t i = 1; i < positions.size(); ++i) O += positions[i];
+      O /= positions.size();
+    }
+  } else {  // 点数不足时使用传统方法
+    for (const auto &p : positions) O += p;
+    O /= positions.size();
+  }
+
+  // ================== 2. 观测参数设置 ==================
+  // 2. 观测参数设置 ----------------------------------------------------------
+  const Eigen::Vector3d A = Eigen::Vector3d::Zero();  // 观测者位置（原点）
+  const Eigen::Vector3d OA = O - A;                   // 观测方向向量
+  const double angle_threshold = 45.0;                // 示例阈值45度（可配置为类成员）
+
+  // 3. 夹角计算与过滤 --------------------------------------------------------
+  double max_violation_angle = 0.0;  // 最大违规角度
+  std::vector<Eigen::Vector3d> filtered;
+
+  for (size_t i = 0; i < positions.size(); ++i) {
+    const Eigen::Vector3d Z = positions[i];
+    const Eigen::Vector3d OZ = Z - O;
+
+    // 处理零向量特殊情况
+    if (OA.norm() < 1e-6 || OZ.norm() < 1e-6) {
+      filtered.push_back(Z);
+      continue;
+    }
+
+    // 计算锐角夹角（0~90度）
+    const double cos_theta = OA.normalized().dot(OZ.normalized());
+    const double theta = std::acos(std::abs(cos_theta)) * 180.0 / M_PI;
+
+    // 决策逻辑
+    if (theta <= angle_threshold) {
+      filtered.push_back(Z);
+    } else if (theta > max_violation_angle) {
+      max_violation_angle = theta;
+    }
+  }
+  // 4. 返回过滤结果 ----------------------------------------------------------
+
+  return filtered;
+}
+#endif  // Flag_ARMOR_FLITER_v3
+
+#ifdef Flag_SelectBestArmor_v2
+
+// 评估候选装甲板
+Solver::SelectionResult Solver::evaluateCandidates(
+  const std::vector<Eigen::Vector3d> &original,
+  const std::vector<Eigen::Vector3d> &candidates) const {
+  double min_diff = 1000;
+  double min_distance = 10000;
+  int best_index = 0;
+
+  for (std::size_t i = 0; i < candidates.size(); ++i) {
+    auto [diff, distance] = calculateMovementDiff(candidates[i]);
+
+    if (shouldUpdateSelection(diff, min_diff, distance, min_distance)) {
+      min_diff = diff;
+      min_distance = distance;
+      best_index = findOriginalIndex(original, candidates[i], position_tolerance);
+    }
+  }
+  return {min_diff, best_index, min_distance};
+}
+
+// 计算云台移动代价
+std::pair<double, double> Solver::calculateMovementDiff(const Eigen::Vector3d &position) const {
+  // 1. 计算基础角度
+  double yaw, pitch;
+  calcYawAndPitch(position, rpy_, yaw, pitch);
+
+  // 2. 获取手动补偿量（假设返回值为角度值）
+  const auto angle_offset =
+    manual_compensator_->angleHardCorrect(position.head(2).norm(),  // 水平距离
+                                          position.z()              // 垂直高度
+    );
+
+  // 3. 转换为弧度补偿值
+  const double pitch_offset = angle_offset[0] * M_PI / 180.0;
+  const double yaw_offset = angle_offset[1] * M_PI / 180.0;
+
+  // 4. 计算补偿后指令角度
+  const double cmd_pitch = pitch + pitch_offset;
+  const double cmd_yaw = angles::normalize_angle(yaw + yaw_offset);
+
+  // 5. 计算与当前云台角度的差值
+  const double yaw_diff = std::abs(cmd_yaw - (-rpy_[2]));  // 注意符号处理
+  const double pitch_diff = std::abs(cmd_pitch - rpy_[1]);
+
+  // 6. 计算综合移动代价（平方和为非线性权重）
+  const double movement_cost = yaw_diff * yaw_diff + pitch_diff * pitch_diff;
+
+  // 7. 返回移动代价和装甲板距离
+  return {movement_cost, position.head(2).norm()};
+  return {yaw_diff + pitch_diff, position.head(2).norm()};
+}
+
+std::pair<Eigen::Vector3d, Eigen::Vector3d> Solver::makeFinalDecision(
+  const std::vector<Eigen::Vector3d> &armors,
+  int base_id,
+  int current_id,
+  double current_diff,
+  int predicted_id,
+  double predicted_diff) const {
+  // 默认使用基础选择结果
+  Eigen::Vector3d current_pos = armors[base_id];
+  Eigen::Vector3d control_pos = armors[base_id];
+
+  // 决策树逻辑
+  if (current_diff > selectBestArmor_useDefault_threshold ||
+      predicted_diff > selectBestArmor_useDefault_threshold) {
+    // 情况1：任一方案差异过大，使用基础算法结果
+    FYT_DEBUG("armor_solver", "Fallback to base selection id: {}", base_id);
+  } else if (current_diff < selectBestArmor_useCurrent_threshold ||
+             predicted_diff >= current_diff) {
+    // 情况2：当前方案足够好或预测不优于当前
+    current_pos = armors[current_id];
+    control_pos = armors[current_id];
+    FYT_DEBUG("armor_solver", "Select current id: {}", current_id);
+  } else {
+    // 情况3：预测方案更优
+    current_pos = armors[current_id];    // 当前位置仍来自当前帧
+    control_pos = armors[predicted_id];  // 控制位置使用预测结果
+    FYT_DEBUG("armor_solver", "Select predicted id: {}", predicted_id);
+  }
+
+  // 安全校验
+  const auto validate_position = [&](const Eigen::Vector3d &pos) {
+    return pos.allFinite() && (pos.norm() < 20.0);  // 假设有效距离小于20米
+  };
+
+  if (!validate_position(current_pos) || !validate_position(control_pos)) {
+    FYT_ERROR("armor_solver", "Invalid position detected!");
+    return {armors[base_id], armors[base_id]};  // 完全回退到基础方案
+  }
+
+  return {current_pos, control_pos};
+}
+
+#endif  // Flag_SelectBestArmor_v2
 
 void Solver::calcYawAndPitch(const Eigen::Vector3d &p,
                              const std::array<double, 3> rpy,

@@ -146,6 +146,7 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
                 std::placeholders::_1, std::placeholders::_2));
 
   heartbeat_ = HeartBeatPublisher::create(this);
+  FYT_INFO("armor_detector", "ArmorDetectorNode started!");
 }
 
 void ArmorDetectorNode::imageCallback(

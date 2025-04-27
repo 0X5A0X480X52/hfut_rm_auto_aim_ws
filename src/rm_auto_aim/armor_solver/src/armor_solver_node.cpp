@@ -29,7 +29,6 @@
 namespace fyt::auto_aim {
 ArmorSolverNode::ArmorSolverNode(const rclcpp::NodeOptions &options)
 : Node("armor_solver", options), solver_(nullptr) {
-
   // Register logger
   FYT_REGISTER_LOGGER("armor_solver", "~/fyt2024-log", INFO);
   FYT_INFO("armor_solver", "Starting ArmorSolverNode!");
@@ -155,6 +154,8 @@ ArmorSolverNode::ArmorSolverNode(const rclcpp::NodeOptions &options)
 
   // Heartbeat
   heartbeat_ = HeartBeatPublisher::create(this);
+
+  FYT_DEBUG("armor_solver", "ArmorSolverNode started!");
 }
 
 void ArmorSolverNode::timerCallback() {
@@ -258,6 +259,31 @@ void ArmorSolverNode::initMarkers() noexcept {
   trajectory_marker_.color.b = 0.79;
   trajectory_marker_.points.clear();
 
+  // 点集合标记配置
+  armor_points_marker_.ns = "armor_points";
+  armor_points_marker_.type = visualization_msgs::msg::Marker::POINTS;
+  armor_points_marker_.scale.x = 0.1;  // 点宽度（米）
+  armor_points_marker_.scale.y = 0.1;  // 点高度（米）
+  armor_points_marker_.color.a = 1;    // 透明度
+  armor_points_marker_.color.r = 0.0;
+  armor_points_marker_.color.g = 1.0;  // 绿色
+  armor_points_marker_.color.b = 0.0;
+
+  // 初始化预测点集Marker
+  armor_predicted_points_marker_.ns = "predicted_armors";
+  armor_predicted_points_marker_.type = visualization_msgs::msg::Marker::POINTS;
+  armor_predicted_points_marker_.scale.x = 0.05;  // 点大小
+  armor_predicted_points_marker_.scale.y = 0.05;
+  armor_predicted_points_marker_.color.a = 1.0;  // 不透明度
+
+  // 初始化颜色调色板 (HSV色相变化)
+  color_palette_.clear();
+  for (int i = 0; i < 10; ++i) {  // 生成10种不同颜色
+    float hue = i * 36.0;         // 色相从0°到360°，间隔36°
+    auto c = hsvToRgb(hue, 1.0, 1.0);
+    color_palette_.push_back(c);
+  }
+
   marker_pub_ =
     this->create_publisher<visualization_msgs::msg::MarkerArray>("armor_solver/marker", 10);
 }
@@ -314,7 +340,7 @@ void ArmorSolverNode::armorsCallback(const rm_interfaces::msg::Armors::SharedPtr
       tracker_->ekf->setPredictFunc(Predict{dt_, MotionModel::CONSTANT_VEL_ROT});
     }
     tracker_->update(armors_msg);
-    
+
     // Publish measurement
     measure_msg.x = tracker_->measurement(0);
     measure_msg.y = tracker_->measurement(1);
@@ -453,6 +479,73 @@ void ArmorSolverNode::publishMarkers(const rm_interfaces::msg::Target &target_ms
     selection_marker_.action = visualization_msgs::msg::Marker::DELETE;
   }
 
+  // 点集合可视化
+  armor_points_marker_.header = target_msg.header;
+  armor_points_marker_.points.clear();
+  _armorPositionSets = solver_->getArmorPositionSets();
+
+  if (!_armorPositionSets.empty()) {
+    armor_points_marker_.action = visualization_msgs::msg::Marker::ADD;
+
+    // 坐标系转换
+    geometry_msgs::msg::PointStamped ps;
+    ps.header.frame_id = "camera_optical_frame";  // 根据实际数据源坐标系修改
+
+    for (const auto &pos : _armorPositionSets) {
+      geometry_msgs::msg::Point p;
+      try {
+        ps.point.x = pos.x();
+        ps.point.y = pos.y();
+        ps.point.z = pos.z();
+        p = ps.point;
+      } catch (const tf2::TransformException &ex) {
+        FYT_WARN("armor_solver", "Points transform error: {}", ex.what());
+        continue;
+      }
+      armor_points_marker_.points.push_back(p);
+    }
+  } else {
+    armor_points_marker_.action = visualization_msgs::msg::Marker::DELETE;
+  }
+
+  marker_array.markers.push_back(armor_points_marker_);
+
+  // 可视化预测装甲板位置序列
+  _armorPredictedSecquence = std::make_shared<std::vector<std::vector<Eigen::Vector3d>>>(solver_->getArmorPredictedSecquence());
+
+  if (_armorPredictedSecquence && !_armorPredictedSecquence->empty()) {
+    int time_step = 0;
+    for (const auto &frame_points : *_armorPredictedSecquence) {
+      visualization_msgs::msg::Marker frame_marker;
+      frame_marker.header = target_msg.header;
+      frame_marker.ns = "predicted_sequence";
+      frame_marker.id = time_step;  // 使用时间步作为ID
+      frame_marker.type = visualization_msgs::msg::Marker::POINTS;
+      frame_marker.scale.x = 0.05 + time_step * 0.01;  // 随时间增加点大小
+      frame_marker.scale.y = 0.05 + time_step * 0.01;
+      frame_marker.action = visualization_msgs::msg::Marker::ADD;
+
+      // 设置颜色
+      auto &color = color_palette_[time_step % color_palette_.size()];
+      frame_marker.color.r = color[0];
+      frame_marker.color.g = color[1];
+      frame_marker.color.b = color[2];
+      frame_marker.color.a = 1.0 - time_step * 0.1;  // 逐渐透明
+
+      // 添加点
+      for (const auto &point : frame_points) {
+        geometry_msgs::msg::Point p;
+        p.x = point.x();
+        p.y = point.y();
+        p.z = point.z();
+        frame_marker.points.push_back(p);
+      }
+
+      marker_array.markers.push_back(frame_marker);
+      time_step++;
+    }
+  }
+
   marker_array.markers.emplace_back(position_marker_);
   marker_array.markers.emplace_back(trajectory_marker_);
   marker_array.markers.emplace_back(linear_v_marker_);
@@ -487,6 +580,42 @@ void ArmorSolverNode::setModeCallback(
   }
 
   FYT_WARN("armor_solver", "Set Mode to {}", visionModeToString(mode));
+}
+
+// HSV转RGB辅助函数
+std::array<float, 4> ArmorSolverNode::hsvToRgb(float h, float s, float v) {
+  float c = v * s;
+  float x = c * (1 - std::abs(std::fmod(h / 60.0, 2) - 1));
+  float m = v - c;
+
+  float r, g, b;
+  if (h < 60) {
+    r = c;
+    g = x;
+    b = 0;
+  } else if (h < 120) {
+    r = x;
+    g = c;
+    b = 0;
+  } else if (h < 180) {
+    r = 0;
+    g = c;
+    b = x;
+  } else if (h < 240) {
+    r = 0;
+    g = x;
+    b = c;
+  } else if (h < 300) {
+    r = x;
+    g = 0;
+    b = c;
+  } else {
+    r = c;
+    g = 0;
+    b = x;
+  }
+
+  return {r + m, g + m, b + m, 1.0f};
 }
 
 }  // namespace fyt::auto_aim

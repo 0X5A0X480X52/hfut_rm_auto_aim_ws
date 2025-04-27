@@ -26,6 +26,7 @@ ament_auto_find_build_dependencies()
 
 ament_auto_add_library(${PROJECT_NAME} SHARED
   src/mv_camera_node.cpp
+  src/video_player.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC mvsdk/include)
 
@@ -42,6 +43,11 @@ target_link_libraries(${PROJECT_NAME} MVSDK)
 rclcpp_components_register_node(${PROJECT_NAME}
   PLUGIN mindvision_camera::MVCameraNode
   EXECUTABLE ${PROJECT_NAME}_node
+)
+
+rclcpp_components_register_node(${PROJECT_NAME}
+  PLUGIN "fyt::camera_driver::VideoPlayerNode"
+  EXECUTABLE video_player_node
 )
 
 #############
@@ -74,3 +80,7 @@ ament_auto_package(
   config
   launch
 )
+
+# install(FILES plugin.xml
+#   DESTINATION share/${PROJECT_NAME}
+# )

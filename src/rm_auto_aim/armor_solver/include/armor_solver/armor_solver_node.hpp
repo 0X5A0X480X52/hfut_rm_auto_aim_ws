@@ -108,6 +108,16 @@ private:
   visualization_msgs::msg::Marker armors_marker_;
   visualization_msgs::msg::Marker selection_marker_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
+
+  // 对应的装甲板位置集合可视化项
+  visualization_msgs::msg::Marker armor_points_marker_; // 点集合标记
+  std::vector<Eigen::Vector3d> _armorPositionSets;
+  
+  // 预测序列的可视化项
+  visualization_msgs::msg::Marker armor_predicted_points_marker_;
+  std::vector<std::array<float, 4>> color_palette_; // 预定义颜色数组
+  std::shared_ptr<std::vector<std::vector<Eigen::Vector3d>>> _armorPredictedSecquence;
+  std::array<float, 4> hsvToRgb(float h, float s, float v); // 颜色辅助函数
 };
 
 }  // namespace fyt::auto_aim

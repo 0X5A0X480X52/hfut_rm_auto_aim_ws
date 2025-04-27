@@ -16,7 +16,10 @@ def generate_launch_description():
     launch_params = yaml.safe_load(open(os.path.join(
         get_package_share_directory('rm_bringup'), 'config', 'launch_params.yaml')))
 
-    SetParameter(name='rune',value=launch_params['rune']),
+    # 设置参数
+    SetParameter(name='rune', value=launch_params['rune']),
+    
+    # 机器人描述
     robot_gimbal_description = Command(['xacro ', os.path.join(
         get_package_share_directory('rm_robot_description'), 'urdf', 'rm_gimbal.urdf.xacro'),
         ' xyz:=', launch_params['odom2camera']['xyz'], ' rpy:=', launch_params['odom2camera']['rpy']])
@@ -24,45 +27,43 @@ def generate_launch_description():
     robot_navigation_description = Command(['xacro ', os.path.join(
         get_package_share_directory('rm_robot_description'), 'urdf', 'sentry.urdf.xacro')])
 
+    # 发布机器人状态
     robot_gimbal_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
         parameters=[{'robot_description': robot_gimbal_description,
-                    'publish_frequency': 1000.0}]
+                     'publish_frequency': 1000.0}]
     )
     
     robot_navigation_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
         parameters=[{'robot_description': robot_navigation_description,}]
-                    # 'publish_frequency': 1000.0}]
     )
 
+    # 获取参数的路径
     def get_params(name):
         return os.path.join(get_package_share_directory('rm_bringup'), 'config', 'node_params', '{}_params.yaml'.format(name))
 
     # 图像
     if launch_params['video_play']: 
-        image_node  = ComposableNode(
+        image_node  = Node(
             package='mindvision_camera',
-            # executable='video_player_node',
-            plugin='fyt::camera_driver::VideoPlayerNode',
+            executable='video_player_node',
             name='video_player',
             parameters=[get_params('video_player')],
-            extra_arguments=[{'use_intra_process_comms': True}]
+            output='both',
         )
     else:
-         image_node  = ComposableNode(
+         image_node  = Node(
             package='mindvision_camera',
-            # executable='mindvision_camera_node',
-            plugin='mindvision_camera::MVCameraNode',            
+            executable='mindvision_camera_node',
             name='camera_driver',
             parameters=[get_params('camera_driver')],
-            extra_arguments=[{'use_intra_process_comms': True}]
+            output='both',
         )
 
-
-    # 串口
+    # 串口驱动
     if launch_params['virtual_serial']:
         serial_driver_node = Node(
             package='rm_serial_driver',
@@ -80,17 +81,15 @@ def generate_launch_description():
             output='both',
             emulate_tty=True,
             parameters=[get_params('serial_driver')],
-            ros_arguments=['--ros-args', ],
         )
         
-    # 装甲板识别
-    armor_detector_node = ComposableNode(
+    # 装甲板识别节点
+    armor_detector_node = Node(
         package='armor_detector', 
-        # executable='armor_detector_node',
-        plugin='fyt::auto_aim::ArmorDetectorNode',
+        executable='armor_detector_node',
         name='armor_detector',
         parameters=[get_params('armor_detector')],
-        extra_arguments=[{'use_intra_process_comms': True}]
+        output='both',
     )
     
     # 装甲板解算
@@ -102,7 +101,6 @@ def generate_launch_description():
             output='both',
             emulate_tty=True,
             parameters=[get_params('armor_solver')],
-            ros_arguments=[],
         )
     else:
         armor_solver_node = Node(
@@ -112,59 +110,43 @@ def generate_launch_description():
             output='both',
             emulate_tty=True,
             parameters=[get_params('armor_solver')],
-            ros_arguments=[],
         )
 
-    # 使用intra cmmunication提高图像的传输速度
-    def get_camera_detector_container(*detector_nodes):
-        nodes_list = list(detector_nodes)
-        nodes_list.append(image_node)
-        container = ComposableNodeContainer(
-            name='camera_detector_container',
-            namespace='',
-            package='rclcpp_components',
-            executable='component_container_mt',
-            composable_node_descriptions=nodes_list,
-            output='both',
-            emulate_tty=True,
-            ros_arguments=['--ros-args', ],
-        )
-        return TimerAction(
-            period=2.0,
-            actions=[container],
-        )
-
-    # 延迟启动
+    # 延迟启动串口驱动节点
     delay_serial_node = TimerAction(
-        period=1.5,
+        period=3.0,  # 增加延迟时间
         actions=[serial_driver_node],
     )
 
+    # 延迟启动装甲板解算节点
     delay_armor_solver_node = TimerAction(
-        period=2.0,
+        period=3.0,  # 增加延迟时间
         actions=[armor_solver_node],
     )
     
-    
-    cam_detector_node = get_camera_detector_container(armor_detector_node)
+    # 延迟启动图像检测和装甲板识别节点
+    delay_image_node = TimerAction(
+        period=3.0,  # 增加延迟时间
+        actions=[image_node],
+    )
 
-    delay_cam_detector_node = TimerAction(
-        period=2.0,
-        actions=[cam_detector_node],
-        ) 
-    
-    push_namespace = PushRosNamespace(launch_params['namespace'])
-    
+    delay_armor_detector_node = TimerAction(
+        period=3.0,  # 增加延迟时间
+        actions=[armor_detector_node],
+    )
+
+    # 将所有节点按顺序添加到 launch_description_list
     launch_description_list = [
         robot_gimbal_publisher,
-        push_namespace,
+        push_namespace := PushRosNamespace(launch_params['namespace']),
         delay_serial_node,
-        delay_cam_detector_node,
-        delay_armor_solver_node]
-    
+        delay_image_node,
+        delay_armor_detector_node,
+        delay_armor_solver_node
+    ]
+
     if launch_params['navigation']:
         launch_description_list.append(robot_navigation_publisher)
-        
-    print('launch_description_list:', launch_description_list)
-    
+
+    # 返回 LaunchDescription 对象
     return LaunchDescription(launch_description_list)

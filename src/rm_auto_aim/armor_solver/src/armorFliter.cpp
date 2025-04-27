@@ -1,23 +1,5 @@
 #include "armor_solver/armorFliter.hpp"
 
-// #include "armor_solver/CS_KF.h"
-
-// #include "basic_models/CS_KF.h"
-
-// void ArmorFliter::init(std::vector<Eigen::Vector3d> initstate) {
-//   models.clear();
-//   for (std::size_t i = 0; i < armors_num; i++) {
-//     std::shared_ptr<Models> model = std::make_shared<CS_KF>(T, a, A_max, Dim, R);
-
-//     Eigen::Vector3d p = initstate[i];
-//     Eigen::MatrixXd X_0(9, 1);
-//     X_0 << p.x(), 0, 0, p.y(), 0, 0, p.z(), 0, 0;
-
-//     model->KalmanFilterInit(X_0);
-//     models.push_back(model);
-//   }
-// }
-
 std::vector<Eigen::Vector3d> ArmorFliter::update(std::vector<Eigen::Vector3d> state,
                                                  std::string id,
                                                  std::size_t armors_num) {

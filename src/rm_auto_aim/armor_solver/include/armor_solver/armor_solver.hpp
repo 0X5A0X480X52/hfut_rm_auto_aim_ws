@@ -36,6 +36,13 @@
 #include "rm_utils/math/manual_compensator.hpp"
 #include "rm_utils/math/trajectory_compensator.hpp"
 
+// #define Flag_ARMOR_FLITER_v1
+#define Flag_ARMOR_FLITER_v2
+// #define Flag_ARMOR_FLITER_v3
+
+// #define Flag_SelectBestArmor_v1
+#define Flag_SelectBestArmor_v2
+
 namespace fyt::auto_aim {
 // Solver class used to solve the gimbal command from tracked target
 class Solver {
@@ -86,6 +93,18 @@ private:
     const std::string id,
     const std::size_t armors_num) const noexcept;
 
+    std::vector<Eigen::Vector3d> _armorPositionSets;
+    std::shared_ptr<std::vector<std::vector<Eigen::Vector3d>>> _armorPredictedSecquence;
+
+public:
+  std::vector<Eigen::Vector3d> getArmorPositionSets() const noexcept {
+    return _armorPositionSets;
+  }
+
+  std::vector<std::vector<Eigen::Vector3d>>& getArmorPredictedSecquence() const {
+    return *_armorPredictedSecquence;
+}
+
 public:
   std::shared_ptr<ArmorFliter> armorFliter = std::make_shared<ArmorFliter>();
 
@@ -101,7 +120,9 @@ private:
   int armor_current_positions_predicted_iter = 1;
   /* 基于云台角度和目标位置计算移动最小的角度 */
   // 预测装甲板位置的迭代次数
-  std::vector<int> armor_predicted_iter_list = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+  // std::vector<int> armor_predicted_iter_list = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+  std::vector<int> armor_predicted_iter_list = {1, 3,  5,  7,  9,  11, 13, 20, 40, 60, 80,
+                                                100};
   // std::vector<int> armor_predicted_iter_list = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 , 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25};
   double diff_threshold_to_use_minDist = 1;  // 差异小于该阈值，使用最近距离轩板
   // 基于当前位置及预测位置的云台控制偏差均大于该值时，使用原始的默认选板方式
@@ -149,6 +170,61 @@ private:
   double min_switching_v_yaw_;
 
   std::weak_ptr<rclcpp::Node> node_;
+
+#ifdef Flag_SelectBestArmor_v2
+
+private:
+  // 辅助类型
+  struct SelectionResult {
+    double movement_diff;
+    int selected_index;
+    double min_distance;
+  };
+
+  bool shouldUpdateSelection(double current_diff,
+                                     double current_min_diff,
+                                     double current_distance,
+                                     double min_distance) const;
+
+  double position_tolerance = 1;
+  int findOriginalIndex(const std::vector<Eigen::Vector3d> &original,
+                                const Eigen::Vector3d &predicted,
+                                double position_tolerance) const;
+
+  // 基础选板计算
+  std::pair<int, double> calculateBaseSelection(const Eigen::Vector3d &target_center,
+                                                double target_yaw,
+                                                double target_v_yaw,
+                                                std::size_t armors_num) const;
+
+  // 候选装甲板处理
+  SelectionResult processArmorCandidates(const std::vector<Eigen::Vector3d> &original,
+                                         const std::vector<Eigen::Vector3d> &filtered,
+                                         std::size_t armors_num) const;
+
+  SelectionResult processPredictedArmors(const std::vector<Eigen::Vector3d> &original,
+                                         std::size_t armors_num) const;
+
+  // 过滤评估逻辑
+  std::vector<Eigen::Vector3d> filterArmor(
+    const std::vector<Eigen::Vector3d> &positions, std::size_t armors_num) const;
+
+  SelectionResult evaluateCandidates(const std::vector<Eigen::Vector3d> &original,
+                                     const std::vector<Eigen::Vector3d> &candidates) const;
+
+  // 运动量计算
+  std::pair<double, double> calculateMovementDiff(const Eigen::Vector3d &position) const;
+
+  // 最终决策
+  std::pair<Eigen::Vector3d, Eigen::Vector3d> makeFinalDecision(
+    const std::vector<Eigen::Vector3d> &armors,
+    int base_id,
+    int current_id,
+    double current_diff,
+    int predicted_id,
+    double predicted_diff) const;
+#endif  // Flag_SelectBestArmor_v2
+
 };
 }  // namespace fyt::auto_aim
 #endif  // ARMOR_SOLVER_SOLVER_HPP_

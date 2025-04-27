@@ -41,6 +41,9 @@ public:
      */
     Eigen::VectorXd KalmanFilterIterator(const Eigen::VectorXd& Z) override;
 
+    // Eigen::MatrixXd predict() const override;
+    // Eigen::MatrixXd predict(int N) const override;
+
 private:
     /**
      * @brief 更新过程噪声协方差矩阵 Q。

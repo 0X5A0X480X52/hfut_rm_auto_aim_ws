@@ -24,7 +24,7 @@ class ArmorFliter {
   std::size_t armors_num = 114514;
 
   int KM_predict_iter = 0;          // 匹配时预测下一位置
-  double totalDist_threshold = 0.01;  // 匹配时偏差总距离超过该值，重置跟踪器
+  double totalDist_threshold = 1;  // 匹配时偏差总距离超过该值，重置跟踪器
 
   int default_ttl = 100000;
   int ttl = default_ttl;
@@ -66,8 +66,8 @@ public:
       Eigen::MatrixXd X_0(9, 1);
       X_0 << p.x(), 0, 0, p.y(), 0, 0, p.z(), 0, 0;
 
-      // std::shared_ptr<Models> model = std::make_shared<CS_KF>(T, a, A_max, Dim, R); // CS 3Dim 的模型
-      // model->KalmanFilterInit(X_0);
+      std::shared_ptr<Models> model = std::make_shared<CS_KF>(T, a, A_max, Dim, R); // CS 3Dim 的模型
+      model->KalmanFilterInit(X_0);
 
       // double sigma = 5;
       // std::shared_ptr<Models> model = std::make_shared<Singer_KF>(T, a, sigma, Dim, R);
@@ -75,24 +75,24 @@ public:
       // std::shared_ptr<Models> model = std::make_shared<CA_KF>(T, Dim, R);
       // model->KalmanFilterInit(X_0);
 
-      double T = 0.01;
-      // int Dim = 3;
-      Eigen::MatrixXd R(3, 3);
-      this->R << 0.005, 0.001, 0.001, 0.001, 0.005, 0.001, 0.001, 0.001, 0.005;
+      // double T = 0.01;
+      // // int Dim = 3;
+      // Eigen::MatrixXd R(3, 3);
+      // this->R << 0.005, 0.001, 0.001, 0.001, 0.005, 0.001, 0.001, 0.001, 0.005;
 
-      Eigen::MatrixXd transformRateMat(3,3);
-      transformRateMat << 0.80, 0.10, 0.10,
-                          0.10, 0.80, 0.10,
-                          0.10, 0.10, 0.80;
+      // Eigen::MatrixXd transformRateMat(3,3);
+      // transformRateMat << 0.80, 0.10, 0.10,
+      //                     0.10, 0.80, 0.10,
+      //                     0.10, 0.10, 0.80;
   
-      Eigen::MatrixXd H(3,9);
-      H.setZero();
-      H(0,0) = 1;
-      H(1,3) = 1;
-      H(2,6) = 1;
+      // Eigen::MatrixXd H(3,9);
+      // H.setZero();
+      // H(0,0) = 1;
+      // H(1,3) = 1;
+      // H(2,6) = 1;
 
       // // std::shared_ptr<Models> model = std::make_shared<IMM_CV_CA_CS_3Dim>(X_0); // IMM_CV_CA_CS_3Dim 的模型
-      std::shared_ptr<Models> model = std::make_shared<IMM_CV_CA_CS_3Dim>(T, 9, H, transformRateMat, X_0, R); // IMM_CV_CA_CS_3Dim 的模型
+      // std::shared_ptr<Models> model = std::make_shared<IMM_CV_CA_CS_3Dim>(T, 9, H, transformRateMat, X_0, R); // IMM_CV_CA_CS_3Dim 的模型
 
 
       // Eigen::MatrixXd transformRateMat(4,4);
