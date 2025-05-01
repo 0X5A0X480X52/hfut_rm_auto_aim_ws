@@ -121,8 +121,7 @@ private:
   /* 基于云台角度和目标位置计算移动最小的角度 */
   // 预测装甲板位置的迭代次数
   // std::vector<int> armor_predicted_iter_list = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
-  std::vector<int> armor_predicted_iter_list = {1, 3,  5,  7,  9,  11, 13, 20, 40, 60, 80,
-                                                100};
+  std::vector<int> armor_predicted_iter_list = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12 , 14, 16, 18, 20, 40, 60, 80, 100};
   // std::vector<int> armor_predicted_iter_list = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 , 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25};
   double diff_threshold_to_use_minDist = 1;  // 差异小于该阈值，使用最近距离轩板
   // 基于当前位置及预测位置的云台控制偏差均大于该值时，使用原始的默认选板方式

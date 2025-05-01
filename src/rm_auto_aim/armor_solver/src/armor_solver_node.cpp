@@ -521,8 +521,8 @@ void ArmorSolverNode::publishMarkers(const rm_interfaces::msg::Target &target_ms
       frame_marker.ns = "predicted_sequence";
       frame_marker.id = time_step;  // 使用时间步作为ID
       frame_marker.type = visualization_msgs::msg::Marker::POINTS;
-      frame_marker.scale.x = 0.05 + time_step * 0.01;  // 随时间增加点大小
-      frame_marker.scale.y = 0.05 + time_step * 0.01;
+      frame_marker.scale.x = 0.05 + time_step * 0.001;  // 随时间增加点大小
+      frame_marker.scale.y = 0.05 + time_step * 0.001;
       frame_marker.action = visualization_msgs::msg::Marker::ADD;
 
       // 设置颜色

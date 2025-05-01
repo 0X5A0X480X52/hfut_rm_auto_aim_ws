@@ -118,6 +118,28 @@ void Tracker::update(const Armors::SharedPtr &armors_msg) noexcept {
       }
     }
 
+    // // double ekf_r = ekf_prediction(8);
+    // double ekf_r =  orientationToYaw(tracked_armor.pose.orientation);
+    // bool is_abnormal = checkRAbnormality(ekf_r);
+    // if (is_abnormal) {
+    //   FYT_WARN("armor_solver", "EKF radius is abnormal!");
+    //   auto p = tracked_armor.pose.position;
+    //   // Update EKF
+    //   double x = p.x;
+    //   double y = p.y;
+    //   double z = p.z;
+    //   double yaw = orientationToYaw(tracked_armor.pose.orientation);
+    //   double r = ekf_prediction(8);
+    //   double d_zc = ekf_prediction(9);
+    //   target_state << x, 0, y, 0, z, 0, yaw, 0, r, d_zc;
+    //   std::cout << "yaw: " << yaw << std::endl;
+    //   std::cout << "r: " << orientationToYaw(tracked_armor.pose.orientation) << std::endl;
+
+    //   // target_state << x, 0, y, 0, z, 0, 0, 0, r, d_zc;
+    //   ekf->setState(target_state);
+    //   FYT_DEBUG("armor_solver", "EKF state reset!");
+    // }
+
     // Check if the distance and yaw difference of closest armor are within the
     // threshold
     if (min_position_diff < max_match_distance_ && yaw_diff < max_match_yaw_diff_) {
@@ -283,6 +305,55 @@ Eigen::Vector3d Tracker::getArmorPositionFromState(const Eigen::VectorXd &x) noe
   double xa = xc - r * cos(yaw);
   double ya = yc - r * sin(yaw);
   return Eigen::Vector3d(xa, ya, za);
+}
+
+bool Tracker::checkRAbnormality(double current_r) {
+  bool is_abnormal = false;
+
+  // 更新滑动窗口数据
+  r_history_.push_back(current_r);
+  sum_r_ += current_r;
+  sum_r_sq_ += current_r * current_r;
+
+  // 维护窗口大小
+  if (r_history_.size() > window_size_) {
+    double oldest_r = r_history_.front();
+    r_history_.pop_front();
+    sum_r_ -= oldest_r;
+    sum_r_sq_ -= oldest_r * oldest_r;
+  }
+
+  // 当窗口填满后进行检测
+  if (r_history_.size() >= window_size_) {
+    double mean_r = sum_r_ / window_size_;
+    double variance_r = (sum_r_sq_ / window_size_) - (mean_r * mean_r);
+    variance_r = variance_r < 0.0 ? 0.0 : variance_r;  // 避免负方差
+    double stddev_r = std::sqrt(variance_r);
+
+    // 标准差为零时跳过检测
+    if (stddev_r == 0.0) 
+      return false;
+
+    // 检测当前值是否超过阈值
+    std::cout << " std::abs(current_r - mean_r) / stddev_r: " << std::abs(current_r - mean_r) / stddev_r << std::endl;
+
+    if (std::abs(current_r - mean_r) > sigma_threshold_ * stddev_r) {
+      handleAbnormalR(current_r);
+      is_abnormal = true;
+    }
+  }
+
+  return is_abnormal;
+}
+
+void Tracker::handleAbnormalR(double abnormal_r) {
+  // 异常处理：记录日志、重置或报警
+  // std::cerr << "Abnormal r detected: " << abnormal_r << std::endl;
+  FYT_WARN("armor_solver", "Abnormal r detected: {}", abnormal_r);
+  // 示例：重置滑动窗口统计数据
+  r_history_.clear();
+  sum_r_ = 0.0;
+  sum_r_sq_ = 0.0;
 }
 
 }  // namespace fyt::auto_aim

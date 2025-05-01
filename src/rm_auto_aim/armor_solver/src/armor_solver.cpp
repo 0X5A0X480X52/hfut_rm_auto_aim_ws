@@ -782,7 +782,7 @@ Solver::SelectionResult Solver::processArmorCandidates(const std::vector<Eigen::
                                                        const std::vector<Eigen::Vector3d> &filtered,
                                                        std::size_t armors_num) const {
   auto valid_positions = filterArmor(filtered, armors_num);
-  _armorPredictedSecquence->push_back(original);
+  _armorPredictedSecquence->push_back(valid_positions);
 
   return evaluateCandidates(original, valid_positions);
 }
@@ -801,21 +801,6 @@ Solver::SelectionResult Solver::processPredictedArmors(const std::vector<Eigen::
   }
 
   return evaluateCandidates(original, all_predicted);
-}
-
-// 判断是否需要更新选板
-bool Solver::shouldUpdateSelection(double current_diff,
-                                   double current_min_diff,
-                                   double current_distance,
-                                   double min_distance) const {
-  // 情况1：差异在阈值范围内且距离更近
-  if (std::abs(current_diff - current_min_diff) < diff_threshold_to_use_minDist) {
-    return current_distance < min_distance;
-  }
-  // 情况2：差异明显更小
-  else {
-    return current_diff < current_min_diff;
-  }
 }
 
 // 在原始装甲板位置中找到与预测位置最接近的装甲板索引
@@ -1044,6 +1029,21 @@ std::pair<double, double> Solver::calculateMovementDiff(const Eigen::Vector3d &p
   // 7. 返回移动代价和装甲板距离
   return {movement_cost, position.head(2).norm()};
   return {yaw_diff + pitch_diff, position.head(2).norm()};
+}
+
+// 判断是否需要更新选板
+bool Solver::shouldUpdateSelection(double current_diff,
+  double current_min_diff,
+  double current_distance,
+  double min_distance) const {
+// 情况1：差异在阈值范围内且距离更近
+if (std::abs(current_diff - current_min_diff) < diff_threshold_to_use_minDist) {
+return current_distance < min_distance;
+}
+// 情况2：差异明显更小
+else {
+return current_diff < current_min_diff;
+}
 }
 
 std::pair<Eigen::Vector3d, Eigen::Vector3d> Solver::makeFinalDecision(

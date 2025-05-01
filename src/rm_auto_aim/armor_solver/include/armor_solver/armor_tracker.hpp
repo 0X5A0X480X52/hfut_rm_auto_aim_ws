@@ -16,11 +16,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 #ifndef ARMOR_SOLVER_TRACKER_HPP_
 #define ARMOR_SOLVER_TRACKER_HPP_
 
 // std
+#include <deque>
 #include <memory>
 #include <string>
 // ros2
@@ -30,14 +30,15 @@
 // third party
 #include <Eigen/Eigen>
 // project
+#include "armor_solver/motion_model.hpp"
 #include "rm_interfaces/msg/armors.hpp"
 #include "rm_interfaces/msg/target.hpp"
+#include "rm_utils/logger/log.hpp"
 #include "rm_utils/math/extended_kalman_filter.hpp"
-#include "armor_solver/motion_model.hpp"
 
 // ros2
-#include <tf2_ros/buffer.h>
 #include <angles/angles.h>
+#include <tf2_ros/buffer.h>
 
 #include <rclcpp/time.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
@@ -62,7 +63,10 @@ public:
 
   void update(const Armors::SharedPtr &armors_msg) noexcept;
 
-  void calcYawAndPitch(const Eigen::Vector3d &p, const std::array<double, 3> rpy, double &yaw, double &pitch) const noexcept;
+  void calcYawAndPitch(const Eigen::Vector3d &p,
+                       const std::array<double, 3> rpy,
+                       double &yaw,
+                       double &pitch) const noexcept;
 
   std::unique_ptr<TrajectoryCompensator> trajectory_compensator_;
 
@@ -106,6 +110,17 @@ private:
   int lost_count_;
 
   double last_yaw_;
+
+  // 滑动窗口相关变量
+  std::deque<double> r_history_;
+  double sum_r_ = 0.0;
+  double sum_r_sq_ = 0.0;
+  size_t window_size_ = 30;       // 窗口大小，可根据实际情况调整
+  double sigma_threshold_ = 2;  // 标准差倍数阈值
+
+  bool checkRAbnormality(double current_r);
+
+  void handleAbnormalR(double abnormal_r);
 };
 
 }  // namespace fyt::auto_aim

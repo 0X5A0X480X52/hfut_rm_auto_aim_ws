@@ -45,8 +45,8 @@ class ArmorFliter {
   // }  
   
   void setDefaultParameters() {
-    this->T = 0.001;
-    this->a = 100;
+    this->T = 0.016;
+    this->a = 1000;
     this->A_max = 100;
     this->Dim = 3;
     this->R = Eigen::MatrixXd(3, 3);
