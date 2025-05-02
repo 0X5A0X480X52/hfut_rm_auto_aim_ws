@@ -111,16 +111,6 @@ private:
 
   double last_yaw_;
 
-  // 滑动窗口相关变量
-  std::deque<double> r_history_;
-  double sum_r_ = 0.0;
-  double sum_r_sq_ = 0.0;
-  size_t window_size_ = 30;       // 窗口大小，可根据实际情况调整
-  double sigma_threshold_ = 2;  // 标准差倍数阈值
-
-  bool checkRAbnormality(double current_r);
-
-  void handleAbnormalR(double abnormal_r);
 };
 
 }  // namespace fyt::auto_aim

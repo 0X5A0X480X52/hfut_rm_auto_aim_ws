@@ -43,6 +43,9 @@
 // #define Flag_SelectBestArmor_v1
 #define Flag_SelectBestArmor_v2
 
+// #define Flag_Loss_v1
+#define Flag_Loss_v2
+
 namespace fyt::auto_aim {
 // Solver class used to solve the gimbal command from tracked target
 class Solver {
@@ -93,17 +96,15 @@ private:
     const std::string id,
     const std::size_t armors_num) const noexcept;
 
-    std::vector<Eigen::Vector3d> _armorPositionSets;
-    std::shared_ptr<std::vector<std::vector<Eigen::Vector3d>>> _armorPredictedSecquence;
+  std::vector<Eigen::Vector3d> _armorPositionSets;
+  std::shared_ptr<std::vector<std::vector<Eigen::Vector3d>>> _armorPredictedSecquence;
 
 public:
-  std::vector<Eigen::Vector3d> getArmorPositionSets() const noexcept {
-    return _armorPositionSets;
-  }
+  std::vector<Eigen::Vector3d> getArmorPositionSets() const noexcept { return _armorPositionSets; }
 
-  std::vector<std::vector<Eigen::Vector3d>>& getArmorPredictedSecquence() const {
+  std::vector<std::vector<Eigen::Vector3d>> &getArmorPredictedSecquence() const {
     return *_armorPredictedSecquence;
-}
+  }
 
 public:
   std::shared_ptr<ArmorFliter> armorFliter = std::make_shared<ArmorFliter>();
@@ -117,17 +118,18 @@ private:
                       const double target_v_yaw,
                       const std::size_t armors_num) const noexcept;
   // 当前装甲板的位置预测迭代次数
-  int armor_current_positions_predicted_iter = 1;
+  int armor_current_positions_predicted_iter = 5;
   /* 基于云台角度和目标位置计算移动最小的角度 */
   // 预测装甲板位置的迭代次数
   // std::vector<int> armor_predicted_iter_list = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
-  std::vector<int> armor_predicted_iter_list = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12 , 14, 16, 18, 20, 40, 60, 80, 100};
+  std::vector<int> armor_predicted_iter_list = {
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 40, 60, 80, 100};
   // std::vector<int> armor_predicted_iter_list = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 , 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25};
   double diff_threshold_to_use_minDist = 1;  // 差异小于该阈值，使用最近距离轩板
   // 基于当前位置及预测位置的云台控制偏差均大于该值时，使用原始的默认选板方式
   double selectBestArmor_useDefault_threshold = 40;
   // 偏差小于该阈值，使用基于当前位置的选板方案
-  double selectBestArmor_useCurrent_threshold = 20;
+  double selectBestArmor_useCurrent_threshold = -0.010;
 
   /* 基于云台角度和目标位置计算移动最小的角度 */
   // Return: std::pair<Eigen::Vector3d, Eigen::Vector3d>，前者为选中板的当前位置，后者为选中板的预测位置
@@ -181,14 +183,14 @@ private:
   };
 
   bool shouldUpdateSelection(double current_diff,
-                                     double current_min_diff,
-                                     double current_distance,
-                                     double min_distance) const;
+                             double current_min_diff,
+                             double current_distance,
+                             double min_distance) const;
 
   double position_tolerance = 1;
   int findOriginalIndex(const std::vector<Eigen::Vector3d> &original,
-                                const Eigen::Vector3d &predicted,
-                                double position_tolerance) const;
+                        const Eigen::Vector3d &predicted,
+                        double position_tolerance) const;
 
   // 基础选板计算
   std::pair<int, double> calculateBaseSelection(const Eigen::Vector3d &target_center,
@@ -205,14 +207,16 @@ private:
                                          std::size_t armors_num) const;
 
   // 过滤评估逻辑
-  std::vector<Eigen::Vector3d> filterArmor(
-    const std::vector<Eigen::Vector3d> &positions, std::size_t armors_num) const;
+  double filterArmor_angle_threshold = 30;  // 角度阈值
+  std::vector<Eigen::Vector3d> filterArmor(const std::vector<Eigen::Vector3d> &positions,
+                                           std::size_t armors_num) const;
 
   SelectionResult evaluateCandidates(const std::vector<Eigen::Vector3d> &original,
                                      const std::vector<Eigen::Vector3d> &candidates) const;
 
   // 运动量计算
   std::pair<double, double> calculateMovementDiff(const Eigen::Vector3d &position) const;
+  Eigen::Vector2d getCurrentGimbalAngles() const;
 
   // 最终决策
   std::pair<Eigen::Vector3d, Eigen::Vector3d> makeFinalDecision(
@@ -223,6 +227,40 @@ private:
     int predicted_id,
     double predicted_diff) const;
 #endif  // Flag_SelectBestArmor_v2
+
+#ifdef Flag_Loss_v2
+  // 损失函数配置参数
+  struct LossFunctionConfig {
+    double sigma_center = 1.0;  // 中心距离的标准差参数
+    double sigma_armor = 1.0;   // 装甲板移动的标准差参数
+    double k_sigmoid = 1.0;     // sigmoid函数的斜率参数
+    double R_threshold = 0.5;   // 阈值半径
+  } loss_config_;
+
+  // 计算融合系数λ
+  double calculateLambda(double d_center) const;
+
+  // 计算中心因子α_center
+  double calculateAlphaCenter(double d_center) const;
+
+  // 计算装甲板因子α_armor
+  double calculateAlphaArmor(double d_armor) const;
+
+  // 计算综合损失
+  double calculateTotalLoss(double d_center, double d_armor) const;
+
+public:
+  // 设置损失函数参数
+  void setLossFunctionParams(double sigma_center,
+                             double sigma_armor,
+                             double k_sigmoid,
+                             double R_threshold) {
+    loss_config_.sigma_center = sigma_center;
+    loss_config_.sigma_armor = sigma_armor;
+    loss_config_.k_sigmoid = k_sigmoid;
+    loss_config_.R_threshold = R_threshold;
+  }
+#endif  // Flag_Loss_v2
 
 };
 }  // namespace fyt::auto_aim
