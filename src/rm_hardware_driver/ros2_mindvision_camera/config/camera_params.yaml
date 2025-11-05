@@ -1,7 +1,12 @@
 /mv_camera:
   ros__parameters:
     camera_name: mv_camera
+    camera_sn: ""  # 留空则使用第一个检测到的相机，或者填入序列号指定特定相机
 
-    exposure_time: 10000
-    gain: 10.0
+    # 图像分辨率设置（设置为0则使用相机默认分辨率）
+    image_width: 0   # 图像宽度，0表示使用相机默认值
+    image_height: 0  # 图像高度，0表示使用相机默认值
+
+    exposure_time: 3500
+    gain: 6.0
     flip_image: true
