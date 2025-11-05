@@ -114,3 +114,44 @@ Eigen::VectorXd CTRV_EKF::KalmanFilterIterator(const Eigen::VectorXd& Z) {
     // 返回位置预测值
     return X_after.head(2);
 }
+
+/**
+ * @brief 重写预测函数，使用非线性状态转移
+ * @param N 预测步数
+ * @return 预测的状态矩阵
+ */
+Eigen::MatrixXd CTRV_EKF::predict(int N) const {
+    if (N == 0)
+        return H.transpose() * X_after;
+    
+    Eigen::VectorXd X = X_after;
+    
+    // 进行N步非线性状态预测
+    for (int i = 0; i < N; ++i) {
+        double theta = X(3);
+        double omega = X(4);
+        double v = X(2);
+        
+        // 非线性状态转移
+        if (std::abs(omega) > 1e-6) {
+            // 有角速度的情况
+            X(0) += (v / omega) * (std::sin(theta + omega * T) - std::sin(theta));
+            X(1) += (v / omega) * (-std::cos(theta + omega * T) + std::cos(theta));
+        } else {
+            // 角速度接近0，使用直线运动模型
+            X(0) += v * T * std::cos(theta);
+            X(1) += v * T * std::sin(theta);
+        }
+        
+        // 速度保持不变（CTRV模型假设）
+        // X(2) = X(2);
+        
+        // 角度更新
+        X(3) += omega * T;
+        
+        // 角速度保持不变（CTRV模型假设）
+        // X(4) = X(4);
+    }
+    
+    return H.transpose() * X;
+}

@@ -62,12 +62,16 @@ Eigen::MatrixXd Models::predict(int N) const {
         return H.transpose() * X_after;
 
     Eigen::VectorXd X = X_after;
-    // std::cout << "Models::predict(int N)" << std::endl;
+    Eigen::MatrixXd P = P_after;
+    
+    // 进行N步预测，同时更新状态和协方差矩阵
+    // 考虑不确定性的累积增长
     for (int i = 0; i < N; ++i) {
-        // std::cout << "F.size(): " << F.rows() << "," <<  F.cols() << std::endl;
-        // std::cout << "X.size(): " << X.rows() << "," <<  X.cols() << std::endl;
+        // 状态预测
         X = F * X;
+        // 协方差预测（考虑过程噪声导致的不确定性增长）
+        P = F * P * F.transpose() + Q;
     }
-    // std::cout << "Models::predict(int N)" << std::endl;
+    
     return H.transpose() * X;
 }

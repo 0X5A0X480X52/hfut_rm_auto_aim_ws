@@ -64,13 +64,20 @@ void CS_KF::updateQ() {
   std::vector<double> sigma(Dim, 0.0);
   std::vector<Eigen::MatrixXd> Q_D1_blocks(Dim);
 
-  for (int i = 0; i < Dim; ++i) {
-    A_k[i] = X_after[3 * i + 2];
-    if (A_k[i] > 0) {
-      sigma[i] = (4 - pi) / pi * std::pow(A_max - A_k[i], 2);
-    } else {
-      sigma[i] = (4 - pi) / pi * std::pow(A_min - A_k[i], 2);
-    }
+    // 添加最小噪声保护，防止滤波器过度自信
+    const double min_sigma = 0.01;
+
+    for (int i = 0; i < Dim; ++i) {
+        A_k[i] = X_after[3 * i + 2];
+        
+        // 计算sigma时添加最小值保护
+        if (A_k[i] > 0) {
+            sigma[i] = std::max(min_sigma, 
+                               (4 - pi) / pi * std::pow(A_max - A_k[i], 2));
+        } else {
+            sigma[i] = std::max(min_sigma,
+                               (4 - pi) / pi * std::pow(A_min - A_k[i], 2));
+        }
 
     Q_D1_blocks[i] = 2 * a * sigma[i] * Q_D1;
   }
