@@ -37,6 +37,13 @@ public:
      * @return 滤波后的状态向量。
      */
     Eigen::VectorXd KalmanFilterIterator(const Eigen::VectorXd& Z) override;
+
+    /**
+     * @brief 重写预测函数，使用非线性状态转移
+     * @param N 预测步数
+     * @return 预测的状态矩阵
+     */
+    Eigen::MatrixXd predict(int N) const override;
 };
 
 #endif // CTRV_EKF_H
