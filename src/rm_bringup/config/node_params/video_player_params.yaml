@@ -1,7 +1,7 @@
 /**:
   ros__parameters:
     camera_info_url: package://rm_bringup/config/camera_info.yaml
-    path: "/home/amatrix2005/Robomaster/hfut_rm_auto_aim_ws/resources/output.avi"
+    path: "/home/hfut-nuc/hfut_rm_auto_aim_ws/resources/output2.avi"
     frame_rate: 30
     start_frame: 0
     frame_id: "camera_optical_frame"

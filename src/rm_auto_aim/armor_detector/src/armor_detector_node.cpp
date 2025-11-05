@@ -170,6 +170,41 @@ void ArmorDetectorNode::imageCallback(
     FYT_ERROR("armor_detector", "Something Wrong when lookUpTransform");
     return;
   }
+  // try {
+  //   rclcpp::Time target_time = img_msg->header.stamp;
+  //   auto odom_to_gimbal = tf2_buffer_->lookupTransform(
+  //       odom_frame_, img_msg->header.frame_id, target_time,
+  //       rclcpp::Duration::from_seconds(0.01));
+  //   auto msg_q = odom_to_gimbal.transform.rotation;
+  //   tf2::Quaternion tf_q;
+  //   tf2::fromMsg(msg_q, tf_q);
+
+  //   // 1. 提取odom->gimbal欧拉角
+  //   double roll_g, pitch_g, yaw_g;
+  //   tf2::Matrix3x3(tf_q).getRPY(roll_g, pitch_g, yaw_g);
+
+  //   // 2. gimbal->camera的静态偏移，假设rpy/xyz均为0
+  //   double roll_offset = 0;   // 或者你的实际偏移
+  //   // double pitch_offset = 0;  // 或者你的实际偏移
+  //   double yaw_offset = 0;    // 或者你的实际偏移
+
+  //   // 3. 构造新的欧拉角
+  //   double new_roll = roll_g + roll_offset;
+  //   double new_pitch = /* 直接用odom->gimbal的pitch，不加偏移 */ pitch_g;
+  //   double new_yaw = yaw_g + yaw_offset;
+
+  //   // 4. 转为旋转矩阵
+  //   tf2::Quaternion q_new;
+  //   q_new.setRPY(new_roll, new_pitch, new_yaw);
+  //   tf2::Matrix3x3 tf2_matrix(q_new);
+
+  //   imu_to_camera_ << tf2_matrix.getRow(0)[0], tf2_matrix.getRow(0)[1], tf2_matrix.getRow(0)[2],
+  //                     tf2_matrix.getRow(1)[0], tf2_matrix.getRow(1)[1], tf2_matrix.getRow(1)[2],
+  //                     tf2_matrix.getRow(2)[0], tf2_matrix.getRow(2)[1], tf2_matrix.getRow(2)[2];
+// } catch (...) {
+//     FYT_ERROR("armor_detector", "Something Wrong when lookUpTransform");
+//     return;
+//   }
 
   // Detect armors
   auto armors = detectArmors(img_msg);

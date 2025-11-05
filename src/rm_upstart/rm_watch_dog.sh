@@ -8,7 +8,8 @@ NODE_NAMES=("armor_detector" "armor_solver" "serial_driver")  # 列出所有需�
 USER="$(whoami)" #用户名
 HOME_DIR=$(eval echo ~$USER)
 WORKING_DIR="$HOME_DIR/auto_aim_ws/" # 代码目录 
-LAUNCH_FILE="rm_bringup bringup.launch.py" # launch 文件
+# LAUNCH_FILE="rm_bringup bringup.launch.py" # launch 文件
+LAUNCH_FILE="rm_bringup bringup.launch.single.py" # launch 文件
 OUTPUT_FILE="$WORKING_DIR/screen.output" # 终端输出记录文件
 
 rmw="rmw_fastrtps_cpp" #RMW

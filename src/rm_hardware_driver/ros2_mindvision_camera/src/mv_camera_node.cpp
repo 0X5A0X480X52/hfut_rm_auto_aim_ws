@@ -223,6 +223,7 @@ private:
 
     // Flip
     flip_image_ = this->declare_parameter("flip_image", false);
+    flip_image_ = true;
   }
 
   rcl_interfaces::msg::SetParametersResult parametersCallback(

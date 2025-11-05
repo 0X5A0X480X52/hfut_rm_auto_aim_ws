@@ -100,7 +100,7 @@ bool ProtocolSentry::receive(rm_interfaces::msg::SerialReceiveData &data) {
 std::vector<rclcpp::SubscriptionBase::SharedPtr> ProtocolSentry::getSubscriptions(
   rclcpp::Node::SharedPtr node) {
   auto sub1 = node->create_subscription<rm_interfaces::msg::GimbalCmd>(
-    "armor_solver/cmd_gimbal",
+    "",
     rclcpp::SensorDataQoS(),
     [this](const rm_interfaces::msg::GimbalCmd::SharedPtr msg) { this->send(*msg); });
   auto sub3 = node->create_subscription<rm_interfaces::msg::ChassisCmd>(

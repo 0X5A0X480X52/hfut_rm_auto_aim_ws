@@ -2,6 +2,6 @@
   ros__parameters:
     camera_name: mv_camera
 
-    exposure_time: 3500
-    gain: 6.0
+    exposure_time: 10000
+    gain: 10.0
     flip_image: true
