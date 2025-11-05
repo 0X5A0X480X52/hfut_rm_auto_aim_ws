@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>image_raw_recoder</name>
+  <version>0.1.0</version>
+  <description>ROS2 package: record /image_raw to MP4 or convert ros2 bag to MP4</description>
+  <maintainer email="you@example.com">Your Name</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>image_transport</exec_depend>
+
+  <!-- rosbag2 used externally when running ros2 bag play -->
+  <exec_depend>rosbag2</exec_depend>
+
+  <test_depend>pytest</test_depend>
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
