@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Tuple
 from scipy.optimize import least_squares
-from .types import ArmorMeasurement
+from armor_fusion.types import ArmorMeasurement
 
 class BundleAdjustment:
     """小型Bundle Adjustment优化器"""

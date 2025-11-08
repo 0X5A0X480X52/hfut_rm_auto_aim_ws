@@ -26,11 +26,11 @@ from visualization_msgs.msg import MarkerArray
 
 from rm_interfaces.msg import Armor, Armors
 
-from .types import ArmorMeasurement
-from .transforms import transform_to_base_link
-from .clustering import cluster_measurements, merge_close_clusters
-from .ba import BundleAdjustment
-from .visualization import build_visualization_markers
+from armor_fusion.types import ArmorMeasurement
+from armor_fusion.transforms import transform_to_base_link
+from armor_fusion.clustering import cluster_measurements, merge_close_clusters
+from armor_fusion.ba import BundleAdjustment
+from armor_fusion.visualization import build_visualization_markers
 
 
 class MultiCameraFusionNode(Node):

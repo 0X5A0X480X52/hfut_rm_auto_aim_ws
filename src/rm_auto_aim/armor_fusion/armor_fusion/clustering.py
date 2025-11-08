@@ -1,21 +1,56 @@
 from typing import List, Dict
 import numpy as np
-from sklearn.cluster import DBSCAN
-from .types import ArmorMeasurement
+from armor_fusion.types import ArmorMeasurement
+
+try:
+    from sklearn.cluster import DBSCAN
+    _have_sklearn = True
+except Exception:
+    DBSCAN = None
+    _have_sklearn = False
 
 
 def cluster_measurements(measurements: List[ArmorMeasurement], eps: float, min_samples: int) -> Dict[int, List[ArmorMeasurement]]:
+    """Cluster measurements into groups.
+
+    Tries to use sklearn.DBSCAN. If sklearn is not available, falls back to a simple
+    greedy radius-based clustering.
+    """
     if len(measurements) == 0:
         return {}
+
     positions = np.array([m.position for m in measurements])
-    clustering = DBSCAN(eps=eps, min_samples=min_samples)
-    labels = clustering.fit_predict(positions)
+
+    if _have_sklearn:
+        clustering = DBSCAN(eps=eps, min_samples=min_samples)
+        labels = clustering.fit_predict(positions)
+        clusters = {}
+        for idx, label in enumerate(labels):
+            if label == -1:
+                continue
+            clusters.setdefault(label, []).append(measurements[idx])
+        return clusters
+
+    # Fallback simple clustering: greedy cluster by distance to cluster centers
     clusters = {}
-    for idx, label in enumerate(labels):
-        if label == -1:
-            continue
-        clusters.setdefault(label, []).append(measurements[idx])
-    return clusters
+    centers = []
+    for idx, pos in enumerate(positions):
+        placed = False
+        for cid, center in enumerate(centers):
+            if np.linalg.norm(pos - center) <= eps:
+                clusters[cid].append(measurements[idx])
+                # update center
+                centers[cid] = np.mean([m.position for m in clusters[cid]], axis=0)
+                placed = True
+                break
+        if not placed:
+            cid = len(centers)
+            centers.append(pos.copy())
+            clusters[cid] = [measurements[idx]]
+
+    # Remove clusters with fewer than min_samples
+    filtered = {cid: members for cid, members in clusters.items() if len(members) >= max(1, int(min_samples))}
+    return filtered
 
 
 def merge_close_clusters(clusters: Dict[int, List[ArmorMeasurement]], max_cluster_noise: float) -> Dict[int, List[ArmorMeasurement]]:

@@ -5,7 +5,7 @@ import tf2_ros
 import tf2_geometry_msgs
 from geometry_msgs.msg import PoseStamped, Point, Quaternion
 from rm_interfaces.msg import Armor
-from .types import ArmorMeasurement
+from armor_fusion.types import ArmorMeasurement
 
 
 def transform_to_base_link(tf_buffer: tf2_ros.Buffer, armor: Armor, source_frame: str, target_frame: str, timestamp) -> Optional[ArmorMeasurement]:

@@ -1,7 +1,7 @@
 from typing import Dict, List
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
-from .types import ArmorMeasurement
+from armor_fusion.types import ArmorMeasurement
 from rm_interfaces.msg import Armor
 
 
