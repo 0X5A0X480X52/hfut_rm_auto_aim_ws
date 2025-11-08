@@ -1,12 +1,39 @@
 <?xml version="1.0"?>
 <!--
-Simple dual-camera test URDF xacro.
-Provides two camera links and frames for use in testing fusion/detector nodes.
+Dual-camera test URDF xacro.
+Structure:
+  odom (root)
+    ├── base_link (fixed joint: odom_to_base_link)
+    │   ├── camera_left_link (fixed)
+    │   │   └── camera_left_optical_frame
+    │   │       └── camera_left_visual
+    │   └── camera_right_link (fixed)
+    │       └── camera_right_optical_frame
+    │           └── camera_right_visual
+    └── gimbal_link (floating joint: odom_to_gimbal)
+        [预留用于未来的自瞄相机]
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="test_dual_camera">
 
-  <!-- Base link (could be base_link) -->
+  <!-- Root link (world/odom frame) -->
+  <link name="odom" />
+
+  <!-- Base link: main platform, fixed to odom -->
   <link name="base_link" />
+
+  <joint name="odom_to_base_link" type="fixed">
+    <parent link="odom" />
+    <child link="base_link" />
+    <origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
+  </joint>
+
+  <!-- Gimbal link: movable platform for future auto-aim camera -->
+  <link name="gimbal_link" />
+
+  <joint name="gimbal_joint" type="floating">
+    <parent link="odom" />
+    <child link="gimbal_link" />
+  </joint>
 
   <!-- Left camera mount -->
   <link name="camera_left_link" />

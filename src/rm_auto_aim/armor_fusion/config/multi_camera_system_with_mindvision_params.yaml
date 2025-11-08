@@ -1,0 +1,29 @@
+## Params for multi_camera_system_with_mindvision.launch.py
+## 包含 fusion, solver, detectors 的系统级默认参数
+
+/**:
+  ros__parameters:
+    # mindvision 驱动会在命名空间 camera_left / camera_right 下发布 armors
+    camera_topics:
+      - "camera_left/armor_detector/armors"
+      - "camera_right/armor_detector/armors"
+
+    # 目标坐标系
+    target_frame: "odom"
+
+    # DBSCAN 聚类参数
+    dbscan_eps: 0.3
+    dbscan_min_samples: 1
+
+    # 最大聚类噪声距离（米）
+    max_cluster_noise: 0.5
+
+    # 发布频率 (Hz)
+    publish_rate: 100.0
+
+    # 是否启用可视化
+    enable_visualization: true
+
+    measurement_buffer_size: 10
+    sync_timeout: 0.05
+

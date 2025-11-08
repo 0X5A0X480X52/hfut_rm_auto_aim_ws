@@ -41,6 +41,17 @@ def generate_launch_description():
         default_value='true',
         description='Enable RViz visualization'
     )
+
+    # Allow passing a params file to configure fusion/solver/detectors
+    system_params = DeclareLaunchArgument(
+        'system_params',
+        default_value=PathJoinSubstitution([
+            FindPackageShare('armor_fusion'),
+            'config',
+            'fusion_params.yaml'
+        ]),
+        description='Path to a YAML params file to configure fusion/solver/detectors'
+    )
     
     target_color = DeclareLaunchArgument(
         'target_color',
@@ -93,11 +104,7 @@ def generate_launch_description():
         name='multi_camera_fusion',
         output='screen',
         parameters=[
-            PathJoinSubstitution([
-                FindPackageShare('armor_fusion'),
-                'config',
-                'fusion_params.yaml'
-            ]),
+            LaunchConfiguration('system_params'),
             {
                 'enable_visualization': LaunchConfiguration('enable_visualization'),
             }
@@ -125,6 +132,7 @@ def generate_launch_description():
         enable_camera2,
         enable_visualization,
         target_color,
+        system_params,
         camera1_detector,
         camera2_detector,
         fusion_node,

@@ -2,12 +2,9 @@ from typing import List, Dict
 import numpy as np
 from armor_fusion.types import ArmorMeasurement
 
-try:
-    from sklearn.cluster import DBSCAN
-    _have_sklearn = True
-except Exception:
-    DBSCAN = None
-    _have_sklearn = False
+# Defer heavy sklearn imports until runtime to avoid slowing node startup.
+_have_sklearn = None
+DBSCAN = None
 
 
 def cluster_measurements(measurements: List[ArmorMeasurement], eps: float, min_samples: int) -> Dict[int, List[ArmorMeasurement]]:
@@ -21,7 +18,18 @@ def cluster_measurements(measurements: List[ArmorMeasurement], eps: float, min_s
 
     positions = np.array([m.position for m in measurements])
 
-    if _have_sklearn:
+    # Try to import sklearn lazily the first time clustering is needed.
+    global _have_sklearn, DBSCAN
+    if _have_sklearn is None:
+        try:
+            from sklearn.cluster import DBSCAN as _DB
+            DBSCAN = _DB
+            _have_sklearn = True
+        except Exception:
+            DBSCAN = None
+            _have_sklearn = False
+
+    if _have_sklearn and DBSCAN is not None:
         clustering = DBSCAN(eps=eps, min_samples=min_samples)
         labels = clustering.fit_predict(positions)
         clusters = {}

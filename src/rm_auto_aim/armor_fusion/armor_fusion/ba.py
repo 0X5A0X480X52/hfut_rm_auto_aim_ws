@@ -30,7 +30,10 @@ class BundleAdjustment:
                     res.append(float(np.linalg.norm(diff)))
             return np.array(res)
 
-        result = least_squares(residuals, x0, method='lm')
+        # Levenberg-Marquardt ('lm') requires the number of residuals >= number of variables.
+        # If we have fewer measurements than variables (3), fall back to a more robust solver.
+        method = 'lm' if len(measurements) >= 3 else 'trf'
+        result = least_squares(residuals, x0, method=method)
         return result.x, result.cost
 
     @staticmethod
