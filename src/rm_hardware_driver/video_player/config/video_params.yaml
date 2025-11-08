@@ -2,7 +2,7 @@ video_player:
   ros__parameters:
     # Path to the video file (required)
     # Example: "/path/to/your/video.mp4"
-    video_path: "/home/amatrix02/hfut_rm_auto_aim_ws/src/rm_hardware_driver/video_player/video/output.mp4"
+    video_path: "./src/rm_hardware_driver/video_player/video/output.avi"
     
     # Whether to loop the video playback
     loop_playback: true
