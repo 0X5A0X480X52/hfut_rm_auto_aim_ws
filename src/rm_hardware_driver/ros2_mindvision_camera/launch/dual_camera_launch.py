@@ -35,6 +35,15 @@ def generate_launch_description():
                                       .get('mv_camera', {}) \
                                       .get('ros__parameters', {}) \
                                       .get('camera_info_url', default_camera_info_right)
+            # Try to read frame_id for each camera from the params file (optional)
+            frame_id_left = params.get('/camera_left', {}) \
+                                     .get('mv_camera', {}) \
+                                     .get('ros__parameters', {}) \
+                                     .get('frame_id', 'camera_optical_frame')
+            frame_id_right = params.get('/camera_right', {}) \
+                                      .get('mv_camera', {}) \
+                                      .get('ros__parameters', {}) \
+                                      .get('frame_id', 'camera_optical_frame')
     except Exception as e:
         print(f"[Warning] 读取参数文件 {params_file} 失败，将使用默认 camera_info。Error: {e}")
 
@@ -57,6 +66,7 @@ def generate_launch_description():
             parameters=[LaunchConfiguration('params_file'), {
                 'camera_info_url': camera_info_left,
                 'use_sensor_data_qos': LaunchConfiguration('use_sensor_data_qos'),
+                'frame_id': frame_id_left,
             }],
         ),
         
@@ -74,6 +84,7 @@ def generate_launch_description():
                     parameters=[LaunchConfiguration('params_file'), {
                         'camera_info_url': camera_info_right,
                         'use_sensor_data_qos': LaunchConfiguration('use_sensor_data_qos'),
+                        'frame_id': frame_id_right,
                     }],
                 )
             ]
