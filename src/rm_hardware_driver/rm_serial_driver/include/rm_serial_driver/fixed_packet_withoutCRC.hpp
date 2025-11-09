@@ -38,8 +38,6 @@ class FixedPacket {
   }
 
  public:
-  //返回buffer_用于计算CRC
-  uint8_t* buffer() { return buffer_; }
   // 清除缓存, date_bytes和check_byte都用0填充
   void clear() { memset(buffer_ + 1, 0, capacity - 2); }
   // 设置flag
