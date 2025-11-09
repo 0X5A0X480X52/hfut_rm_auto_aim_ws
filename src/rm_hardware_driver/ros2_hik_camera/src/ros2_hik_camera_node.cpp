@@ -68,6 +68,9 @@ HikCameraNode::HikCameraNode(const rclcpp::NodeOptions & options)
   // Declare and set parameters BEFORE starting grabbing
   declareParameters();
 
+  // frame_id is declared in declareParameters(); ensure camera_info_msg uses it
+  camera_info_msg_.header.frame_id = frame_id_;
+
   // Add callback to the set parameter event
   params_callback_handle_ = this->add_on_set_parameters_callback(
     std::bind(&HikCameraNode::parametersCallback, this, std::placeholders::_1));
@@ -79,8 +82,8 @@ HikCameraNode::HikCameraNode(const rclcpp::NodeOptions & options)
   capturing_ = true;
   capture_thread_ = std::thread([this]() -> void {
     RCLCPP_INFO(this->get_logger(), "Publishing image!");
-
-    image_msg_.header.frame_id = "camera_optical_frame";
+    // Use configurable frame_id
+    image_msg_.header.frame_id = frame_id_;
     image_msg_.encoding = "bgr8";
 
     // Allocate image data buffer
@@ -472,6 +475,10 @@ void HikCameraNode::declareParameters()
   flip_image_ = this->declare_parameter("flip_image", false);
   RCLCPP_INFO(this->get_logger(), "Flip image = %s", flip_image_ ? "true" : "false");
 
+  // Frame id for published image/camera_info
+  frame_id_ = this->declare_parameter("frame_id", std::string("camera_optical_frame"));
+  RCLCPP_INFO(this->get_logger(), "frame_id = %s", frame_id_.c_str());
+
   // Image resolution
   param_desc.description = "Image width (0 for camera default)";
   image_width_ = this->declare_parameter("image_width", 0, param_desc);
@@ -580,6 +587,10 @@ rcl_interfaces::msg::SetParametersResult HikCameraNode::parametersCallback(
           result.reason = "Failed to set resolution, status = " + std::to_string(status);
         }
       }
+    } else if (param.get_name() == "frame_id") {
+      frame_id_ = param.as_string();
+      // keep camera_info frame_id in sync
+      camera_info_msg_.header.frame_id = frame_id_;
     } else {
       result.successful = false;
       result.reason = "Unknown parameter: " + param.get_name();

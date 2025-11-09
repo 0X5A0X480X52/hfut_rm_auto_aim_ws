@@ -17,6 +17,8 @@
     
     # Image processing
     flip_image: false
+  # Frame id used when publishing image/camera_info for this namespace
+  frame_id: camera_optical_frame
 
 /camera_right:
   ros__parameters:
@@ -34,3 +36,5 @@
     
     # Image processing
     flip_image: false
+  # Frame id used when publishing image/camera_info for this namespace
+  frame_id: camera_optical_frame

@@ -124,6 +124,8 @@ public:
     if (camera_info_manager_->validateURL(camera_info_url)) {
       camera_info_manager_->loadCameraInfo(camera_info_url);
       camera_info_msg_ = camera_info_manager_->getCameraInfo();
+      // Ensure camera_info has same frame_id as published images
+      camera_info_msg_.header.frame_id = frame_id_;
     } else {
       RCLCPP_WARN(this->get_logger(), "Invalid camera info URL: %s", camera_info_url.c_str());
     }
@@ -178,13 +180,10 @@ public:
     if (capture_thread_.joinable()) {
       capture_thread_.join();
     }
-
     CameraUnInit(h_camera_);
 
     RCLCPP_INFO(this->get_logger(), "Camera node destroyed!");
   }
-
-private:
   void declareParameters()
   {
     rcl_interfaces::msg::ParameterDescriptor param_desc;
@@ -196,8 +195,6 @@ private:
     // 对于CMOS传感器，其曝光的单位是按照行来计算的
     double exposure_line_time;
     CameraGetExposureLineTime(h_camera_, &exposure_line_time);
-    param_desc.integer_range[0].from_value =
-      t_capability_.sExposeDesc.uiExposeTimeMin * exposure_line_time;
     param_desc.integer_range[0].to_value =
       t_capability_.sExposeDesc.uiExposeTimeMax * exposure_line_time;
     double exposure_time = this->declare_parameter("exposure_time", 5000, param_desc);
@@ -338,6 +335,9 @@ private:
 
     // Flip
     flip_image_ = this->declare_parameter("flip_image", false);
+    // Frame id for published image/camera_info
+    frame_id_ = this->declare_parameter("frame_id", std::string("camera_optical_frame"));
+    RCLCPP_INFO(this->get_logger(), "frame_id = %s", frame_id_.c_str());
   }
 
   rcl_interfaces::msg::SetParametersResult parametersCallback(
@@ -460,8 +460,11 @@ private:
             RCLCPP_INFO(this->get_logger(), "Image resolution changed to %dx%d", image_width_, image_height_);
           }
         }
-      } else if (param.get_name() == "flip_image") {
-        flip_image_ = param.as_bool();
+        } else if (param.get_name() == "frame_id") {
+          frame_id_ = param.as_string();
+          camera_info_msg_.header.frame_id = frame_id_;
+        } else if (param.get_name() == "flip_image") {
+          flip_image_ = param.as_bool();
       } else {
         result.successful = false;
         result.reason = "Unknown parameter: " + param.get_name();
@@ -496,6 +499,7 @@ private:
 
   int fail_conut_ = 0;
   std::thread capture_thread_;
+  std::string frame_id_;
 
   OnSetParametersCallbackHandle::SharedPtr params_callback_handle_;
 };

@@ -19,3 +19,5 @@
     
     # Image processing
     flip_image: false      # Whether to flip the image (是否翻转图像)
+  # Frame id for published Image and CameraInfo
+  frame_id: camera_optical_frame

@@ -75,6 +75,7 @@ private:
   bool flip_image_;
   int image_width_;
   int image_height_;
+  std::string frame_id_;
   int fail_count_ = 0;
 
   // Parameter callback handle
