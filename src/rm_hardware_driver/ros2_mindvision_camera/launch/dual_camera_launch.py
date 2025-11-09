@@ -46,6 +46,11 @@ def generate_launch_description():
                                       .get('frame_id', 'camera_optical_frame')
     except Exception as e:
         print(f"[Warning] 读取参数文件 {params_file} 失败，将使用默认 camera_info。Error: {e}")
+        
+    print(f"[Info] 左相机 camera_info_url: {camera_info_left}")
+    print(f"[Info] 左相机 frame_id: {frame_id_left}")
+    print(f"[Info] 右相机 camera_info_url: {camera_info_right}")
+    print(f"[Info] 右相机 frame_id: {frame_id_right}")
 
     return LaunchDescription([
         DeclareLaunchArgument(name='params_file',
