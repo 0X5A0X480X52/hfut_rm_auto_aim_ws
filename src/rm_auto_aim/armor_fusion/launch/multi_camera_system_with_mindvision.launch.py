@@ -37,7 +37,7 @@ def generate_launch_description():
     declare_use_sensor_qos = DeclareLaunchArgument('use_sensor_data_qos', default_value='false', description='Use sensor data QoS for camera topics')
     declare_enable_viz = DeclareLaunchArgument('enable_visualization', default_value='true', description='Enable fusion visualization')
     declare_enable_tf = DeclareLaunchArgument('enable_robot_tf', default_value='true', description='Start robot_state_publisher and static TFs for cameras')
-    declare_robot_xacro = DeclareLaunchArgument('robot_xacro', default_value='/home/amatrix/Userfiles/Robomaster/hfut_rm_auto_aim_ws/src/rm_robot_description/urdf/test_dual_camera.urdf.xacro', description='Path to test robot xacro')
+    declare_robot_xacro = DeclareLaunchArgument('robot_xacro', default_value='./src/rm_robot_description/urdf/test_dual_camera.urdf.xacro', description='Path to test robot xacro')
 
     # Include the mindvision dual camera driver (it launches namespaces camera_left and camera_right)
     include_mindvision = IncludeLaunchDescription(

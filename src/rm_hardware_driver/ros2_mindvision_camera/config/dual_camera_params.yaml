@@ -24,7 +24,7 @@
       saturation: 128
       gamma: 100
       flip_image: false
-  frame_id: camera1_optical_frame
+      frame_id: camera1_optical_frame
 
 /camera_right:
   mv_camera:
@@ -49,4 +49,4 @@
       saturation: 128
       gamma: 100
       flip_image: false
-  frame_id: camera2_optical_frame
+      frame_id: camera2_optical_frame

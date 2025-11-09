@@ -32,6 +32,8 @@
 #include "rm_serial_driver/transporter_interface.hpp"
 #include "rm_utils/logger/log.hpp"
 
+#define CRC_START_8 0xff
+
 namespace fyt::serial_driver {
 
 template <int capacity = 16>
