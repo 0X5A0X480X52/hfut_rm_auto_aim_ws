@@ -1,0 +1,104 @@
+<?xml version="1.0"?>
+<!--
+Dual-camera test URDF xacro.
+Structure:
+  odom (root)
+    ├── base_link (fixed joint: odom_to_base_link)
+    │   ├── camera_left_link (fixed)
+    │   │   └── camera_left_optical_frame
+    │   │       └── camera_left_visual
+    │   └── camera_right_link (fixed)
+    │       └── camera_right_optical_frame
+    │           └── camera_right_visual
+    └── gimbal_link (floating joint: odom_to_gimbal)
+        [预留用于未来的自瞄相机]
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="test_dual_camera">
+
+  <!-- Root link (world/odom frame) -->
+  <link name="odom" />
+
+  <!-- Base link: main platform, fixed to odom -->
+  <link name="base_link" />
+
+  <joint name="odom_to_base_link" type="fixed">
+    <parent link="odom" />
+    <child link="base_link" />
+    <origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
+  </joint>
+
+  <!-- Gimbal link: movable platform for future auto-aim camera -->
+  <link name="gimbal_link" />
+
+  <joint name="gimbal_joint" type="floating">
+    <parent link="odom" />
+    <child link="gimbal_link" />
+  </joint>
+
+  <!-- Left camera mount -->
+  <link name="camera_left_link" />
+  <joint name="camera_left_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="camera_left_link" />
+    <!-- place left camera slightly left and up -->
+    <origin xyz="0.05 0.06 0.05" rpy="0 0 0" />
+  </joint>
+
+  <!-- Right camera mount -->
+  <link name="camera_right_link" />
+  <joint name="camera_right_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="camera_right_link" />
+    <!-- place right camera slightly right and up -->
+    <origin xyz="0.05 -0.06 0.05" rpy="0 0 0" />
+  </joint>
+
+  <!-- Optical frames (camera optical frames expected by many drivers/consumers) -->
+  <link name="camera_left_optical_frame" />
+  <joint name="camera_left_opt_joint" type="fixed">
+    <parent link="camera_left_link" />
+    <child link="camera_left_optical_frame" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint>
+
+  <link name="camera_right_optical_frame" />
+  <joint name="camera_right_opt_joint" type="fixed">
+    <parent link="camera_right_link" />
+    <child link="camera_right_optical_frame" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint>
+
+  <!-- Simple camera sensor description as visual only to ease RViz testing -->
+  <link name="camera_left_visual">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.02 0.02 0.02" />
+      </geometry>
+      <material name="black" />
+    </visual>
+  </link>
+
+  <joint name="camera_left_visual_joint" type="fixed">
+    <parent link="camera_left_optical_frame" />
+    <child link="camera_left_visual" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint>
+
+  <link name="camera_right_visual">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.02 0.02 0.02" />
+      </geometry>
+      <material name="black" />
+    </visual>
+  </link>
+
+  <joint name="camera_right_visual_joint" type="fixed">
+    <parent link="camera_right_optical_frame" />
+    <child link="camera_right_visual" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint>
+
+</robot>

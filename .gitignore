@@ -5,3 +5,4 @@ log/**
 .cache/**
 Camera/**
 resources/**
+**/__pycache__/**

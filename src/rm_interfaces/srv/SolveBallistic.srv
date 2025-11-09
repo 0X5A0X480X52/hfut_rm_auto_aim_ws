@@ -1,0 +1,16 @@
+# SolveBallistic.srv
+# 弹道解算服务
+
+# 请求
+geometry_msgs/Point target_position      # 目标3D位置
+geometry_msgs/Vector3 target_velocity    # 目标速度
+float64 bullet_speed                     # 子弹速度 (m/s)
+
+---
+
+# 响应
+float64 pitch            # 云台pitch角 (弧度)
+float64 yaw              # 云台yaw角 (弧度)
+float64 flight_time      # 飞行时间 (秒)
+bool success             # 是否成功求解
+string message           # 错误或成功信息

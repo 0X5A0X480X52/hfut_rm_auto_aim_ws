@@ -81,6 +81,39 @@ public:
       RCLCPP_WARN(this->get_logger(), "No valid camera info URL provided, using default camera info");
       camera_info_msg_.width = video_width_;
       camera_info_msg_.height = video_height_;
+<<<<<<< HEAD
+=======
+      // Fill reasonable default intrinsics to avoid downstream division-by-zero
+      // and empty-intrinsic issues in consumers (e.g., PnP solvers).
+      double fx = std::max(1.0, static_cast<double>(video_width_) * 0.8);
+      double fy = fx; // assume square pixels
+      double cx = static_cast<double>(video_width_) / 2.0;
+      double cy = static_cast<double>(video_height_) / 2.0;
+      camera_info_msg_.k[0] = fx;
+      camera_info_msg_.k[1] = 0.0;
+      camera_info_msg_.k[2] = cx;
+      camera_info_msg_.k[3] = 0.0;
+      camera_info_msg_.k[4] = fy;
+      camera_info_msg_.k[5] = cy;
+      camera_info_msg_.k[6] = 0.0;
+      camera_info_msg_.k[7] = 0.0;
+      camera_info_msg_.k[8] = 1.0;
+      // Projection matrix P (3x4)
+      camera_info_msg_.p[0] = fx;
+      camera_info_msg_.p[1] = 0.0;
+      camera_info_msg_.p[2] = cx;
+      camera_info_msg_.p[3] = 0.0;
+      camera_info_msg_.p[4] = 0.0;
+      camera_info_msg_.p[5] = fy;
+      camera_info_msg_.p[6] = cy;
+      camera_info_msg_.p[7] = 0.0;
+      camera_info_msg_.p[8] = 0.0;
+      camera_info_msg_.p[9] = 0.0;
+      camera_info_msg_.p[10] = 1.0;
+      camera_info_msg_.p[11] = 0.0;
+      camera_info_msg_.distortion_model = "plumb_bob";
+      camera_info_msg_.d = {0.0, 0.0, 0.0, 0.0, 0.0};
+>>>>>>> origin/v2.0
     }
 
     // Start capture thread
@@ -121,9 +154,18 @@ public:
 
         // Convert to ROS message
         auto now = this->now();
+<<<<<<< HEAD
         std_msgs::msg::Header header;
         header.stamp = now;
         header.frame_id = "camera_optical_frame";
+=======
+  std_msgs::msg::Header header;
+  header.stamp = now;
+  // Use camera_name_ to create a unique frame id per-instance so multiple
+  // video_player nodes (in different namespaces) don't publish identical
+  // frame ids. Example: camera_name_="camera1" -> "camera1_optical_frame".
+  header.frame_id = camera_name_ + std::string("_optical_frame");
+>>>>>>> origin/v2.0
 
         cv_bridge::CvImage cv_image(header, "bgr8", frame);
         sensor_msgs::msg::Image::SharedPtr image_msg = cv_image.toImageMsg();

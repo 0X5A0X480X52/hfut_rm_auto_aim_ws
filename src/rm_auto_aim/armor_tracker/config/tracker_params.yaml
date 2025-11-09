@@ -1,0 +1,22 @@
+/**:
+  ros__parameters:
+    # 调试模式
+    debug: true
+    
+    # 数据关联参数
+    max_match_distance: 0.2      # 最大匹配距离(米)
+    max_match_yaw_diff: 1.0      # 最大匹配yaw角差(弧度)
+    
+    # 跟踪器状态机参数
+    tracking_threshold: 5        # 进入TRACKING状态的帧数
+    lost_threshold: 10           # 进入LOST状态的帧数
+    
+    # 跟踪器管理
+    max_trackers: 20             # 最大跟踪器数量
+    
+    # EKF参数
+    ekf:
+      sigma2_q_xyz: 20.0         # 位置过程噪声方差
+      sigma2_q_yaw: 1.0          # yaw角过程噪声方差
+      r_xyz: 0.05                # 位置测量噪声方差
+      r_yaw: 0.02                # yaw角测量噪声方差
