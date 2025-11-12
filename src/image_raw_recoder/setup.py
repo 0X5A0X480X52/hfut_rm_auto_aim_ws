@@ -20,6 +20,7 @@ setup(
         'console_scripts': [
             'recorder_node = image_raw_recoder.recorder_node:main',
             'bag_to_mp4 = image_raw_recoder.bag_to_mp4:main',
+            'multi_recorder = image_raw_recoder.multi_recorder:main',
         ],
     },
 )

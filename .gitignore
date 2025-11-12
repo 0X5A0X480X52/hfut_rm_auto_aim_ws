@@ -6,3 +6,4 @@ log/**
 Camera/**
 resources/**
 **/__pycache__/**
+*.pyc
