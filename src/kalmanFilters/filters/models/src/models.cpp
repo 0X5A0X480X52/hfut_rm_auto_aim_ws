@@ -30,17 +30,28 @@ Models::Models()
  * @return Lambda 值。
  */
 double Models::getLambda(const Eigen::VectorXd &Z) {
-  Eigen::VectorXd r = Z - H.transpose() * X_after;
+  Eigen::VectorXd r = Z - H * X_after;
 
   std::cout << "H shape: " << H.rows() << " x " << H.cols() << std::endl;
   std::cout << "P_after shape: " << P_after.rows() << " x " << P_after.cols() << std::endl;
   std::cout << "R shape: " << R.rows() << " x " << R.cols() << std::endl;
 
-  Eigen::MatrixXd S = H.transpose() * P_after * H + R;
+  Eigen::MatrixXd S = H * P_after * H.transpose() + R;
   double detS = std::abs(S.determinant());
   double Lambda =
     (1 / std::sqrt(2 * M_PI * detS)) * std::exp(-0.5 * r.transpose() * S.inverse() * r);
   return Lambda;
+}
+
+void Models::performPredict() {
+    X_prior = F * X_after;
+    P_prior = F * P_after * F.transpose() + Q;
+}
+
+void Models::performUpdate(const Eigen::VectorXd &Z) {
+    Eigen::MatrixXd Kal_Gain = P_prior * H.transpose() * (H * P_prior * H.transpose() + R).inverse();
+    X_after = X_prior + Kal_Gain * (Z - H * X_prior);
+    P_after = (I - Kal_Gain * H) * P_prior;
 }
 
 /**
@@ -48,7 +59,7 @@ double Models::getLambda(const Eigen::VectorXd &Z) {
  * @return 预测的状态矩阵。
  */
 Eigen::MatrixXd Models::predict() const {
-    return H.transpose() * F * X_after;
+    return H * F * X_after;
 }
 
 /**
@@ -59,7 +70,7 @@ Eigen::MatrixXd Models::predict() const {
 Eigen::MatrixXd Models::predict(int N) const {
 
     if (N == 0)
-        return H.transpose() * X_after;
+        return H * X_after;
 
     Eigen::VectorXd X = X_after;
     Eigen::MatrixXd P = P_after;
@@ -73,5 +84,5 @@ Eigen::MatrixXd Models::predict(int N) const {
         P = F * P * F.transpose() + Q;
     }
     
-    return H.transpose() * X;
+    return H * X;
 }

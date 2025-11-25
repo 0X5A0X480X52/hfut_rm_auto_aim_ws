@@ -1,0 +1,24 @@
+# 2D Constant Acceleration Kalman Filter Configuration
+# 2维恒定加速度卡尔曼滤波器配置
+
+filter:
+  type: "CA_KF"
+  
+  # Sampling time (seconds)
+  T: 0.01
+  
+  # State dimension (2D: x,y -> 6 states: x, vx, ax, y, vy, ay)
+  Dim: 2
+  
+  # Measurement noise covariance matrix R (2x2)
+  # Position measurement noise
+  R:
+    - [0.01, 0.0]
+    - [0.0, 0.01]
+  
+  # Initial state vector [x, vx, ax, y, vy, ay]
+  X_0: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  
+  # Process noise parameters (optional)
+  # Will use default if not specified
+  process_noise_std: 0.1

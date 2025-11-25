@@ -11,11 +11,14 @@ find_package(basic_models REQUIRED)
 find_package(combined_models REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 include_directories(
+  include
   ${EIGEN3_INCLUDE_DIRS}
 )
 
+# Original examples
 add_executable(factory_demo
   src/factory_demo.cpp
 )
@@ -31,11 +34,46 @@ add_executable(kalman_filter_node_example
 )
 ament_target_dependencies(kalman_filter_node_example rclcpp models basic_models combined_models)
 
+# Filter test program
+add_executable(filter_test
+  src/filter_test.cpp
+)
+ament_target_dependencies(filter_test models)
+target_link_libraries(filter_test yaml-cpp)
+
 install(TARGETS
   factory_demo
   complete_example
   kalman_filter_node_example
+  filter_test
   DESTINATION lib/${PROJECT_NAME}
+)
+
+# Install config files
+install(DIRECTORY
+  config/
+  DESTINATION share/${PROJECT_NAME}/config
+)
+
+# Install scripts
+install(PROGRAMS
+  scripts/generate_test_data.py
+  scripts/analyze_results.py
+  scripts/run_all_tests.sh
+  scripts/demo.sh
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+# Install headers (for reference)
+install(DIRECTORY
+  include/
+  DESTINATION include/${PROJECT_NAME}
+)
+
+# Install README
+install(FILES
+  README.md
+  DESTINATION share/${PROJECT_NAME}
 )
 
 ament_package()

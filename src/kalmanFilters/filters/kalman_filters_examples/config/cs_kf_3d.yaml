@@ -1,0 +1,22 @@
+# 3D Current Statistical Model Kalman Filter Configuration
+# 3维"当前"统计模型卡尔曼滤波器配置
+
+filter:
+  type: "CS_KF"
+  
+  T: 0.01
+  Dim: 3
+  
+  # Measurement noise covariance matrix R (3x3)
+  R:
+    - [0.01, 0.0, 0.0]
+    - [0.0, 0.01, 0.0]
+    - [0.0, 0.0, 0.01]
+  
+  # Initial state vector [x, vx, ax, y, vy, ay, z, vz, az]
+  X_0: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  
+  # CS model specific parameters
+  extra_params:
+    # Maneuver frequency (1/tau)
+    alpha: 0.5

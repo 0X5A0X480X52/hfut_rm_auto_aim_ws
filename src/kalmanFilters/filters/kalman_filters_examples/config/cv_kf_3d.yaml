@@ -1,0 +1,19 @@
+# 3D Constant Velocity Kalman Filter Configuration
+# 3维恒定速度卡尔曼滤波器配置
+
+filter:
+  type: "CV_KF"
+  
+  T: 0.01
+  Dim: 3
+  
+  # Measurement noise covariance matrix R (3x3)
+  R:
+    - [0.01, 0.0, 0.0]
+    - [0.0, 0.01, 0.0]
+    - [0.0, 0.0, 0.01]
+  
+  # Initial state vector [x, vx, y, vy, z, vz]
+  X_0: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  
+  process_noise_std: 0.1

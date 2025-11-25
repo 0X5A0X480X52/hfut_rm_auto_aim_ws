@@ -63,23 +63,37 @@ IF(UNIX)
     PATHS /usr/local /usr ${CMAKE_PREFIX_PATH}
     PATH_SUFFIXES lib)
 
-  SET(G2O_LIBRARIES ${G2O_CSPARSE_EXTENSION_LIB}
-                    ${G2O_CORE_LIB}
-                    ${G2O_STUFF_LIB}
-                    ${G2O_TYPES_SLAM2D_LIB}
-                    ${G2O_TYPES_SLAM3D_LIB}
-                    ${G2O_SOLVER_CHOLMOD_LIB}
-                    ${G2O_SOLVER_PCG_LIB}
-                    ${G2O_SOLVER_CSPARSE_LIB}
-                    ${G2O_INCREMENTAL_LIB}
-                    )
+  # (no debug output) build list of libraries present on the filesystem
 
-  IF(G2O_LIBRARIES AND G2O_INCLUDE_DIR)
-    SET(G2O_FOUND "YES")
-    IF(NOT G2O_FIND_QUIETLY)
-      MESSAGE(STATUS "Found libg2o: ${G2O_LIBRARIES}")
+  # Build a list of only the libraries that actually exist. Some g2o
+  # installations build optional components (cholmod, incremental, ...)
+  # so only append the entries that are real files.
+  SET(G2O_LIBRARIES)
+  MACRO(_append_if_exists var)
+    IF(EXISTS "${${var}}")
+      LIST(APPEND G2O_LIBRARIES "${${var}}")
     ENDIF()
-  ELSE(G2O_LIBRARIES AND G2O_INCLUDE_DIR)
+  ENDMACRO()
+
+  _append_if_exists(G2O_CSPARSE_EXTENSION_LIB)
+  _append_if_exists(G2O_CORE_LIB)
+  _append_if_exists(G2O_STUFF_LIB)
+  _append_if_exists(G2O_TYPES_SLAM2D_LIB)
+  _append_if_exists(G2O_TYPES_SLAM3D_LIB)
+  _append_if_exists(G2O_SOLVER_CHOLMOD_LIB)
+  _append_if_exists(G2O_SOLVER_PCG_LIB)
+  _append_if_exists(G2O_SOLVER_CSPARSE_LIB)
+  _append_if_exists(G2O_INCREMENTAL_LIB)
+
+  # Consider G2O found only when headers and at least the two core libs
+  # are available; other optional libs are useful but not required.
+  IF(G2O_INCLUDE_DIR AND EXISTS "${G2O_CORE_LIB}" AND EXISTS "${G2O_STUFF_LIB}")
+    # require core and stuff presence for reliable linking
+      SET(G2O_FOUND "YES")
+      IF(NOT G2O_FIND_QUIETLY)
+        MESSAGE(STATUS "Found libg2o: ${G2O_LIBRARIES}")
+      ENDIF()
+    ELSE()
     IF(NOT G2O_LIBRARIES)
       IF(G2O_FIND_REQUIRED)
         message(FATAL_ERROR "Could not find libg2o!")

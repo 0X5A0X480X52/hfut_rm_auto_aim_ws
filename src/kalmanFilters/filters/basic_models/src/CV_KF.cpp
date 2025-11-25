@@ -1,5 +1,6 @@
 #include "basic_models/CV_KF.h"
 #include <cmath>
+#include <iostream>
 
 CV_KF::CV_KF(double T, int Dim, const Eigen::MatrixXd& R)
     : Models(){
@@ -23,7 +24,8 @@ CV_KF::CV_KF(double T, int Dim, const Eigen::MatrixXd& R)
     F = kroneckerProduct(I_dim, F_D1).eval();
 
     // 定义观测模型（仅含观测位置）
-    Eigen::VectorXd H_D1 = (Eigen::VectorXd(2) << 1, 0).finished();
+    // H_D1是行向量 [1, 0]，H应该是 Dim x (2*Dim)
+    Eigen::RowVectorXd H_D1 = (Eigen::RowVectorXd(2) << 1, 0).finished();
     H = kroneckerProduct(I_dim, H_D1).eval();
 
     // 设置默认的初始状态
@@ -47,13 +49,14 @@ Eigen::MatrixXd CV_KF::KalmanFilterWholeProcess(const std::vector<Eigen::VectorX
         P_prior = F * P_after * F.transpose() + Q;
 
         // 校正
-        Eigen::MatrixXd Kal_Gain = P_prior * H * (H.transpose() * P_prior * H + R).inverse();
+        Eigen::MatrixXd Kal_Gain = P_prior * H.transpose() * (H * P_prior * H.transpose() + R).inverse();
         Eigen::VectorXd Z = measurements[k];
 
-        X_after = X_prior + Kal_Gain * (Z - H.transpose() * X_prior);
-        P_after = (I - Kal_Gain * H.transpose()) * P_prior;
+        X_after = X_prior + Kal_Gain * (Z - H * X_prior);
+        P_after = (I - Kal_Gain * H) * P_prior;
 
-        predict[k] = H.transpose() * X_after;
+        // 返回完整状态
+        predict[k] = X_after;
     }
 
     Eigen::MatrixXd result(predict.size(), predict[0].size());
@@ -66,12 +69,13 @@ Eigen::VectorXd CV_KF::KalmanFilterIterator(const Eigen::VectorXd& Z) {
     // 预测
     X_prior = F * X_after;
     P_prior = F * P_after * F.transpose() + Q;
-
-    // 校正
-    Eigen::MatrixXd Kal_Gain = P_prior * H * (H.transpose() * P_prior * H + R).inverse();
     
-    X_after = X_prior + Kal_Gain * (Z - H.transpose() * X_prior);
-    P_after = (I - Kal_Gain * H.transpose()) * P_prior;
+    // 校正
+    Eigen::MatrixXd Kal_Gain = P_prior * H.transpose() * (H * P_prior * H.transpose() + R).inverse();
+    
+    X_after = X_prior + Kal_Gain * (Z - H * X_prior);
+    P_after = (I - Kal_Gain * H) * P_prior;
 
-    return H.transpose() * X_after;
+    // 返回完整状态 [x, vx, y, vy, ...]
+    return X_after;
 }

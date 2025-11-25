@@ -10,7 +10,7 @@
 
 **文件位置**: `src/kalmanFilters/models/`
 
-- **model_factory.h/cpp**: 
+- **model_factory.h/cpp**:
   - `ModelConfig`: 模型配置参数结构
   - `ModelFactoryBase`: 抽象工厂基类
   - `ModelFactoryRegistry`: 工厂注册器（单例模式）
@@ -42,7 +42,7 @@
 
 **文件位置**: `src/kalmanFilters/models/`
 
-- **model_config_loader.h/cpp**: 
+- **model_config_loader.h/cpp**:
   - 支持从 YAML 文件加载模型配置
   - 自动解析矩阵和向量
   - 直接从配置文件创建模型实例
@@ -52,6 +52,7 @@
 **文件位置**: `src/kalmanFilters/models/config/`
 
 提供了多个配置文件示例：
+
 - `ca_kf_config.yaml`: CA 模型配置
 - `cv_kf_config.yaml`: CV 模型配置
 - `singer_kf_config.yaml`: Singer 模型配置
@@ -135,15 +136,19 @@ namespace {
 ## 设计模式
 
 ### 工厂方法模式
+
 每个具体模型有自己的工厂类，实现 `createModel()` 方法。
 
 ### 注册器模式
+
 使用 `ModelFactoryRegistry` 管理所有工厂，支持运行时查询和创建。
 
 ### 单例模式
+
 `ModelFactoryRegistry` 使用单例模式确保全局唯一。
 
 ### 自动注册
+
 使用静态初始化和宏实现自动注册，无需手动调用注册函数。
 
 ## 优势

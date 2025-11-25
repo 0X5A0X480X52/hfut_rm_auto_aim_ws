@@ -45,6 +45,17 @@ public:
   virtual Eigen::VectorXd KalmanFilterIterator(const Eigen::VectorXd &Z) = 0;
 
   /**
+     * @brief 执行预测步骤。
+     */
+  virtual void performPredict();
+
+  /**
+     * @brief 执行更新步骤。
+     * @param Z 当前测量值。
+     */
+  virtual void performUpdate(const Eigen::VectorXd &Z);
+
+  /**
      * @brief 预测下一时刻的状态。
      * @return 预测的状态矩阵。
      */

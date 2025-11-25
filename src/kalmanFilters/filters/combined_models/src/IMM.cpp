@@ -7,8 +7,17 @@ IMM::IMM(const std::vector<Models*>& modelList, int X_len, const Eigen::MatrixXd
 }
 
 void IMM::KalmanFilterInit(const Eigen::VectorXd& X_0) {
-    for (Models* model : modelList) {
-        model->KalmanFilterInit(X_0);
+    for (int i = 0; i < modelList.size(); ++i) {
+        Models* model = modelList[i];
+        // 使用适配器设置状态，而不是直接调用KalmanFilterInit
+        // 这样可以确保CV等子模型通过适配器正确转换9D->6D
+        model->set_X_after(X_0);
+        
+        // 初始化IMM的X_after矩阵
+        X_after.row(i) = model->get_X_after();
+        // 初始化IMM的P_after矩阵
+        int X_len = X_after.cols();
+        P_after.block(i * X_len, 0, X_len, X_len) = model->get_P_after();
     }
     std::cout << "IMM::KalmanFilterInit init" << std::endl;
 }
@@ -34,12 +43,12 @@ Eigen::VectorXd IMM::KalmanFilterIterator(const Eigen::VectorXd& Z) {
 
     // 3) 计算 P_fusion
     for (int i = 0; i < model_cnt; ++i) {
-        Eigen::MatrixXd Pfuse = Eigen::MatrixXd::Zero(X_after.cols(), X_after.cols());
+        Eigen::MatrixXd Pfuse = Eigen::MatrixXd::Zero(X_len, X_len);
         for (int k = 0; k < model_cnt; ++k) {
             Eigen::MatrixXd P_block_k = P_after.block(k * X_len, 0, X_len, X_len);
             Eigen::VectorXd e_k = error.row(k).transpose();
             Eigen::MatrixXd eDot_k = e_k * e_k.transpose();
-            Pfuse += (P_block_k - eDot_k) * mergeRateMat(i, k);
+            Pfuse += (P_block_k + eDot_k) * mergeRateMat(i, k);  // 注意：应为+而非-
         }
         P_fusion.block(i * X_len, 0, X_len, X_len) = Pfuse;
     }
@@ -47,12 +56,11 @@ Eigen::VectorXd IMM::KalmanFilterIterator(const Eigen::VectorXd& Z) {
     for (int i = 0; i < model_cnt; ++i) {
         Models* model = modelList[i];
         model->set_X_after(X_fusion.row(i));
-        model->set_P_after(P_fusion.block(i * X_len, 0, X_len, X_len)); // 修改此行
+        model->set_P_after(P_fusion.block(i * X_len, 0, X_len, X_len));
         model->KalmanFilterIterator(Z);
         X_after.row(i) = model->get_X_after();
-        P_after.block(i * X_len, 0, X_len, X_len) = model->get_P_after(); // 修改此行
+        P_after.block(i * X_len, 0, X_len, X_len) = model->get_P_after();
         Lambda(i) = getLambda(*model, Z);
-        // Lambda(i) = model->getLambda(Z);
     }
 
     confidence_prior = transformRateMat * confidence;
@@ -115,8 +123,8 @@ Eigen::MatrixXd IMM::KalmanFilterWholeProcess(const std::vector<Eigen::VectorXd>
 double IMM::getLambda(Models& model, const Eigen::VectorXd& Z) {
     double pi = 3.14;
 
-    Eigen::VectorXd r = Z - model.get_H().transpose() * model.defaultGetXAfter();
-    Eigen::MatrixXd S = model.get_H().transpose() * model.defaultGetPAfter() * model.get_H() + model.get_R();
+    Eigen::VectorXd r = Z - model.get_H() * model.defaultGetXAfter();
+    Eigen::MatrixXd S = model.get_H() * model.defaultGetPAfter() * model.get_H().transpose() + model.get_R();
     double det_S = S.determinant();
     if (det_S <= 0 || std::isnan(det_S) || std::isinf(det_S)) {
         det_S = 1e-9; // Replace invalid determinant with a very small positive number

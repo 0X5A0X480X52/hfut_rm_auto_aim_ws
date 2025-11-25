@@ -7,3 +7,6 @@ Camera/**
 resources/**
 **/__pycache__/**
 *.pyc
+**/analysis/**
+**/results/**
+**/test_data/**

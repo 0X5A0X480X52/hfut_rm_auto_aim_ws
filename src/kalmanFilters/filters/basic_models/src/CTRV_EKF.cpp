@@ -10,10 +10,10 @@ CTRV_EKF::CTRV_EKF(double T, const Eigen::MatrixXd& R)
     this->P_after = Eigen::MatrixXd::Identity(Dim, Dim); // 后验误差协方差矩阵
     this->X_after = Eigen::VectorXd::Zero(Dim); // 后验状态估计
 
-    // 定义观测模型（仅含观测位置）
-    this->H = Eigen::MatrixXd::Zero(Dim, 2);
-    this->H(0, 0) = 1;
-    this->H(1, 1) = 1;
+    // 定义观测模型（仅含观测位置）: H为(2, 5)矩阵
+    this->H = Eigen::MatrixXd::Zero(2, Dim);
+    this->H(0, 0) = 1;  // 测量x对应状态x
+    this->H(1, 1) = 1;  // 测量y对应状态y
 }
 
 void CTRV_EKF::KalmanFilterInit(const Eigen::VectorXd& X_0) {
@@ -24,9 +24,8 @@ void CTRV_EKF::KalmanFilterInit(const Eigen::VectorXd& X_0) {
 Eigen::MatrixXd CTRV_EKF::KalmanFilterWholeProcess(const std::vector<Eigen::VectorXd>& measurements) {
     std::vector<Eigen::VectorXd> predict(measurements.size());
 
-    for (const auto& Z : measurements) {
-        Eigen::VectorXd X_pred = KalmanFilterIterator(Z);
-        predict.push_back(X_pred);
+    for (std::size_t k = 0; k < measurements.size(); ++k) {
+        predict[k] = KalmanFilterIterator(measurements[k]);
     }
 
     Eigen::MatrixXd result(predict.size(), predict[0].size());
@@ -100,19 +99,19 @@ Eigen::VectorXd CTRV_EKF::KalmanFilterIterator(const Eigen::VectorXd& Z) {
     // 预测协方差
     P_prior = F * P_prior * F.transpose() + Q;
 
-    // 计算卡尔曼增益
-    Eigen::MatrixXd S = H.transpose() * P_prior * H + R;
-    Eigen::MatrixXd Kal_Gain = P_prior * H * S.inverse();
+    // 计算卡尔曼增益 (H为2x5矩阵)
+    Eigen::MatrixXd S = H * P_prior * H.transpose() + R;
+    Eigen::MatrixXd Kal_Gain = P_prior * H.transpose() * S.inverse();
 
     // 更新状态估计
-    Eigen::VectorXd Y = Z - H.transpose() * X_predict;
+    Eigen::VectorXd Y = Z - H * X_predict;
     X_after = X_predict + Kal_Gain * Y;
 
     // 更新协方差矩阵
-    P_after = (Eigen::MatrixXd::Identity(Dim, Dim) - Kal_Gain * H.transpose()) * P_prior;
+    P_after = (Eigen::MatrixXd::Identity(Dim, Dim) - Kal_Gain * H) * P_prior;
 
-    // 返回位置预测值
-    return X_after.head(2);
+    // 返回完整状态估计 [x, y, v, theta, omega]
+    return X_after;
 }
 
 /**
@@ -122,7 +121,7 @@ Eigen::VectorXd CTRV_EKF::KalmanFilterIterator(const Eigen::VectorXd& Z) {
  */
 Eigen::MatrixXd CTRV_EKF::predict(int N) const {
     if (N == 0)
-        return H.transpose() * X_after;
+        return H * X_after;
     
     Eigen::VectorXd X = X_after;
     
@@ -153,5 +152,5 @@ Eigen::MatrixXd CTRV_EKF::predict(int N) const {
         // X(4) = X(4);
     }
     
-    return H.transpose() * X;
+    return H * X;
 }

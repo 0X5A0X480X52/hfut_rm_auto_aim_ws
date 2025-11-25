@@ -32,7 +32,7 @@
 #include "rm_serial_driver/transporter_interface.hpp"
 #include "rm_utils/logger/log.hpp"
 
-#define CRC_START_8 0xff
+#define CRC_START_8 0x00
 
 namespace fyt::serial_driver {
 

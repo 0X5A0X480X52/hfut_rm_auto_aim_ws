@@ -28,7 +28,8 @@ Singer_KF::Singer_KF(double T, double a, double sigma, int Dim, const Eigen::Mat
     F = kroneckerProduct(I_dim, F_D1).eval();
 
     // 定义观测模型（仅含观测位置）
-    Eigen::VectorXd H_D1 = (Eigen::VectorXd(3) << 1, 0, 0).finished();
+    // H_D1是行向量 [1, 0, 0]，H应该是 Dim x (3*Dim)
+    Eigen::RowVectorXd H_D1 = (Eigen::RowVectorXd(3) << 1, 0, 0).finished();
     H = kroneckerProduct(I_dim, H_D1).eval();
 
     // 设置默认的初始状态
@@ -52,13 +53,14 @@ Eigen::MatrixXd Singer_KF::KalmanFilterWholeProcess(const std::vector<Eigen::Vec
         P_prior = F * P_after * F.transpose() + Q;
 
         // 校正
-        Eigen::MatrixXd Kal_Gain = P_prior * H * (H.transpose() * P_prior * H + R).inverse();
+        Eigen::MatrixXd Kal_Gain = P_prior * H.transpose() * (H * P_prior * H.transpose() + R).inverse();
         Eigen::VectorXd Z = measurements[k];
 
-        X_after = X_prior + Kal_Gain * (Z - H.transpose() * X_prior);
-        P_after = (I - Kal_Gain * H.transpose()) * P_prior;
+        X_after = X_prior + Kal_Gain * (Z - H * X_prior);
+        P_after = (I - Kal_Gain * H) * P_prior;
 
-        predict[k] = H.transpose() * X_after;
+        // 返回完整状态而非仅位置
+        predict[k] = X_after;
     }
 
     Eigen::MatrixXd result(predict.size(), predict[0].size());
@@ -73,10 +75,11 @@ Eigen::VectorXd Singer_KF::KalmanFilterIterator(const Eigen::VectorXd& Z) {
     P_prior = F * P_after * F.transpose() + Q;
 
     // 校正
-    Eigen::MatrixXd Kal_Gain = P_prior * H * (H.transpose() * P_prior * H + R).inverse();
+    Eigen::MatrixXd Kal_Gain = P_prior * H.transpose() * (H * P_prior * H.transpose() + R).inverse();
     
-    X_after = X_prior + Kal_Gain * (Z - H.transpose() * X_prior);
-    P_after = (I - Kal_Gain * H.transpose()) * P_prior;
+    X_after = X_prior + Kal_Gain * (Z - H * X_prior);
+    P_after = (I - Kal_Gain * H) * P_prior;
 
-    return H.transpose() * X_after;
+    // 返回完整状态 [x, vx, ax, y, vy, ay, ...] 而非仅位置
+    return X_after;
 }

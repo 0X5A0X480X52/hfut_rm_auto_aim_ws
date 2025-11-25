@@ -17,7 +17,7 @@ class FireState:
 
 class InfantryProtocolCommunicator:
     def __init__(self, port='/dev/ttyUSB0', baudrate=115200, timeout=0.1):
-        """初始化步兵协议串口通信器"""
+        """初始化协议串口通信器"""
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
@@ -60,9 +60,9 @@ class InfantryProtocolCommunicator:
         
         self.running = True
         # 启动接收线程
-        self.receive_thread = threading.Thread(target=self.receive_loop, daemon=True)
-        self.receive_thread.start()
-        logging.info("串口通信已启动，开始接收数据...")
+        # self.receive_thread = threading.Thread(target=self.receive_loop, daemon=True)
+        # self.receive_thread.start()
+        # logging.info("串口通信已启动，开始接收数据...")
         
         # 启动发送线程（定期发送固定消息）
         self.send_thread = threading.Thread(target=self.send_loop, daemon=True)
@@ -71,7 +71,7 @@ class InfantryProtocolCommunicator:
 
     def crc8_ccitt(self, data):
         """
-        计算CRC-8 CCITT校验值，使用查表法
+        计算CRC-8 CCITT校验值，使用查表法，应与下位机一致
         :param data: 要计算CRC的数据（字节）
         :return: 1字节CRC校验值
         """
@@ -124,11 +124,11 @@ class InfantryProtocolCommunicator:
                     mode, roll, pitch, yaw = struct.unpack('<Bfff', packet[1:14])
                     
                     # 打印解析结果
-                    logging.info(
-                        f"收到数据 - 模式: {mode}, 横滚角: {roll:.4f}rad, "
-                        f"俯仰角: {pitch:.4f}rad, 偏航角: {yaw:.4f}rad"
-                    )
-                    logging.debug(f"原始数据包: {packet.hex()}")
+                    # logging.info(
+                    #     f"收到数据 - 模式: {mode}, 横滚角: {roll:.4f}rad, "
+                    #     f"俯仰角: {pitch:.4f}rad, 偏航角: {yaw:.4f}rad"
+                    # )
+                    # logging.debug(f"原始数据包: {packet.hex()}")
                 elif len(packet) > 0:
                     logging.warning(f"收到不完整数据包，长度: {len(packet)}/{16}字节")
                     
@@ -149,7 +149,7 @@ class InfantryProtocolCommunicator:
                     self.fixed_distance
                 )
                 # 每2秒发送一次
-                time.sleep(2)
+                time.sleep(0.1)
             except Exception as e:
                 logging.error(f"发送数据出错: {str(e)}")
                 time.sleep(0.1)
@@ -184,6 +184,9 @@ class InfantryProtocolCommunicator:
         # 将CRC放入包中
         packet = packet[:14] + bytes([crc]) + packet[15:]
         
+        print("len:",len(packet))
+        
+        
         # 发送数据包
         self.serial.write(packet)
         logging.info(
@@ -207,7 +210,7 @@ class InfantryProtocolCommunicator:
 if __name__ == "__main__":
     # 根据实际情况修改串口参数
     communicator = InfantryProtocolCommunicator(
-        port='/dev/ttyACM0',  # Windows系统可能是'COM3'等
+        port='COM5',  # Windows系统可能是'COM3'等
         baudrate=115200
     )
     

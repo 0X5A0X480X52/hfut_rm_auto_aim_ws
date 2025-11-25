@@ -75,6 +75,15 @@
     cmake ..
     make -j
     sudo make install
+
+注意：项目中使用的 FindG2O.cmake 将会尝试查找并使用 g2o 的若干子库。
+至少需要安装 libg2o_core 和 libg2o_stuff 才能成功检测到 g2o；
+建议在编译安装 g2o 时确保含有如下组件（若有）：
+ - core, stuff, types_slam2d, types_slam3d
+ - solver_csparse (用于稀疏求解器)
+ - solver_pcg, solver_dense, csparse_extension（可选）
+
+如果您使用系统/按源码自建的 g2o，请确保这些库安装到了 /usr/local 或 /usr 下的 lib 目录，且对应头文件在 include/g2o 可被 CMake 找到。
     ```
 ### 3. 能量机关
 - OpenVINO库 (能量机关识别)
