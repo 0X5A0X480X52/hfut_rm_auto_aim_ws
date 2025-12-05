@@ -154,13 +154,30 @@ cv::Point2f PointTracker::getCenter(const Detection& det) {
 
 cv::Point2f PointTracker::getCenter(const Eigen::VectorXd& state) {
     float x = 0, y = 0;
-    if (state.size() >= 3) { // CV_KF Dim=2: x, vx, y, vy
-         x = static_cast<float>(state(0));
-         y = static_cast<float>(state(2));
+    
+    // 根据状态向量大小推断滤波器类型并正确提取位置
+    // CV_KF (4 状态): [x, vx, y, vy] - y 在索引 2
+    // CA_KF/CS_KF/Singer_KF (6 状态): [x, vx, ax, y, vy, ay] - y 在索引 3
+    // CTRV_EKF (5 状态): [x, y, v, theta, omega] - y 在索引 1
+    
+    if (state.size() == 4) {
+        // CV_KF: [x, vx, y, vy]
+        x = static_cast<float>(state(0));
+        y = static_cast<float>(state(2));
+    } else if (state.size() == 6) {
+        // CA_KF/CS_KF/Singer_KF: [x, vx, ax, y, vy, ay]
+        x = static_cast<float>(state(0));
+        y = static_cast<float>(state(3));
+    } else if (state.size() == 5) {
+        // CTRV_EKF: [x, y, v, theta, omega]
+        x = static_cast<float>(state(0));
+        y = static_cast<float>(state(1));
     } else if (state.size() >= 2) {
-         x = static_cast<float>(state(0));
-         y = static_cast<float>(state(1));
+        // 默认情况：假设 [x, y, ...]
+        x = static_cast<float>(state(0));
+        y = static_cast<float>(state(1));
     }
+    
     return cv::Point2f(x, y);
 }
 
@@ -171,16 +188,25 @@ std::shared_ptr<IModel> PointTracker::createModel(const Detection& det) {
     // 初始化状态
     cv::Point2f center = getCenter(det);
     
-    // 假设状态向量的前两个元素是 x, y (对于 Dim >= 2)
-    // 同样需要根据具体的模型类型来设置初始状态
-    if (config.X_0.size() >= 2) {
+    // 根据模型类型设置正确的初始状态位置
+    // CV_KF (4 状态): [x, vx, y, vy] - y 在索引 2
+    // CA_KF/CS_KF/Singer_KF (6 状态): [x, vx, ax, y, vy, ay] - y 在索引 3
+    // CTRV_EKF (5 状态): [x, y, v, theta, omega] - y 在索引 1
+    
+    if (model_name == "CV_KF" && config.X_0.size() >= 4) {
+        config.X_0(0) = center.x;  // x
+        config.X_0(2) = center.y;  // y
+    } else if ((model_name == "CA_KF" || model_name == "CS_KF" || model_name == "Singer_KF") 
+               && config.X_0.size() >= 6) {
+        config.X_0(0) = center.x;  // x
+        config.X_0(3) = center.y;  // y
+    } else if (model_name == "CTRV_EKF" && config.X_0.size() >= 2) {
+        config.X_0(0) = center.x;  // x
+        config.X_0(1) = center.y;  // y
+    } else if (config.X_0.size() >= 2) {
+        // 默认情况
         config.X_0(0) = center.x;
-        // 假设 y 在索引 1 或 2
-        if (model_name == "CV_KF" && config.X_0.size() >= 3) {
-             config.X_0(2) = center.y;
-        } else if (config.X_0.size() >= 2) {
-             config.X_0(1) = center.y;
-        }
+        config.X_0(1) = center.y;
     }
     
     // 创建 KalmanModel 包装器

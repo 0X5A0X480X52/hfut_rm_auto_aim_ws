@@ -12,6 +12,7 @@
   <depend>rclcpp</depend>
   <depend>models</depend>
   <depend>basic_models</depend>
+  <depend>combined_models</depend>
   <depend>eigen</depend>
   <depend>opencv</depend>
 

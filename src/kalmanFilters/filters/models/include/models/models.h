@@ -96,6 +96,12 @@ protected:
   Eigen::MatrixXd P_after;  ///< 滤波后的协方差矩阵。
   Eigen::MatrixXd I;        ///< 单位矩阵。
 
+   // Debug / diagnostic control
+   bool debug_mode = false;                       ///< If true, print per-frame diagnostics.
+   mutable bool debug_printed_performUpdate = false; ///< If false, allow one-time print from performUpdate when debug_mode==false.
+   mutable bool debug_printed_getLambda = false;     ///< If false, allow one-time print from getLambda when debug_mode==false.
+   mutable bool debug_printed_predict = false;       ///< If false, allow one-time print from predict when debug_mode==false.
+
 public:
   /**
      * @brief 设置状态维度。
@@ -255,6 +261,17 @@ public:
      * @return 滤波后的协方差矩阵。
      */
   Eigen::MatrixXd defaultGetPAfter() const { return P_after; }
+
+   /**
+    * @brief 启用或禁用 models 内部的调试诊断输出。
+    * @param enable true 打开逐帧诊断输出；false 表示仅在首次出现场景时打印一次诊断信息。
+    */
+   void setDebug(bool enable) { debug_mode = enable; }
+
+   /**
+    * @brief 查询当前 debug 状态
+    */
+   bool getDebug() const { return debug_mode; }
 
   /**
      * @brief 设置自定义的获取滤波后状态的函数。

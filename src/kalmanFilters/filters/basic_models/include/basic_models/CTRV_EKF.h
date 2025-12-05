@@ -25,6 +25,11 @@ public:
     void KalmanFilterInit(const Eigen::VectorXd& X_0) override;
 
     /**
+     * @brief 对于非线性 CTRV 模型，重写预测步骤以使用雅可比矩阵线性化。
+     */
+    void performPredict() override;
+
+    /**
      * @brief 执行卡尔曼滤波器的整个过程。
      * @param measurements 测量值的向量。
      * @return 滤波后的状态矩阵。

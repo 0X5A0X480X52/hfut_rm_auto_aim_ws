@@ -14,6 +14,8 @@ CTRV_EKF::CTRV_EKF(double T, const Eigen::MatrixXd& R)
     this->H = Eigen::MatrixXd::Zero(2, Dim);
     this->H(0, 0) = 1;  // 测量x对应状态x
     this->H(1, 1) = 1;  // 测量y对应状态y
+    // 初始化状态转移矩阵为单位矩阵，避免外部调用 performPredict 时 F 为空导致乘法维度错误
+    this->F = Eigen::MatrixXd::Identity(Dim, Dim);
 }
 
 void CTRV_EKF::KalmanFilterInit(const Eigen::VectorXd& X_0) {
@@ -96,6 +98,9 @@ Eigen::VectorXd CTRV_EKF::KalmanFilterIterator(const Eigen::VectorXd& Z) {
 
     F(3, 4) = T;
 
+    // 更新成员变量 F，以便外部调用（如 performPredict）可使用最新的线性化矩阵
+    this->F = F;
+
     // 预测协方差
     P_prior = F * P_prior * F.transpose() + Q;
 
@@ -112,6 +117,71 @@ Eigen::VectorXd CTRV_EKF::KalmanFilterIterator(const Eigen::VectorXd& Z) {
 
     // 返回完整状态估计 [x, y, v, theta, omega]
     return X_after;
+}
+
+void CTRV_EKF::performPredict() {
+    // 使用与 KalmanFilterIterator 中相同的非线性预测和雅可比线性化
+    Eigen::VectorXd X_prior_local = X_after;
+    Eigen::MatrixXd P_prior_local = P_after;
+    double theta = X_after(3);
+
+    // 动态计算过程噪声协方差矩阵 Q（保持与迭代一致）
+    double sigma_a = 0.1;
+    double sigma_omega_dot = 0.01;
+    double delta_t = T;
+
+    double q11 = std::pow(0.5 * delta_t * sigma_a * std::cos(theta), 2);
+    double q12 = 0.25 * std::pow(delta_t, 4) * std::pow(sigma_a, 2) * std::sin(theta) * std::cos(theta);
+    double q13 = 0.5 * std::pow(delta_t, 3) * std::pow(sigma_a, 2) * std::cos(theta);
+    double q22 = std::pow(0.5 * delta_t * sigma_a * std::sin(theta), 2);
+    double q23 = 0.5 * std::pow(delta_t, 3) * std::pow(sigma_a, 2) * std::sin(theta);
+    double q33 = std::pow(delta_t * sigma_a, 2);
+    double q44 = std::pow(0.5 * delta_t * sigma_omega_dot, 2);
+    double q45 = 0.5 * std::pow(delta_t, 3) * std::pow(sigma_omega_dot, 2);
+    double q55 = std::pow(delta_t * sigma_omega_dot, 2);
+
+    Q = (Eigen::MatrixXd(Dim, Dim) << q11, q12, q13, 0, 0,
+                                      q12, q22, q23, 0, 0,
+                                      q13, q23, q33, 0, 0,
+                                      0, 0, 0, q44, q45,
+                                      0, 0, 0, q45, q55).finished();
+
+    double omega = X_after(4);
+    Eigen::VectorXd X_predict(Dim);
+
+    if (omega != 0) {
+        X_predict(0) = X_after(0) + (X_after(2) / omega) * (std::sin(theta + omega * T) - std::sin(theta));
+        X_predict(1) = X_after(1) + (X_after(2) / omega) * (-std::cos(theta + omega * T) + std::cos(theta));
+    } else {
+        X_predict(0) = X_after(0) + X_after(2) * T * std::cos(theta);
+        X_predict(1) = X_after(1) + X_after(2) * T * std::sin(theta);
+    }
+
+    X_predict(2) = X_after(2);
+    X_predict(3) = theta + omega * T;
+    X_predict(4) = omega;
+
+    // 计算雅可比矩阵
+    Eigen::MatrixXd F_local = Eigen::MatrixXd::Identity(Dim, Dim);
+    if (omega != 0) {
+        F_local(0, 2) = (1 / omega) * (std::sin(theta + omega * T) - std::sin(theta));
+        F_local(0, 3) = (X_after(2) / omega) * (std::cos(theta + omega * T) - std::cos(theta));
+        F_local(0, 4) = (X_after(2) / std::pow(omega, 2)) * (std::sin(theta) - std::sin(theta + omega * T)) + (X_after(2) * T / omega) * std::cos(theta + omega * T);
+        F_local(1, 2) = (1 / omega) * (-std::cos(theta + omega * T) + std::cos(theta));
+        F_local(1, 3) = (X_after(2) / omega) * (std::sin(theta + omega * T) - std::sin(theta));
+        F_local(1, 4) = (X_after(2) / std::pow(omega, 2)) * (std::cos(theta + omega * T) - std::cos(theta)) + (X_after(2) * T / omega) * std::sin(theta + omega * T);
+    } else {
+        F_local(0, 2) = T * std::cos(theta);
+        F_local(0, 3) = -X_after(2) * T * std::sin(theta);
+        F_local(1, 2) = T * std::sin(theta);
+        F_local(1, 3) = X_after(2) * T * std::cos(theta);
+    }
+    F_local(3, 4) = T;
+
+    // 更新成员状态
+    this->F = F_local;
+    this->X_prior = X_predict;
+    this->P_prior = F_local * P_after * F_local.transpose() + Q;
 }
 
 /**

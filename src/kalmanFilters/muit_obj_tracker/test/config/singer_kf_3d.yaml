@@ -1,0 +1,33 @@
+# 3D Singer Model Kalman Filter Configuration for Testing
+# 3维Singer模型卡尔曼滤波器测试配置
+
+filter:
+  type: "Singer_KF"
+  
+  # Sampling time (seconds) - 100Hz
+  T: 0.01
+  
+  # Dimension (3D)
+  Dim: 3
+  
+  # Measurement noise covariance matrix R (3x3)
+  R:
+    - [0.0004, 0.0, 0.0]
+    - [0.0, 0.0004, 0.0]
+    - [0.0, 0.0, 0.0004]
+  
+  # Initial state vector [x, vx, ax, y, vy, ay, z, vz, az]
+  X_0: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  
+  # Singer model specific parameters
+  extra_params:
+    # Maneuver frequency
+    alpha: 0.5
+    # Maximum acceleration (m/s^2)
+    a_max: 3.0
+
+# Tracker parameters
+tracker:
+  max_age: 30
+  min_hits: 3
+  distance_threshold: 0.5  # meters

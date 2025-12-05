@@ -1,0 +1,29 @@
+# 2D Current Statistical Kalman Filter Configuration for PointTracker Test
+# 2维当前统计模型卡尔曼滤波器配置
+
+filter:
+  type: "CS_KF"
+  
+  # Sampling time (seconds)
+  T: 0.033  # ~30 FPS
+  
+  # State dimension (2D: x,y)
+  Dim: 2
+  
+  # Measurement noise covariance matrix R (2x2)
+  # Position measurement noise (pixels^2)
+  R:
+    - [1.0, 0.0]
+    - [0.0, 1.0]
+  
+  # Initial state vector [x, vx, ax, y, vy, ay]
+  X_0: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  
+  # Process noise standard deviation
+  process_noise_std: 0.3
+
+# PointTracker parameters
+tracker:
+  max_age: 30
+  min_hits: 3
+  distance_threshold: 100.0

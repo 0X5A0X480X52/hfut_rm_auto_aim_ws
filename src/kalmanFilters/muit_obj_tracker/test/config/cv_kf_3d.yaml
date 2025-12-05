@@ -1,0 +1,30 @@
+# 3D Constant Velocity Kalman Filter Configuration for Testing
+# 3维恒定速度卡尔曼滤波器测试配置
+
+filter:
+  type: "CV_KF"
+  
+  # Sampling time (seconds) - 100Hz
+  T: 0.01
+  
+  # Dimension (3D)
+  Dim: 3
+  
+  # Measurement noise covariance matrix R (3x3)
+  # Standard deviation ~0.02m for each axis
+  R:
+    - [0.0004, 0.0, 0.0]
+    - [0.0, 0.0004, 0.0]
+    - [0.0, 0.0, 0.0004]
+  
+  # Initial state vector [x, vx, y, vy, z, vz]
+  X_0: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  
+  # Process noise standard deviation
+  process_noise_std: 0.5
+
+# Tracker parameters
+tracker:
+  max_age: 30
+  min_hits: 3
+  distance_threshold: 0.5  # meters

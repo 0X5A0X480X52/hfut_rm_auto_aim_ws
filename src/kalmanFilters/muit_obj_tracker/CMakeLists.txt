@@ -9,6 +9,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(models REQUIRED)
 find_package(basic_models REQUIRED)
+find_package(combined_models REQUIRED)
 find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(OpenCV REQUIRED)
 
@@ -45,6 +46,77 @@ install(TARGETS muit_obj_tracker
 
 install(DIRECTORY include/
   DESTINATION include
+)
+
+# ==================== 测试可执行文件 ====================
+find_package(yaml-cpp REQUIRED)
+
+# PointTracker 测试程序
+add_executable(point_tracker_test
+  test/point_tracker_test.cpp
+)
+
+target_include_directories(point_tracker_test PRIVATE
+  include
+  ${EIGEN3_INCLUDE_DIRS}
+  ${OpenCV_INCLUDE_DIRS}
+)
+
+# 使用 WHOLE_ARCHIVE 确保 basic_models 中的静态初始化器被链接
+# 这是确保工厂自动注册的关键
+target_link_libraries(point_tracker_test
+  -Wl,--whole-archive
+  muit_obj_tracker
+  -Wl,--no-whole-archive
+  yaml-cpp
+  Eigen3::Eigen
+  ${OpenCV_LIBS}
+)
+
+ament_target_dependencies(point_tracker_test
+  rclcpp
+  models
+  basic_models
+  OpenCV
+)
+
+install(TARGETS point_tracker_test
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+# PointTracker 3D 测试程序
+add_executable(point_tracker_test_3d
+  test/point_tracker_test_3d.cpp
+)
+
+target_include_directories(point_tracker_test_3d PRIVATE
+  include
+  ${EIGEN3_INCLUDE_DIRS}
+)
+
+target_link_libraries(point_tracker_test_3d
+  -Wl,--whole-archive
+  muit_obj_tracker
+  -Wl,--no-whole-archive
+  yaml-cpp
+  Eigen3::Eigen
+)
+
+ament_target_dependencies(point_tracker_test_3d
+  rclcpp
+  models
+  basic_models
+  combined_models
+)
+
+install(TARGETS point_tracker_test_3d
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+# 安装测试配置文件
+install(DIRECTORY
+  test/config/
+  DESTINATION share/${PROJECT_NAME}/config
 )
 
 ament_package()
