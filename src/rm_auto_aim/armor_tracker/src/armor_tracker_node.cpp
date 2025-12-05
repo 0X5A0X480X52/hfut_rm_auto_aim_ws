@@ -31,39 +31,70 @@ ArmorTrackerNode::ArmorTrackerNode(const rclcpp::NodeOptions& options)
   // 声明参数
   declareParameters();
   
-  // 构建配置并创建核心跟踪器
+  // 构建配置
   auto config = buildConfig();
+  topic_config_ = buildTopicConfig();
+  auto history_config = buildHistoryConfig();
+  auto prediction_config = buildPredictionConfig();
+  
+  // 创建核心跟踪器
   tracker_core_ = std::make_unique<ArmorTrackerCore>(config);
   
   // 创建策略管理器
   strategy_manager_ = std::make_shared<TrackingStrategyManager>();
   tracker_core_->setStrategyManager(strategy_manager_);
+  
+  // 创建历史窗口管理器
+  history_manager_ = std::make_unique<TrackHistoryManager>(history_config);
+  
+  // 创建预测窗口管理器
+  prediction_manager_ = std::make_unique<TrackPredictionManager>(prediction_config);
 
-  // 订阅者 - 检测结果
+  // 订阅者 - 检测结果（话题名从配置读取）
   armors_sub_ = this->create_subscription<rm_interfaces::msg::Armors>(
-    "/armor_detector/armors",
+    topic_config_.armors_sub_topic,
     rclcpp::SensorDataQoS(),
     std::bind(&ArmorTrackerNode::armorsCallback, this, std::placeholders::_1)
   );
   
-  // 订阅者 - 估计装甲板（预留接口）
+  // 订阅者 - 估计装甲板（话题名从配置读取）
   estimated_armors_sub_ = this->create_subscription<rm_interfaces::msg::Armors>(
-    "/robot_pose_estimator/virtual_armors",
+    topic_config_.estimated_armors_sub_topic,
     rclcpp::SensorDataQoS(),
     std::bind(&ArmorTrackerNode::estimatedArmorsCallback, this, std::placeholders::_1)
   );
 
-  // 发布者
+  // 发布者（话题名从配置读取）
   tracked_armors_pub_ = this->create_publisher<rm_interfaces::msg::TrackedArmors>(
-    "/armor_tracker/tracked_armors",
+    topic_config_.tracked_armors_pub_topic,
     rclcpp::SensorDataQoS()
   );
 
   if (debug_mode_) {
     marker_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
-      "/armor_tracker/markers",
+      topic_config_.markers_pub_topic,
       10
     );
+  }
+  
+  // 历史窗口发布者
+  if (enable_history_window_) {
+    history_windows_pub_ = this->create_publisher<rm_interfaces::msg::TrackHistoryWindows>(
+      topic_config_.history_windows_pub_topic,
+      rclcpp::SensorDataQoS()
+    );
+    FYT_INFO("armor_tracker", "History window publisher enabled: {}", 
+             topic_config_.history_windows_pub_topic);
+  }
+  
+  // 预测窗口发布者
+  if (enable_prediction_window_) {
+    prediction_windows_pub_ = this->create_publisher<rm_interfaces::msg::TrackPredictionWindows>(
+      topic_config_.prediction_windows_pub_topic,
+      rclcpp::SensorDataQoS()
+    );
+    FYT_INFO("armor_tracker", "Prediction window publisher enabled: {}", 
+             topic_config_.prediction_windows_pub_topic);
   }
   
   // 创建预测更新定时器
@@ -87,6 +118,8 @@ ArmorTrackerNode::ArmorTrackerNode(const rclcpp::NodeOptions& options)
   FYT_INFO("armor_tracker", "  - Predict rate: {} Hz", predict_rate_);
   FYT_INFO("armor_tracker", "  - Publish rate: {} Hz", publish_rate_);
   FYT_INFO("armor_tracker", "  - Model: {}", config.model_name);
+  FYT_INFO("armor_tracker", "  - Subscribe armors from: {}", topic_config_.armors_sub_topic);
+  FYT_INFO("armor_tracker", "  - Publish tracked to: {}", topic_config_.tracked_armors_pub_topic);
 }
 
 void ArmorTrackerNode::declareParameters() {
@@ -108,6 +141,27 @@ void ArmorTrackerNode::declareParameters() {
   // 模型配置
   this->declare_parameter("model.name", "CV_KF");
   this->declare_parameter("model.config_file", "");
+  
+  // ==================== 话题名称配置 ====================
+  // 订阅话题
+  this->declare_parameter("topics.armors_sub", "/armor_detector/armors");
+  this->declare_parameter("topics.estimated_armors_sub", "/robot_pose_estimator/virtual_armors");
+  // 发布话题
+  this->declare_parameter("topics.tracked_armors_pub", "/armor_tracker/tracked_armors");
+  this->declare_parameter("topics.markers_pub", "/armor_tracker/markers");
+  this->declare_parameter("topics.history_windows_pub", "/armor_tracker/history_windows");
+  this->declare_parameter("topics.prediction_windows_pub", "/armor_tracker/prediction_windows");
+  
+  // ==================== 历史窗口配置 ====================
+  enable_history_window_ = this->declare_parameter("history_window.enable", true);
+  this->declare_parameter("history_window.max_size", 100);
+  this->declare_parameter("history_window.record_interval", 1);
+  
+  // ==================== 预测窗口配置 ====================
+  enable_prediction_window_ = this->declare_parameter("prediction_window.enable", true);
+  this->declare_parameter("prediction_window.steps", 30);
+  this->declare_parameter("prediction_window.interval", 1);
+  this->declare_parameter("prediction_window.dt", 0.01);
 }
 
 TrackerConfig ArmorTrackerNode::buildConfig() {
@@ -121,6 +175,42 @@ TrackerConfig ArmorTrackerNode::buildConfig() {
   config.predict_rate = predict_rate_;
   config.model_name = this->get_parameter("model.name").as_string();
   config.model_config_file = this->get_parameter("model.config_file").as_string();
+  
+  return config;
+}
+
+TopicConfig ArmorTrackerNode::buildTopicConfig() {
+  TopicConfig config;
+  
+  config.armors_sub_topic = this->get_parameter("topics.armors_sub").as_string();
+  config.estimated_armors_sub_topic = this->get_parameter("topics.estimated_armors_sub").as_string();
+  config.tracked_armors_pub_topic = this->get_parameter("topics.tracked_armors_pub").as_string();
+  config.markers_pub_topic = this->get_parameter("topics.markers_pub").as_string();
+  config.history_windows_pub_topic = this->get_parameter("topics.history_windows_pub").as_string();
+  config.prediction_windows_pub_topic = this->get_parameter("topics.prediction_windows_pub").as_string();
+  
+  return config;
+}
+
+HistoryWindowConfig ArmorTrackerNode::buildHistoryConfig() {
+  HistoryWindowConfig config;
+  
+  config.max_window_size = static_cast<uint32_t>(
+    this->get_parameter("history_window.max_size").as_int());
+  config.record_interval = static_cast<uint32_t>(
+    this->get_parameter("history_window.record_interval").as_int());
+  
+  return config;
+}
+
+PredictionWindowConfig ArmorTrackerNode::buildPredictionConfig() {
+  PredictionWindowConfig config;
+  
+  config.prediction_steps = static_cast<uint32_t>(
+    this->get_parameter("prediction_window.steps").as_int());
+  config.predict_interval = static_cast<uint32_t>(
+    this->get_parameter("prediction_window.interval").as_int());
+  config.dt = this->get_parameter("prediction_window.dt").as_double();
   
   return config;
 }
@@ -184,10 +274,11 @@ void ArmorTrackerNode::predictTimerCallback() {
 void ArmorTrackerNode::publishTimerCallback() {
   // 获取跟踪结果
   auto tracks = tracker_core_->getTracks();
+  auto current_stamp = this->now();
   
   // 发布跟踪结果
   rm_interfaces::msg::TrackedArmors tracked_msg;
-  tracked_msg.header.stamp = this->now();
+  tracked_msg.header.stamp = current_stamp;
   tracked_msg.header.frame_id = "odom";
   
   for (const auto& track : tracks) {
@@ -195,6 +286,40 @@ void ArmorTrackerNode::publishTimerCallback() {
   }
   
   tracked_armors_pub_->publish(tracked_msg);
+  
+  // 更新历史窗口
+  if (enable_history_window_ && history_manager_) {
+    builtin_interfaces::msg::Time stamp;
+    stamp.sec = current_stamp.seconds();
+    stamp.nanosec = current_stamp.nanoseconds() % 1000000000UL;
+    
+    history_manager_->update(tracks, stamp);
+    
+    // 发布历史窗口
+    if (history_windows_pub_) {
+      auto history_msg = history_manager_->getAllHistoryWindows();
+      history_msg.header.stamp = current_stamp;
+      history_msg.header.frame_id = "odom";
+      history_windows_pub_->publish(history_msg);
+    }
+  }
+  
+  // 生成并发布预测窗口
+  if (enable_prediction_window_ && prediction_manager_) {
+    builtin_interfaces::msg::Time stamp;
+    stamp.sec = current_stamp.seconds();
+    stamp.nanosec = current_stamp.nanoseconds() % 1000000000UL;
+    
+    prediction_manager_->generatePredictions(tracks, stamp);
+    
+    // 发布预测窗口
+    if (prediction_windows_pub_) {
+      auto prediction_msg = prediction_manager_->getAllPredictionWindows();
+      prediction_msg.header.stamp = current_stamp;
+      prediction_msg.header.frame_id = "odom";
+      prediction_windows_pub_->publish(prediction_msg);
+    }
+  }
   
   // 发布可视化
   if (debug_mode_ && marker_pub_) {

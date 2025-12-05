@@ -36,6 +36,12 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/SelectedTarget.msg"
   "msg/GimbalState.msg"
   "msg/GimbalTrajectory.msg"
+  # Track history and prediction window messages
+  "msg/TrackWindowState.msg"
+  "msg/TrackHistoryWindow.msg"
+  "msg/TrackHistoryWindows.msg"
+  "msg/TrackPredictionWindow.msg"
+  "msg/TrackPredictionWindows.msg"
   "srv/SetMode.srv"
   "srv/SolveBallistic.srv"
   DEPENDENCIES

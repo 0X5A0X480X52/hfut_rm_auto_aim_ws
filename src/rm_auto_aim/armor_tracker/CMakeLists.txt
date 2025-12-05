@@ -39,6 +39,8 @@ add_library(armor_tracker_node SHARED
   src/armor_tracker_node.cpp
   src/armor_tracker_core.cpp
   src/armor_types.cpp
+  src/track_history_manager.cpp
+  src/track_prediction_manager.cpp
   src/strategies/detect_source_strategy.cpp
   src/strategies/estimate_source_strategy.cpp
   src/strategies/predict_source_strategy.cpp

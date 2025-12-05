@@ -29,13 +29,32 @@
 #include "rm_interfaces/msg/armors.hpp"
 #include "rm_interfaces/msg/tracked_armors.hpp"
 #include "rm_interfaces/msg/tracked_armor.hpp"
+#include "rm_interfaces/msg/track_history_windows.hpp"
+#include "rm_interfaces/msg/track_prediction_windows.hpp"
 
 #include "armor_tracker/armor_types.hpp"
 #include "armor_tracker/armor_tracker_core.hpp"
 #include "armor_tracker/strategies/tracking_strategy_manager.hpp"
+#include "armor_tracker/track_history_manager.hpp"
+#include "armor_tracker/track_prediction_manager.hpp"
 #include "rm_utils/heartbeat.hpp"
 
 namespace fyt::auto_aim {
+
+/**
+ * @brief 话题名称配置结构
+ */
+struct TopicConfig {
+  // 订阅话题
+  std::string armors_sub_topic = "/armor_detector/armors";
+  std::string estimated_armors_sub_topic = "/robot_pose_estimator/virtual_armors";
+  
+  // 发布话题
+  std::string tracked_armors_pub_topic = "/armor_tracker/tracked_armors";
+  std::string markers_pub_topic = "/armor_tracker/markers";
+  std::string history_windows_pub_topic = "/armor_tracker/history_windows";
+  std::string prediction_windows_pub_topic = "/armor_tracker/prediction_windows";
+};
 
 /**
  * @brief 多装甲板跟踪节点
@@ -45,6 +64,8 @@ namespace fyt::auto_aim {
  * - 支持多来源输入（检测/估计）
  * - 使用策略模式处理不同来源数据
  * - 帧率不稳定时使用预测维持跟踪
+ * - 维护历史窗口和预测窗口
+ * - 所有话题名称可通过配置文件配置
  */
 class ArmorTrackerNode : public rclcpp::Node {
 public:
@@ -112,6 +133,21 @@ private:
    * @brief 从参数构建配置
    */
   TrackerConfig buildConfig();
+  
+  /**
+   * @brief 从参数构建话题配置
+   */
+  TopicConfig buildTopicConfig();
+  
+  /**
+   * @brief 从参数构建历史窗口配置
+   */
+  HistoryWindowConfig buildHistoryConfig();
+  
+  /**
+   * @brief 从参数构建预测窗口配置
+   */
+  PredictionWindowConfig buildPredictionConfig();
 
   // ==================== 成员变量 ====================
   
@@ -121,6 +157,12 @@ private:
   // 策略管理器
   std::shared_ptr<TrackingStrategyManager> strategy_manager_;
   
+  // 历史窗口管理器
+  std::unique_ptr<TrackHistoryManager> history_manager_;
+  
+  // 预测窗口管理器
+  std::unique_ptr<TrackPredictionManager> prediction_manager_;
+  
   // 订阅者
   rclcpp::Subscription<rm_interfaces::msg::Armors>::SharedPtr armors_sub_;
   rclcpp::Subscription<rm_interfaces::msg::Armors>::SharedPtr estimated_armors_sub_;
@@ -128,6 +170,8 @@ private:
   // 发布者
   rclcpp::Publisher<rm_interfaces::msg::TrackedArmors>::SharedPtr tracked_armors_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
+  rclcpp::Publisher<rm_interfaces::msg::TrackHistoryWindows>::SharedPtr history_windows_pub_;
+  rclcpp::Publisher<rm_interfaces::msg::TrackPredictionWindows>::SharedPtr prediction_windows_pub_;
   
   // 定时器
   rclcpp::TimerBase::SharedPtr predict_timer_;   // 预测更新定时器
@@ -150,6 +194,13 @@ private:
   double predict_rate_;      // 预测更新频率 (Hz)
   double publish_rate_;      // 发布频率 (Hz)
   double detection_timeout_; // 检测超时时间 (s)
+  
+  // 话题配置
+  TopicConfig topic_config_;
+  
+  // 是否启用历史/预测窗口发布
+  bool enable_history_window_;
+  bool enable_prediction_window_;
   
   // 线程安全
   std::mutex callback_mutex_;
