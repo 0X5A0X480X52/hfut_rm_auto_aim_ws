@@ -19,13 +19,20 @@ include_directories(
   ${OpenCV_INCLUDE_DIRS}
 )
 
-add_library(muit_obj_tracker
+# Build as SHARED library so it can be linked into other shared libraries
+add_library(muit_obj_tracker SHARED
   src/model/kalman_model.cpp
   src/model/composite_model.cpp
   src/utils/hungarian.cpp
   src/tracker/sort_tracker.cpp
   src/tracker/point_tracker.cpp
   src/tracker/tracker_manager.cpp
+)
+
+# Ensure the include directory is associated with the target for consumers
+target_include_directories(muit_obj_tracker PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
 )
 
 ament_target_dependencies(muit_obj_tracker
@@ -39,6 +46,7 @@ ament_target_dependencies(muit_obj_tracker
 target_link_libraries(muit_obj_tracker Eigen3::Eigen)
 
 install(TARGETS muit_obj_tracker
+  EXPORT muit_obj_trackerTargets
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
@@ -47,6 +55,15 @@ install(TARGETS muit_obj_tracker
 install(DIRECTORY include/
   DESTINATION include
 )
+
+# Export CMake target and include dirs for other packages in the workspace
+install(EXPORT muit_obj_trackerTargets
+  FILE muit_obj_trackerTargets.cmake
+  NAMESPACE muit_obj_tracker::
+  DESTINATION lib/cmake/muit_obj_tracker
+)
+ament_export_targets(muit_obj_trackerTargets HAS_LIBRARY_TARGET)
+ament_export_include_directories(include)
 
 # ==================== 测试可执行文件 ====================
 find_package(yaml-cpp REQUIRED)

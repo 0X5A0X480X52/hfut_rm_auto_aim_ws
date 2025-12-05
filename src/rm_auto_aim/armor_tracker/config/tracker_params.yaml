@@ -1,22 +1,42 @@
 /**:
   ros__parameters:
-    # 调试模式
+    # ==================== 调试模式 ====================
     debug: true
     
-    # 数据关联参数
-    max_match_distance: 0.2      # 最大匹配距离(米)
+    # ==================== 异步更新参数 ====================
+    predict_rate: 100.0          # 预测更新频率 (Hz)
+    publish_rate: 100.0          # 发布频率 (Hz)
+    detection_timeout: 0.5       # 检测超时时间 (s), 超过此时间使用纯预测
+    
+    # ==================== 数据关联参数 ====================
+    max_match_distance: 0.5      # 最大匹配距离(米)
     max_match_yaw_diff: 1.0      # 最大匹配yaw角差(弧度)
     
-    # 跟踪器状态机参数
-    tracking_threshold: 5        # 进入TRACKING状态的帧数
-    lost_threshold: 10           # 进入LOST状态的帧数
+    # ==================== 跟踪器状态机参数 ====================
+    tracking_threshold: 3        # 进入TRACKING状态的最小匹配次数 (min_hits)
+    lost_threshold: 30           # 进入LOST状态的最大丢失帧数 (max_age)
     
-    # 跟踪器管理
+    # ==================== 跟踪器管理 ====================
     max_trackers: 20             # 最大跟踪器数量
     
-    # EKF参数
-    ekf:
-      sigma2_q_xyz: 20.0         # 位置过程噪声方差
-      sigma2_q_yaw: 1.0          # yaw角过程噪声方差
-      r_xyz: 0.05                # 位置测量噪声方差
-      r_yaw: 0.02                # yaw角测量噪声方差
+    # ==================== 模型配置 ====================
+    model:
+      # 可选模型: CV_KF, CA_KF, CS_KF, Singer_KF, CTRV_EKF
+      # 对于3D装甲板跟踪，推荐使用 CV_KF (匀速模型) 或 CA_KF (匀加速模型)
+      name: "CV_KF"
+      # 模型配置文件路径 (可选，留空使用默认配置)
+      config_file: ""
+    
+    # ==================== 策略参数 ====================
+    strategy:
+      # 检测来源策略
+      detect:
+        confidence_threshold: 0.5  # 置信度阈值
+      
+      # 估计来源策略
+      estimate:
+        weight_factor: 0.8         # 权重因子
+      
+      # 预测来源策略
+      predict:
+        max_predict_frames: 30     # 最大预测帧数

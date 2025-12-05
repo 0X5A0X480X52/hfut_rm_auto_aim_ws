@@ -21,29 +21,36 @@ namespace fyt::auto_aim {
 
 ArmorTrackerNode::ArmorTrackerNode(const rclcpp::NodeOptions& options)
 : Node("armor_tracker", options)
+, last_detection_time_(this->now())
+, last_estimate_time_(this->now())
+, last_predict_time_(this->now())
 {
   FYT_REGISTER_LOGGER("armor_tracker", "~/fyt2024-log", INFO);
-  FYT_INFO("armor_tracker", "Starting ArmorTrackerNode!");
+  FYT_INFO("armor_tracker", "Starting ArmorTrackerNode (v2.0 - muit_obj_tracker based)!");
 
   // 声明参数
-  debug_mode_ = this->declare_parameter("debug", true);
-  max_match_distance_ = this->declare_parameter("max_match_distance", 0.2);
-  max_match_yaw_diff_ = this->declare_parameter("max_match_yaw_diff", 1.0);
-  tracking_threshold_ = this->declare_parameter("tracking_threshold", 5);
-  lost_threshold_ = this->declare_parameter("lost_threshold", 10);
-  max_trackers_ = this->declare_parameter("max_trackers", 20);
+  declareParameters();
   
-  // EKF参数
-  sigma2_q_xyz_ = this->declare_parameter("ekf.sigma2_q_xyz", 20.0);
-  sigma2_q_yaw_ = this->declare_parameter("ekf.sigma2_q_yaw", 1.0);
-  r_xyz_ = this->declare_parameter("ekf.r_xyz", 0.05);
-  r_yaw_ = this->declare_parameter("ekf.r_yaw", 0.02);
+  // 构建配置并创建核心跟踪器
+  auto config = buildConfig();
+  tracker_core_ = std::make_unique<ArmorTrackerCore>(config);
+  
+  // 创建策略管理器
+  strategy_manager_ = std::make_shared<TrackingStrategyManager>();
+  tracker_core_->setStrategyManager(strategy_manager_);
 
-  // 订阅者
+  // 订阅者 - 检测结果
   armors_sub_ = this->create_subscription<rm_interfaces::msg::Armors>(
     "/armor_detector/armors",
     rclcpp::SensorDataQoS(),
     std::bind(&ArmorTrackerNode::armorsCallback, this, std::placeholders::_1)
+  );
+  
+  // 订阅者 - 估计装甲板（预留接口）
+  estimated_armors_sub_ = this->create_subscription<rm_interfaces::msg::Armors>(
+    "/robot_pose_estimator/virtual_armors",
+    rclcpp::SensorDataQoS(),
+    std::bind(&ArmorTrackerNode::estimatedArmorsCallback, this, std::placeholders::_1)
   );
 
   // 发布者
@@ -58,195 +65,291 @@ ArmorTrackerNode::ArmorTrackerNode(const rclcpp::NodeOptions& options)
       10
     );
   }
+  
+  // 创建预测更新定时器
+  auto predict_period = std::chrono::duration<double>(1.0 / predict_rate_);
+  predict_timer_ = this->create_wall_timer(
+    std::chrono::duration_cast<std::chrono::nanoseconds>(predict_period),
+    std::bind(&ArmorTrackerNode::predictTimerCallback, this)
+  );
+  
+  // 创建发布定时器
+  auto publish_period = std::chrono::duration<double>(1.0 / publish_rate_);
+  publish_timer_ = this->create_wall_timer(
+    std::chrono::duration_cast<std::chrono::nanoseconds>(publish_period),
+    std::bind(&ArmorTrackerNode::publishTimerCallback, this)
+  );
 
   // 心跳
   heartbeat_ = HeartBeatPublisher::create(this);
 
-  last_time_ = this->now();
-
   FYT_INFO("armor_tracker", "ArmorTrackerNode initialized successfully!");
+  FYT_INFO("armor_tracker", "  - Predict rate: {} Hz", predict_rate_);
+  FYT_INFO("armor_tracker", "  - Publish rate: {} Hz", publish_rate_);
+  FYT_INFO("armor_tracker", "  - Model: {}", config.model_name);
+}
+
+void ArmorTrackerNode::declareParameters() {
+  // 调试模式
+  debug_mode_ = this->declare_parameter("debug", true);
+  
+  // 异步更新参数
+  predict_rate_ = this->declare_parameter("predict_rate", 100.0);
+  publish_rate_ = this->declare_parameter("publish_rate", 100.0);
+  detection_timeout_ = this->declare_parameter("detection_timeout", 0.5);
+  
+  // 跟踪器参数
+  this->declare_parameter("max_match_distance", 0.5);
+  this->declare_parameter("max_match_yaw_diff", 1.0);
+  this->declare_parameter("tracking_threshold", 3);
+  this->declare_parameter("lost_threshold", 30);
+  this->declare_parameter("max_trackers", 20);
+  
+  // 模型配置
+  this->declare_parameter("model.name", "CV_KF");
+  this->declare_parameter("model.config_file", "");
+}
+
+TrackerConfig ArmorTrackerNode::buildConfig() {
+  TrackerConfig config;
+  
+  config.max_match_distance = this->get_parameter("max_match_distance").as_double();
+  config.max_match_yaw_diff = this->get_parameter("max_match_yaw_diff").as_double();
+  config.tracking_threshold = this->get_parameter("tracking_threshold").as_int();
+  config.lost_threshold = this->get_parameter("lost_threshold").as_int();
+  config.max_trackers = this->get_parameter("max_trackers").as_int();
+  config.predict_rate = predict_rate_;
+  config.model_name = this->get_parameter("model.name").as_string();
+  config.model_config_file = this->get_parameter("model.config_file").as_string();
+  
+  return config;
 }
 
 void ArmorTrackerNode::armorsCallback(
   const rm_interfaces::msg::Armors::SharedPtr msg) {
   
-  auto current_time = msg->header.stamp;
-  double dt = (rclcpp::Time(current_time) - last_time_).seconds();
+  std::lock_guard<std::mutex> lock(callback_mutex_);
   
-  if (dt <= 0.0 || dt > 1.0) {
-    dt = 0.01;  // 默认值
-  }
-
-  // 数据关联
-  auto associations = associateDetections(msg->armors);
-
-  // 更新已有的跟踪器
-  std::vector<bool> armor_matched(msg->armors.size(), false);
+  // 转换为内部观测格式
+  auto observations = armorsToObservations(*msg, ArmorSourceType::DETECT);
   
-  for (size_t i = 0; i < trackers_.size(); ++i) {
-    const rm_interfaces::msg::Armor* matched_armor = nullptr;
+  // 更新跟踪器
+  if (!observations.empty()) {
+    tracker_core_->update(observations);
+    detection_received_ = true;
+    last_detection_time_ = this->now();
     
-    if (associations.find(i) != associations.end()) {
-      size_t armor_idx = associations[i];
-      matched_armor = &msg->armors[armor_idx];
-      armor_matched[armor_idx] = true;
-    }
+    FYT_DEBUG("armor_tracker", "Received {} detections", observations.size());
+  }
+}
+
+void ArmorTrackerNode::estimatedArmorsCallback(
+  const rm_interfaces::msg::Armors::SharedPtr msg) {
+  
+  std::lock_guard<std::mutex> lock(callback_mutex_);
+  
+  // 转换为内部观测格式（来源为估计）
+  auto observations = armorsToObservations(*msg, ArmorSourceType::ESTIMATE);
+  
+  // 使用估计数据更新
+  if (!observations.empty()) {
+    tracker_core_->update(observations);
+    estimate_received_ = true;
+    last_estimate_time_ = this->now();
     
-    trackers_[i]->update(matched_armor, dt);
+    FYT_DEBUG("armor_tracker", "Received {} estimated armors", observations.size());
   }
+}
 
-  // 为未匹配的检测创建新跟踪器
-  for (size_t i = 0; i < msg->armors.size(); ++i) {
-    if (!armor_matched[i] && trackers_.size() < static_cast<size_t>(max_trackers_)) {
-      const auto& armor = msg->armors[i];
-      auto tracker = std::make_unique<SingleArmorTracker>(
-        armor.number,
-        armor.type,
-        max_match_distance_,
-        max_match_yaw_diff_,
-        tracking_threshold_,
-        lost_threshold_
-      );
-      tracker->initEKF(armor);
-      trackers_.push_back(std::move(tracker));
-      
-      FYT_INFO("armor_tracker", "Created new tracker for armor: {}", armor.number);
-    }
+void ArmorTrackerNode::predictTimerCallback() {
+  std::lock_guard<std::mutex> lock(callback_mutex_);
+  
+  auto current_time = this->now();
+  double time_since_detection = (current_time - last_detection_time_).seconds();
+  double time_since_estimate = (current_time - last_estimate_time_).seconds();
+  
+  // 如果超过超时时间没有收到任何观测，执行纯预测
+  if (time_since_detection > detection_timeout_ && 
+      time_since_estimate > detection_timeout_) {
+    tracker_core_->predictUpdate();
+    FYT_DEBUG("armor_tracker", "No observation, performing predict-only update");
+  } else {
+    // 正常执行预测步骤
+    tracker_core_->predict();
   }
+  
+  last_predict_time_ = current_time;
+}
 
-  // 清理丢失的跟踪器
-  pruneTrackers();
-
+void ArmorTrackerNode::publishTimerCallback() {
+  // 获取跟踪结果
+  auto tracks = tracker_core_->getTracks();
+  
   // 发布跟踪结果
   rm_interfaces::msg::TrackedArmors tracked_msg;
-  tracked_msg.header = msg->header;
+  tracked_msg.header.stamp = this->now();
+  tracked_msg.header.frame_id = "odom";
   
-  for (const auto& tracker : trackers_) {
-    auto tracked_armor = tracker->getTrackedArmor(current_time);
-    tracked_msg.armors.push_back(tracked_armor);
+  for (const auto& track : tracks) {
+    tracked_msg.armors.push_back(stateToMessage(track, tracked_msg.header.stamp));
   }
   
   tracked_armors_pub_->publish(tracked_msg);
-
+  
   // 发布可视化
   if (debug_mode_ && marker_pub_) {
-    publishMarkers();
+    publishMarkers(tracks);
   }
-
-  last_time_ = rclcpp::Time(current_time);
 }
 
-std::map<size_t, size_t> ArmorTrackerNode::associateDetections(
-  const std::vector<rm_interfaces::msg::Armor>& armors) {
+std::vector<ArmorObservation> ArmorTrackerNode::armorsToObservations(
+  const rm_interfaces::msg::Armors& msg,
+  ArmorSourceType source) {
   
-  std::map<size_t, size_t> associations;
+  std::vector<ArmorObservation> observations;
+  observations.reserve(msg.armors.size());
   
-  // 简单的贪心匹配算法
-  // 可以后续升级为匈牙利算法
-  std::vector<bool> armor_used(armors.size(), false);
-  
-  for (size_t t = 0; t < trackers_.size(); ++t) {
-    double best_distance = std::numeric_limits<double>::max();
-    int best_armor_idx = -1;
+  for (const auto& armor : msg.armors) {
+    ArmorObservation obs;
+    obs.armor_id = armor.number;
+    obs.armor_type = armor.type;
+    obs.position = Eigen::Vector3d(
+      armor.pose.position.x,
+      armor.pose.position.y,
+      armor.pose.position.z
+    );
+    obs.yaw = quaternionToYaw(armor.pose.orientation);
+    obs.confidence = 1.0f - armor.distance_to_image_center;  // 简化的置信度计算
+    obs.source = source;
+    obs.timestamp = msg.header.stamp;
     
-    for (size_t a = 0; a < armors.size(); ++a) {
-      if (armor_used[a]) continue;
-      
-      if (trackers_[t]->isMatched(armors[a])) {
-        // 计算距离作为匹配代价
-        auto predicted_pos = trackers_[t]->getTrackedArmor(rclcpp::Time(0)).position;
-        Eigen::Vector3d pred(predicted_pos.x, predicted_pos.y, predicted_pos.z);
-        Eigen::Vector3d det(
-          armors[a].pose.position.x,
-          armors[a].pose.position.y,
-          armors[a].pose.position.z
-        );
-        double distance = (pred - det).norm();
-        
-        if (distance < best_distance) {
-          best_distance = distance;
-          best_armor_idx = a;
-        }
-      }
-    }
-    
-    if (best_armor_idx >= 0) {
-      associations[t] = best_armor_idx;
-      armor_used[best_armor_idx] = true;
-    }
+    observations.push_back(obs);
   }
   
-  return associations;
+  return observations;
 }
 
-void ArmorTrackerNode::pruneTrackers() {
-  trackers_.erase(
-    std::remove_if(
-      trackers_.begin(),
-      trackers_.end(),
-      [](const std::unique_ptr<SingleArmorTracker>& tracker) {
-        return tracker->shouldBeRemoved();
-      }
-    ),
-    trackers_.end()
-  );
+rm_interfaces::msg::TrackedArmor ArmorTrackerNode::stateToMessage(
+  const TrackedArmorState& state,
+  const builtin_interfaces::msg::Time& stamp) {
+  
+  rm_interfaces::msg::TrackedArmor msg;
+  
+  msg.header.stamp = stamp;
+  msg.header.frame_id = "odom";
+  
+  msg.track_id = state.track_id;
+  msg.armor_id = state.armor_id;
+  msg.armor_type = state.armor_type;
+  
+  msg.position.x = state.position.x();
+  msg.position.y = state.position.y();
+  msg.position.z = state.position.z();
+  
+  msg.velocity.x = state.velocity.x();
+  msg.velocity.y = state.velocity.y();
+  msg.velocity.z = state.velocity.z();
+  
+  msg.yaw = state.yaw;
+  msg.yaw_velocity = state.yaw_velocity;
+  
+  msg.confidence = state.confidence;
+  msg.source_type = static_cast<uint8_t>(state.source_type);
+  msg.tracking_state = static_cast<uint8_t>(state.tracking_state);
+  msg.tracking_count = state.tracking_count;
+  msg.lost_count = state.lost_count;
+  msg.time_since_update = state.time_since_update;
+  msg.last_detected_time = state.last_detected_time;
+  
+  return msg;
 }
 
-void ArmorTrackerNode::publishMarkers() {
+double ArmorTrackerNode::quaternionToYaw(const geometry_msgs::msg::Quaternion& q) {
+  tf2::Quaternion tf_q(q.x, q.y, q.z, q.w);
+  tf2::Matrix3x3 m(tf_q);
+  double roll, pitch, yaw;
+  m.getRPY(roll, pitch, yaw);
+  return yaw;
+}
+
+void ArmorTrackerNode::publishMarkers(const std::vector<TrackedArmorState>& tracks) {
   visualization_msgs::msg::MarkerArray marker_array;
   
-  for (size_t i = 0; i < trackers_.size(); ++i) {
-    auto tracked = trackers_[i]->getTrackedArmor(this->now());
+  for (size_t i = 0; i < tracks.size(); ++i) {
+    const auto& track = tracks[i];
     
     // 位置标记
     visualization_msgs::msg::Marker marker;
     marker.header.frame_id = "odom";
     marker.header.stamp = this->now();
     marker.ns = "armor_tracker";
-    marker.id = i;
+    marker.id = static_cast<int>(i);
     marker.type = visualization_msgs::msg::Marker::SPHERE;
     marker.action = visualization_msgs::msg::Marker::ADD;
     
-    marker.pose.position = tracked.position;
+    marker.pose.position.x = track.position.x();
+    marker.pose.position.y = track.position.y();
+    marker.pose.position.z = track.position.z();
     marker.pose.orientation.w = 1.0;
     
     marker.scale.x = 0.1;
     marker.scale.y = 0.1;
     marker.scale.z = 0.1;
     
-    // 根据状态设置颜色
-    if (tracked.tracking_state == rm_interfaces::msg::TrackedArmor::TRACKING) {
-      marker.color.r = 0.0;
-      marker.color.g = 1.0;
-      marker.color.b = 0.0;
-    } else if (tracked.tracking_state == rm_interfaces::msg::TrackedArmor::DETECTING) {
-      marker.color.r = 1.0;
-      marker.color.g = 1.0;
-      marker.color.b = 0.0;
-    } else {
-      marker.color.r = 1.0;
-      marker.color.g = 0.0;
-      marker.color.b = 0.0;
+    // 根据状态和来源设置颜色
+    switch (track.tracking_state) {
+      case TrackingState::TRACKING:
+        marker.color.r = 0.0;
+        marker.color.g = 1.0;
+        marker.color.b = 0.0;
+        break;
+      case TrackingState::DETECTING:
+        marker.color.r = 1.0;
+        marker.color.g = 1.0;
+        marker.color.b = 0.0;
+        break;
+      case TrackingState::TEMP_LOST:
+        marker.color.r = 1.0;
+        marker.color.g = 0.5;
+        marker.color.b = 0.0;
+        break;
+      default:
+        marker.color.r = 1.0;
+        marker.color.g = 0.0;
+        marker.color.b = 0.0;
     }
-    marker.color.a = tracked.confidence;
+    
+    // 根据来源类型调整透明度
+    switch (track.source_type) {
+      case ArmorSourceType::DETECT:
+        marker.color.a = 1.0;
+        break;
+      case ArmorSourceType::ESTIMATE:
+        marker.color.a = 0.7;
+        break;
+      case ArmorSourceType::PREDICT:
+        marker.color.a = 0.4;
+        break;
+    }
     
     marker.lifetime = rclcpp::Duration::from_seconds(0.1);
-    
     marker_array.markers.push_back(marker);
     
     // 速度箭头
     visualization_msgs::msg::Marker vel_marker;
     vel_marker.header = marker.header;
     vel_marker.ns = "velocity";
-    vel_marker.id = i;
+    vel_marker.id = static_cast<int>(i);
     vel_marker.type = visualization_msgs::msg::Marker::ARROW;
     vel_marker.action = visualization_msgs::msg::Marker::ADD;
     
-    geometry_msgs::msg::Point start = tracked.position;
-    geometry_msgs::msg::Point end = tracked.position;
-    end.x += tracked.velocity.x * 0.5;
-    end.y += tracked.velocity.y * 0.5;
-    end.z += tracked.velocity.z * 0.5;
+    geometry_msgs::msg::Point start, end;
+    start.x = track.position.x();
+    start.y = track.position.y();
+    start.z = track.position.z();
+    end.x = track.position.x() + track.velocity.x() * 0.5;
+    end.y = track.position.y() + track.velocity.y() * 0.5;
+    end.z = track.position.z() + track.velocity.z() * 0.5;
     
     vel_marker.points.push_back(start);
     vel_marker.points.push_back(end);
@@ -261,8 +364,32 @@ void ArmorTrackerNode::publishMarkers() {
     vel_marker.color.a = 0.8;
     
     vel_marker.lifetime = rclcpp::Duration::from_seconds(0.1);
-    
     marker_array.markers.push_back(vel_marker);
+    
+    // 文本标签 - 显示跟踪信息
+    visualization_msgs::msg::Marker text_marker;
+    text_marker.header = marker.header;
+    text_marker.ns = "info";
+    text_marker.id = static_cast<int>(i);
+    text_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+    text_marker.action = visualization_msgs::msg::Marker::ADD;
+    
+    text_marker.pose.position.x = track.position.x();
+    text_marker.pose.position.y = track.position.y();
+    text_marker.pose.position.z = track.position.z() + 0.15;
+    
+    text_marker.scale.z = 0.08;
+    text_marker.color.r = 1.0;
+    text_marker.color.g = 1.0;
+    text_marker.color.b = 1.0;
+    text_marker.color.a = 1.0;
+    
+    text_marker.text = track.armor_id + " [" + 
+                       sourceTypeToString(track.source_type) + "/" +
+                       trackingStateToString(track.tracking_state) + "]";
+    
+    text_marker.lifetime = rclcpp::Duration::from_seconds(0.1);
+    marker_array.markers.push_back(text_marker);
   }
   
   marker_pub_->publish(marker_array);

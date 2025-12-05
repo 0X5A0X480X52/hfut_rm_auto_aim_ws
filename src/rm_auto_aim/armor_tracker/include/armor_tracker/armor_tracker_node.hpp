@@ -17,85 +17,142 @@
 
 #include <memory>
 #include <vector>
-#include <map>
 #include <string>
+#include <atomic>
+#include <mutex>
 
 #include <rclcpp/rclcpp.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2/LinearMath/Matrix3x3.h>
 
 #include "rm_interfaces/msg/armors.hpp"
 #include "rm_interfaces/msg/tracked_armors.hpp"
-#include "armor_tracker/single_armor_tracker.hpp"
+#include "rm_interfaces/msg/tracked_armor.hpp"
+
+#include "armor_tracker/armor_types.hpp"
+#include "armor_tracker/armor_tracker_core.hpp"
+#include "armor_tracker/strategies/tracking_strategy_manager.hpp"
 #include "rm_utils/heartbeat.hpp"
 
 namespace fyt::auto_aim {
 
 /**
  * @brief 多装甲板跟踪节点
- * 管理多个装甲板跟踪器,进行数据关联和状态更新
+ * 
+ * 基于 muit_obj_tracker 的多目标跟踪实现：
+ * - 支持异步预测更新（定时器触发）
+ * - 支持多来源输入（检测/估计）
+ * - 使用策略模式处理不同来源数据
+ * - 帧率不稳定时使用预测维持跟踪
  */
 class ArmorTrackerNode : public rclcpp::Node {
 public:
   explicit ArmorTrackerNode(const rclcpp::NodeOptions& options);
+  ~ArmorTrackerNode() override = default;
 
 private:
+  // ==================== 回调函数 ====================
+  
   /**
-   * @brief 装甲板检测回调
+   * @brief 装甲板检测回调（来源：armor_detector）
    */
   void armorsCallback(const rm_interfaces::msg::Armors::SharedPtr msg);
-
+  
   /**
-   * @brief 数据关联 - 将检测结果与现有跟踪器匹配
-   * @param armors 检测到的装甲板列表
-   * @return 匹配结果 map<tracker_index, armor_index>
+   * @brief 估计装甲板回调（来源：robot_pose_estimator）
+   * 预留接口，用于接收虚拟装甲板估计
    */
-  std::map<size_t, size_t> associateDetections(
-    const std::vector<rm_interfaces::msg::Armor>& armors);
-
+  void estimatedArmorsCallback(const rm_interfaces::msg::Armors::SharedPtr msg);
+  
   /**
-   * @brief 清理丢失的跟踪器
+   * @brief 定时器回调 - 异步预测更新
+   * 即使没有检测输入也会执行预测
    */
-  void pruneTrackers();
+  void predictTimerCallback();
+  
+  /**
+   * @brief 发布定时器回调
+   * 按固定频率发布跟踪结果
+   */
+  void publishTimerCallback();
 
+  // ==================== 辅助函数 ====================
+  
+  /**
+   * @brief 将 ROS 消息转换为内部观测结构
+   */
+  std::vector<ArmorObservation> armorsToObservations(
+    const rm_interfaces::msg::Armors& msg,
+    ArmorSourceType source);
+  
+  /**
+   * @brief 将内部状态转换为 ROS 消息
+   */
+  rm_interfaces::msg::TrackedArmor stateToMessage(
+    const TrackedArmorState& state,
+    const builtin_interfaces::msg::Time& stamp);
+  
+  /**
+   * @brief 从四元数提取 yaw 角
+   */
+  double quaternionToYaw(const geometry_msgs::msg::Quaternion& q);
+  
   /**
    * @brief 发布可视化标记
    */
-  void publishMarkers();
-
+  void publishMarkers(const std::vector<TrackedArmorState>& tracks);
+  
   /**
-   * @brief 初始化可视化标记
+   * @brief 声明和加载参数
    */
-  void initMarkers();
-
-  // 参数
-  double max_match_distance_;
-  double max_match_yaw_diff_;
-  int tracking_threshold_;
-  int lost_threshold_;
-  int max_trackers_;
+  void declareParameters();
   
-  // EKF参数
-  double sigma2_q_xyz_;
-  double sigma2_q_yaw_;
-  double r_xyz_;
-  double r_yaw_;
+  /**
+   * @brief 从参数构建配置
+   */
+  TrackerConfig buildConfig();
 
-  // 跟踪器列表
-  std::vector<std::unique_ptr<SingleArmorTracker>> trackers_;
-
-  // 上一次更新时间
-  rclcpp::Time last_time_;
-
-  // 订阅者和发布者
+  // ==================== 成员变量 ====================
+  
+  // 核心跟踪器
+  std::unique_ptr<ArmorTrackerCore> tracker_core_;
+  
+  // 策略管理器
+  std::shared_ptr<TrackingStrategyManager> strategy_manager_;
+  
+  // 订阅者
   rclcpp::Subscription<rm_interfaces::msg::Armors>::SharedPtr armors_sub_;
-  rclcpp::Publisher<rm_interfaces::msg::TrackedArmors>::SharedPtr tracked_armors_pub_;
+  rclcpp::Subscription<rm_interfaces::msg::Armors>::SharedPtr estimated_armors_sub_;
   
-  // 可视化
-  bool debug_mode_;
+  // 发布者
+  rclcpp::Publisher<rm_interfaces::msg::TrackedArmors>::SharedPtr tracked_armors_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
+  
+  // 定时器
+  rclcpp::TimerBase::SharedPtr predict_timer_;   // 预测更新定时器
+  rclcpp::TimerBase::SharedPtr publish_timer_;   // 发布定时器
   
   // 心跳
   HeartBeatPublisher::SharedPtr heartbeat_;
+  
+  // 状态标志
+  std::atomic<bool> detection_received_{false};  // 是否收到检测数据
+  std::atomic<bool> estimate_received_{false};   // 是否收到估计数据
+  
+  // 时间戳
+  rclcpp::Time last_detection_time_;
+  rclcpp::Time last_estimate_time_;
+  rclcpp::Time last_predict_time_;
+  
+  // 参数
+  bool debug_mode_;
+  double predict_rate_;      // 预测更新频率 (Hz)
+  double publish_rate_;      // 发布频率 (Hz)
+  double detection_timeout_; // 检测超时时间 (s)
+  
+  // 线程安全
+  std::mutex callback_mutex_;
 };
 
 }  // namespace fyt::auto_aim

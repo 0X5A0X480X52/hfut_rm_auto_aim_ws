@@ -4,8 +4,8 @@
    schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>armor_tracker</name>
-  <version>1.0.0</version>
-  <description>Multi-armor tracking package using EKF for each armor</description>
+  <version>2.0.0</version>
+  <description>Multi-armor tracking package based on muit_obj_tracker with async update support</description>
   <maintainer email="your_email@example.com">Maintainer Name</maintainer>
   <license>Apache-2.0</license>
 
@@ -21,6 +21,12 @@
   <depend>tf2_geometry_msgs</depend>
   <depend>rm_interfaces</depend>
   <depend>rm_utils</depend>
+  <depend>opencv</depend>
+  
+  <!-- muit_obj_tracker 依赖 -->
+  <depend>muit_obj_tracker</depend>
+  <depend>models</depend>
+  <depend>basic_models</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
