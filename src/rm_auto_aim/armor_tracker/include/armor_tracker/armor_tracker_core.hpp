@@ -21,6 +21,7 @@
 #include <string>
 #include <mutex>
 #include <functional>
+#include <utility>
 
 #include <Eigen/Dense>
 #include <opencv2/opencv.hpp>

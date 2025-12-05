@@ -3,6 +3,7 @@
 #ifndef ARMOR_TRACKER__STRATEGIES__ESTIMATE_SOURCE_STRATEGY_HPP_
 #define ARMOR_TRACKER__STRATEGIES__ESTIMATE_SOURCE_STRATEGY_HPP_
 
+#include <string>
 #include "armor_tracker/tracking_strategy.hpp"
 
 namespace fyt::auto_aim {

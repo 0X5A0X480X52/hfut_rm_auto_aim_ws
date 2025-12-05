@@ -16,7 +16,14 @@ class CA_KF_Factory : public ModelFactoryBase {
 public:
     std::unique_ptr<Models> createModel(const ModelConfig& config) const override {
         auto model = std::make_unique<CA_KF>(config.T, config.Dim, config.R);
-        model->KalmanFilterInit(config.X_0);
+        // CA_KF state dimension is 3*Dim: [x, vx, ax, y, vy, ay, ...]
+        int expected_dim = 3 * config.Dim;
+        if (config.X_0.size() == expected_dim) {
+            model->KalmanFilterInit(config.X_0);
+        } else {
+            // Use zero vector with correct dimension
+            model->KalmanFilterInit(Eigen::VectorXd::Zero(expected_dim));
+        }
         return model;
     }
     
@@ -33,7 +40,14 @@ class CV_KF_Factory : public ModelFactoryBase {
 public:
     std::unique_ptr<Models> createModel(const ModelConfig& config) const override {
         auto model = std::make_unique<CV_KF>(config.T, config.Dim, config.R);
-        model->KalmanFilterInit(config.X_0);
+        // CV_KF state dimension is 2*Dim: [x, vx, y, vy, ...]
+        int expected_dim = 2 * config.Dim;
+        if (config.X_0.size() == expected_dim) {
+            model->KalmanFilterInit(config.X_0);
+        } else {
+            // Use zero vector with correct dimension
+            model->KalmanFilterInit(Eigen::VectorXd::Zero(expected_dim));
+        }
         return model;
     }
     
@@ -58,7 +72,13 @@ public:
         if (it_A != config.extra_params.end()) A_max = it_A->second;
 
         auto model = std::make_unique<CS_KF>(config.T, a, A_max, config.Dim, config.R);
-        model->KalmanFilterInit(config.X_0);
+        // CS_KF state dimension is 3*Dim: [x, vx, ax, y, vy, ay, ...]
+        int expected_dim = 3 * config.Dim;
+        if (config.X_0.size() == expected_dim) {
+            model->KalmanFilterInit(config.X_0);
+        } else {
+            model->KalmanFilterInit(Eigen::VectorXd::Zero(expected_dim));
+        }
         return model;
     }
     
@@ -76,7 +96,13 @@ public:
     std::unique_ptr<Models> createModel(const ModelConfig& config) const override {
         // CTRV_EKF constructor: CTRV_EKF(double T, const Eigen::MatrixXd& R)
         auto model = std::make_unique<CTRV_EKF>(config.T, config.R);
-        model->KalmanFilterInit(config.X_0);
+        // CTRV_EKF state dimension is fixed at 5: [x, y, v, theta, omega]
+        int expected_dim = 5;
+        if (config.X_0.size() == expected_dim) {
+            model->KalmanFilterInit(config.X_0);
+        } else {
+            model->KalmanFilterInit(Eigen::VectorXd::Zero(expected_dim));
+        }
         return model;
     }
     
@@ -101,7 +127,13 @@ public:
         if (it_sigma != config.extra_params.end()) sigma = it_sigma->second;
 
         auto model = std::make_unique<Singer_KF>(config.T, a, sigma, config.Dim, config.R);
-        model->KalmanFilterInit(config.X_0);
+        // Singer_KF state dimension is 3*Dim: [x, vx, ax, y, vy, ay, ...]
+        int expected_dim = 3 * config.Dim;
+        if (config.X_0.size() == expected_dim) {
+            model->KalmanFilterInit(config.X_0);
+        } else {
+            model->KalmanFilterInit(Eigen::VectorXd::Zero(expected_dim));
+        }
         return model;
     }
     

@@ -1,8 +1,24 @@
+// Copyright (C) FYT Vision Group. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "armor_tracker/armor_types.hpp"
 
-namespace fyt::auto_aim {
+namespace fyt::auto_aim
+{
 
-std::string sourceTypeToString(ArmorSourceType type) {
+std::string sourceTypeToString(ArmorSourceType type)
+{
   switch (type) {
     case ArmorSourceType::DETECT: return "DETECT";
     case ArmorSourceType::ESTIMATE: return "ESTIMATE";
@@ -11,7 +27,8 @@ std::string sourceTypeToString(ArmorSourceType type) {
   }
 }
 
-std::string trackingStateToString(TrackingState state) {
+std::string trackingStateToString(TrackingState state)
+{
   switch (state) {
     case TrackingState::LOST: return "LOST";
     case TrackingState::DETECTING: return "DETECTING";

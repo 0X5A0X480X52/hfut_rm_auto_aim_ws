@@ -16,25 +16,27 @@
 
 #include <cmath>
 
-namespace fyt::auto_aim {
+namespace fyt::auto_aim
+{
 
-TrackPredictionManager::TrackPredictionManager(const PredictionWindowConfig& config)
+TrackPredictionManager::TrackPredictionManager(const PredictionWindowConfig & config)
   : config_(config)
   , current_iteration_(0)
 {
 }
 
 void TrackPredictionManager::generatePredictions(
-  const std::vector<TrackedArmorState>& tracks,
-  const builtin_interfaces::msg::Time& timestamp)
+  const std::vector<TrackedArmorState> & tracks,
+  const builtin_interfaces::msg::Time & timestamp)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   
   current_iteration_++;
   
   // 检查是否需要生成预测（根据预测间隔）
-  if (config_.predict_interval > 0 && 
-      current_iteration_ % config_.predict_interval != 0) {
+  if (config_.predict_interval > 0 &&
+    current_iteration_ % config_.predict_interval != 0)
+  {
     return;
   }
   
@@ -42,7 +44,7 @@ void TrackPredictionManager::generatePredictions(
   prediction_map_.clear();
   
   // 为每个跟踪对象生成预测
-  for (const auto& track : tracks) {
+  for (const auto & track : tracks) {
     // 只为活跃的跟踪生成预测
     if (track.tracking_state == TrackingState::LOST) {
       continue;
@@ -89,7 +91,7 @@ rm_interfaces::msg::TrackPredictionWindows TrackPredictionManager::getAllPredict
   rm_interfaces::msg::TrackPredictionWindows windows;
   windows.windows.reserve(prediction_map_.size());
   
-  for (const auto& [track_id, window] : prediction_map_) {
+  for (const auto & [track_id, window] : prediction_map_) {
     windows.windows.push_back(window);
   }
   
@@ -103,15 +105,15 @@ void TrackPredictionManager::clear()
   current_iteration_ = 0;
 }
 
-void TrackPredictionManager::updateConfig(const PredictionWindowConfig& config)
+void TrackPredictionManager::updateConfig(const PredictionWindowConfig & config)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   config_ = config;
 }
 
 std::vector<rm_interfaces::msg::TrackWindowState> TrackPredictionManager::predictTrack(
-  const TrackedArmorState& current_state,
-  const builtin_interfaces::msg::Time& timestamp)
+  const TrackedArmorState & current_state,
+  const builtin_interfaces::msg::Time & timestamp)
 {
   std::vector<rm_interfaces::msg::TrackWindowState> predictions;
   predictions.reserve(config_.prediction_steps);
@@ -177,8 +179,8 @@ std::vector<rm_interfaces::msg::TrackWindowState> TrackPredictionManager::predic
 }
 
 Eigen::Vector3d TrackPredictionManager::predictPositionCV(
-  const Eigen::Vector3d& pos,
-  const Eigen::Vector3d& vel,
+  const Eigen::Vector3d & pos,
+  const Eigen::Vector3d & vel,
   double dt)
 {
   // 匀速模型: x(t) = x(0) + v * t
@@ -191,8 +193,8 @@ double TrackPredictionManager::predictYawCV(double yaw, double yaw_vel, double d
   double pred_yaw = yaw + yaw_vel * dt;
   
   // 归一化到 [-pi, pi]
-  while (pred_yaw > M_PI) pred_yaw -= 2.0 * M_PI;
-  while (pred_yaw < -M_PI) pred_yaw += 2.0 * M_PI;
+  while (pred_yaw > M_PI) {pred_yaw -= 2.0 * M_PI;}
+  while (pred_yaw < -M_PI) {pred_yaw += 2.0 * M_PI;}
   
   return pred_yaw;
 }

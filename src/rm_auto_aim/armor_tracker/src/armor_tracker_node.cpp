@@ -17,9 +17,46 @@
 #include <algorithm>
 #include "rm_utils/logger/log.hpp"
 
-namespace fyt::auto_aim {
+// Include model factories for manual registration
+#include "basic_models/basic_model_factories.h"
+#include "models/model_factory.h"
 
-ArmorTrackerNode::ArmorTrackerNode(const rclcpp::NodeOptions& options)
+// Manual factory registration to ensure models are available at runtime
+// Static initialization across shared libraries is unreliable, so we register explicitly
+namespace {
+void registerModelFactories() {
+  auto& registry = ModelFactoryRegistry::getInstance();
+  
+  // Register basic model factories if not already registered
+  if (!registry.hasFactory("CV_KF")) {
+    registry.registerFactory("CV_KF", std::make_shared<CV_KF_Factory>());
+  }
+  if (!registry.hasFactory("CA_KF")) {
+    registry.registerFactory("CA_KF", std::make_shared<CA_KF_Factory>());
+  }
+  if (!registry.hasFactory("CS_KF")) {
+    registry.registerFactory("CS_KF", std::make_shared<CS_KF_Factory>());
+  }
+  if (!registry.hasFactory("CTRV_EKF")) {
+    registry.registerFactory("CTRV_EKF", std::make_shared<CTRV_EKF_Factory>());
+  }
+  if (!registry.hasFactory("Singer_KF")) {
+    registry.registerFactory("Singer_KF", std::make_shared<Singer_KF_Factory>());
+  }
+}
+
+// Static initializer to guarantee registration before node construction
+struct ModelFactoryInitializer {
+  ModelFactoryInitializer() {
+    registerModelFactories();
+  }
+} g_model_factory_initializer;
+}  // namespace
+
+namespace fyt::auto_aim
+{
+
+ArmorTrackerNode::ArmorTrackerNode(const rclcpp::NodeOptions & options)
 : Node("armor_tracker", options)
 , last_detection_time_(this->now())
 , last_estimate_time_(this->now())
@@ -83,8 +120,9 @@ ArmorTrackerNode::ArmorTrackerNode(const rclcpp::NodeOptions& options)
       topic_config_.history_windows_pub_topic,
       rclcpp::SensorDataQoS()
     );
-    FYT_INFO("armor_tracker", "History window publisher enabled: {}", 
-             topic_config_.history_windows_pub_topic);
+      FYT_INFO(
+        "armor_tracker", "History window publisher enabled: {}",
+        topic_config_.history_windows_pub_topic);
   }
   
   // 预测窗口发布者
@@ -93,8 +131,9 @@ ArmorTrackerNode::ArmorTrackerNode(const rclcpp::NodeOptions& options)
       topic_config_.prediction_windows_pub_topic,
       rclcpp::SensorDataQoS()
     );
-    FYT_INFO("armor_tracker", "Prediction window publisher enabled: {}", 
-             topic_config_.prediction_windows_pub_topic);
+    FYT_INFO(
+      "armor_tracker", "Prediction window publisher enabled: {}",
+      topic_config_.prediction_windows_pub_topic);
   }
   
   // 创建预测更新定时器
@@ -122,7 +161,8 @@ ArmorTrackerNode::ArmorTrackerNode(const rclcpp::NodeOptions& options)
   FYT_INFO("armor_tracker", "  - Publish tracked to: {}", topic_config_.tracked_armors_pub_topic);
 }
 
-void ArmorTrackerNode::declareParameters() {
+void ArmorTrackerNode::declareParameters()
+{
   // 调试模式
   debug_mode_ = this->declare_parameter("debug", true);
   
@@ -162,9 +202,12 @@ void ArmorTrackerNode::declareParameters() {
   this->declare_parameter("prediction_window.steps", 30);
   this->declare_parameter("prediction_window.interval", 1);
   this->declare_parameter("prediction_window.dt", 0.01);
+
+  // no test-specific disable flag here; keep original implementation
 }
 
-TrackerConfig ArmorTrackerNode::buildConfig() {
+TrackerConfig ArmorTrackerNode::buildConfig()
+{
   TrackerConfig config;
   
   config.max_match_distance = this->get_parameter("max_match_distance").as_double();
@@ -175,11 +218,14 @@ TrackerConfig ArmorTrackerNode::buildConfig() {
   config.predict_rate = predict_rate_;
   config.model_name = this->get_parameter("model.name").as_string();
   config.model_config_file = this->get_parameter("model.config_file").as_string();
+  // Debug: print out model configuration path for diagnosis
+  FYT_DEBUG("armor_tracker", "Model: {} Config file: {}", config.model_name, config.model_config_file);
   
   return config;
 }
 
-TopicConfig ArmorTrackerNode::buildTopicConfig() {
+TopicConfig ArmorTrackerNode::buildTopicConfig()
+{
   TopicConfig config;
   
   config.armors_sub_topic = this->get_parameter("topics.armors_sub").as_string();
@@ -192,7 +238,8 @@ TopicConfig ArmorTrackerNode::buildTopicConfig() {
   return config;
 }
 
-HistoryWindowConfig ArmorTrackerNode::buildHistoryConfig() {
+HistoryWindowConfig ArmorTrackerNode::buildHistoryConfig()
+{
   HistoryWindowConfig config;
   
   config.max_window_size = static_cast<uint32_t>(
@@ -203,7 +250,8 @@ HistoryWindowConfig ArmorTrackerNode::buildHistoryConfig() {
   return config;
 }
 
-PredictionWindowConfig ArmorTrackerNode::buildPredictionConfig() {
+PredictionWindowConfig ArmorTrackerNode::buildPredictionConfig()
+{
   PredictionWindowConfig config;
   
   config.prediction_steps = static_cast<uint32_t>(
@@ -216,8 +264,16 @@ PredictionWindowConfig ArmorTrackerNode::buildPredictionConfig() {
 }
 
 void ArmorTrackerNode::armorsCallback(
-  const rm_interfaces::msg::Armors::SharedPtr msg) {
-  
+  const rm_interfaces::msg::Armors::SharedPtr msg)
+{
+  FYT_DEBUG("armor_tracker", "armorsCallback invoked. header stamp: {} | armors count: {}", msg->header.stamp.sec, msg->armors.size());
+  if (!msg->armors.empty()) {
+    std::string ids;
+    for (const auto& a : msg->armors) {
+      ids += a.number + ",";
+    }
+    FYT_DEBUG("armor_tracker", "Armors received: {}", ids);
+  }
   std::lock_guard<std::mutex> lock(callback_mutex_);
   
   // 转换为内部观测格式
@@ -234,7 +290,16 @@ void ArmorTrackerNode::armorsCallback(
 }
 
 void ArmorTrackerNode::estimatedArmorsCallback(
-  const rm_interfaces::msg::Armors::SharedPtr msg) {
+  const rm_interfaces::msg::Armors::SharedPtr msg)
+{
+  FYT_DEBUG("armor_tracker", "estimatedArmorsCallback invoked. header stamp: {} | armors count: {}", msg->header.stamp.sec, msg->armors.size());
+  if (!msg->armors.empty()) {
+    std::string ids;
+    for (const auto& a : msg->armors) {
+      ids += a.number + ",";
+    }
+    FYT_DEBUG("armor_tracker", "Estimated armors received: {}", ids);
+  }
   
   std::lock_guard<std::mutex> lock(callback_mutex_);
   
@@ -251,7 +316,8 @@ void ArmorTrackerNode::estimatedArmorsCallback(
   }
 }
 
-void ArmorTrackerNode::predictTimerCallback() {
+void ArmorTrackerNode::predictTimerCallback()
+{
   std::lock_guard<std::mutex> lock(callback_mutex_);
   
   auto current_time = this->now();
@@ -259,8 +325,9 @@ void ArmorTrackerNode::predictTimerCallback() {
   double time_since_estimate = (current_time - last_estimate_time_).seconds();
   
   // 如果超过超时时间没有收到任何观测，执行纯预测
-  if (time_since_detection > detection_timeout_ && 
-      time_since_estimate > detection_timeout_) {
+  if (time_since_detection > detection_timeout_ &&
+    time_since_estimate > detection_timeout_)
+  {
     tracker_core_->predictUpdate();
     FYT_DEBUG("armor_tracker", "No observation, performing predict-only update");
   } else {
@@ -271,7 +338,8 @@ void ArmorTrackerNode::predictTimerCallback() {
   last_predict_time_ = current_time;
 }
 
-void ArmorTrackerNode::publishTimerCallback() {
+void ArmorTrackerNode::publishTimerCallback()
+{
   // 获取跟踪结果
   auto tracks = tracker_core_->getTracks();
   auto current_stamp = this->now();
@@ -281,7 +349,7 @@ void ArmorTrackerNode::publishTimerCallback() {
   tracked_msg.header.stamp = current_stamp;
   tracked_msg.header.frame_id = "odom";
   
-  for (const auto& track : tracks) {
+  for (const auto & track : tracks) {
     tracked_msg.armors.push_back(stateToMessage(track, tracked_msg.header.stamp));
   }
   
@@ -328,8 +396,9 @@ void ArmorTrackerNode::publishTimerCallback() {
 }
 
 std::vector<ArmorObservation> ArmorTrackerNode::armorsToObservations(
-  const rm_interfaces::msg::Armors& msg,
-  ArmorSourceType source) {
+  const rm_interfaces::msg::Armors & msg,
+  ArmorSourceType source)
+{
   
   std::vector<ArmorObservation> observations;
   observations.reserve(msg.armors.size());
@@ -350,13 +419,25 @@ std::vector<ArmorObservation> ArmorTrackerNode::armorsToObservations(
     
     observations.push_back(obs);
   }
+
+  // Debug: print constructed observations
+  if (!observations.empty()) {
+    std::string obs_info;
+    for (const auto& o : observations) {
+      char buf[128];
+      snprintf(buf, sizeof(buf), "%s(%.2f,%.2f,%.2f)", o.armor_id.c_str(), o.position.x(), o.position.y(), o.position.z());
+      obs_info += std::string(buf) + ",";
+    }
+    FYT_DEBUG("armor_tracker", "Converted {} armors to observations: {}", observations.size(), obs_info);
+  }
   
   return observations;
 }
 
 rm_interfaces::msg::TrackedArmor ArmorTrackerNode::stateToMessage(
-  const TrackedArmorState& state,
-  const builtin_interfaces::msg::Time& stamp) {
+  const TrackedArmorState & state,
+  const builtin_interfaces::msg::Time & stamp)
+{
   
   rm_interfaces::msg::TrackedArmor msg;
   
@@ -389,7 +470,8 @@ rm_interfaces::msg::TrackedArmor ArmorTrackerNode::stateToMessage(
   return msg;
 }
 
-double ArmorTrackerNode::quaternionToYaw(const geometry_msgs::msg::Quaternion& q) {
+double ArmorTrackerNode::quaternionToYaw(const geometry_msgs::msg::Quaternion & q)
+{
   tf2::Quaternion tf_q(q.x, q.y, q.z, q.w);
   tf2::Matrix3x3 m(tf_q);
   double roll, pitch, yaw;

@@ -67,6 +67,8 @@ target_link_libraries(armor_tracker_node
   Eigen3::Eigen
   ${OpenCV_LIBS}
   muit_obj_tracker::muit_obj_tracker
+  ${basic_models_LIBRARIES}
+  ${models_LIBRARIES}
 )
 
 target_include_directories(armor_tracker_node PRIVATE
@@ -99,6 +101,47 @@ install(DIRECTORY config launch
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
+
+  # GoogleTest
+  find_package(ament_cmake_gtest REQUIRED)
+
+  # Unit tests for history and prediction managers
+  ament_add_gtest(test_track_history_manager test/test_track_history_manager.cpp)
+  if(TARGET test_track_history_manager)
+    target_link_libraries(test_track_history_manager armor_tracker_node)
+    target_include_directories(test_track_history_manager PRIVATE include)
+    ament_target_dependencies(test_track_history_manager rm_interfaces Eigen3)
+  endif()
+
+  ament_add_gtest(test_track_prediction_manager test/test_track_prediction_manager.cpp)
+  if(TARGET test_track_prediction_manager)
+    target_link_libraries(test_track_prediction_manager armor_tracker_node)
+    target_include_directories(test_track_prediction_manager PRIVATE include)
+    ament_target_dependencies(test_track_prediction_manager rm_interfaces Eigen3)
+  endif()
+
+  # Integration test for ArmorTrackerNode
+  ament_add_gtest(test_armor_tracker_node test/test_armor_tracker_node.cpp)
+  if(TARGET test_armor_tracker_node)
+    target_link_libraries(test_armor_tracker_node armor_tracker_node)
+    ament_target_dependencies(test_armor_tracker_node rclcpp rm_interfaces models basic_models muit_obj_tracker)
+  endif()
+
+  ament_add_gtest(test_armor_tracker_core test/test_armor_tracker_core.cpp)
+  if(TARGET test_armor_tracker_core)
+    target_link_libraries(test_armor_tracker_core armor_tracker_node)
+    ament_target_dependencies(test_armor_tracker_core rclcpp rm_interfaces models basic_models muit_obj_tracker)
+  endif()
 endif()
+  find_package(ament_cmake_pytest REQUIRED)
+
+  # Python integration test: spin up C++ node and publish test messages
+  ament_add_pytest_test(
+    test_armor_tracker_integration
+    test/test_armor_tracker_integration.py
+  )
+  if(TARGET test_armor_tracker_integration)
+    ament_target_dependencies(test_armor_tracker_integration rclpy rm_interfaces ament_index_python)
+  endif()
 
 ament_package()

@@ -20,6 +20,8 @@
 #include <memory>
 #include <mutex>
 #include <vector>
+#include <string>
+#include <utility>
 
 #include "armor_tracker/armor_types.hpp"
 #include "rm_interfaces/msg/track_history_window.hpp"

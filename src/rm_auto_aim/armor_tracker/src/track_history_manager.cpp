@@ -17,30 +17,32 @@
 #include <algorithm>
 #include <set>
 
-namespace fyt::auto_aim {
+namespace fyt::auto_aim
+{
 
-TrackHistoryManager::TrackHistoryManager(const HistoryWindowConfig& config)
+TrackHistoryManager::TrackHistoryManager(const HistoryWindowConfig & config)
   : config_(config)
   , current_iteration_(0)
 {
 }
 
 void TrackHistoryManager::update(
-  const std::vector<TrackedArmorState>& tracks,
-  const builtin_interfaces::msg::Time& timestamp)
+  const std::vector<TrackedArmorState> & tracks,
+  const builtin_interfaces::msg::Time & timestamp)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   
   current_iteration_++;
   
   // 检查是否需要记录（根据记录间隔）
-  if (config_.record_interval > 0 && 
-      current_iteration_ % config_.record_interval != 0) {
+  if (config_.record_interval > 0 &&
+    current_iteration_ % config_.record_interval != 0)
+  {
     return;
   }
   
   // 更新每个跟踪对象的历史
-  for (const auto& track : tracks) {
+  for (const auto & track : tracks) {
     // 创建历史条目
     TrackHistoryEntry entry;
     entry.iteration = current_iteration_;
@@ -48,7 +50,7 @@ void TrackHistoryManager::update(
     entry.state = track;
     
     // 获取或创建该 track_id 的历史队列
-    auto& history = history_map_[track.track_id];
+    auto & history = history_map_[track.track_id];
     
     // 添加到队列末尾
     history.push_back(entry);
@@ -144,13 +146,13 @@ void TrackHistoryManager::clear()
   current_iteration_ = 0;
 }
 
-void TrackHistoryManager::updateConfig(const HistoryWindowConfig& config)
+void TrackHistoryManager::updateConfig(const HistoryWindowConfig & config)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   config_ = config;
   
   // 如果新的窗口大小更小，需要裁剪现有历史
-  for (auto& [track_id, history] : history_map_) {
+  for (auto & [track_id, history] : history_map_) {
     while (history.size() > config_.max_window_size) {
       history.pop_front();
     }
@@ -158,7 +160,7 @@ void TrackHistoryManager::updateConfig(const HistoryWindowConfig& config)
 }
 
 rm_interfaces::msg::TrackWindowState TrackHistoryManager::stateToMessage(
-  const TrackHistoryEntry& entry) const
+  const TrackHistoryEntry & entry) const
 {
   rm_interfaces::msg::TrackWindowState msg;
   
@@ -184,11 +186,11 @@ rm_interfaces::msg::TrackWindowState TrackHistoryManager::stateToMessage(
 }
 
 void TrackHistoryManager::cleanupLostTracks(
-  const std::vector<TrackedArmorState>& current_tracks)
+  const std::vector<TrackedArmorState> & current_tracks)
 {
   // 收集当前活跃的 track_id
   std::set<int> active_ids;
-  for (const auto& track : current_tracks) {
+  for (const auto & track : current_tracks) {
     active_ids.insert(track.track_id);
   }
   
@@ -198,7 +200,7 @@ void TrackHistoryManager::cleanupLostTracks(
   // 当前实现：只有当跟踪完全从跟踪器中消失时才清理
   
   std::vector<int> to_remove;
-  for (const auto& [track_id, _] : history_map_) {
+  for (const auto & [track_id, _] : history_map_) {
     if (active_ids.find(track_id) == active_ids.end()) {
       to_remove.push_back(track_id);
     }

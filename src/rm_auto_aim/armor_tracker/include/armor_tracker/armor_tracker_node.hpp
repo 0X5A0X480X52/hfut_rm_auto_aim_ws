@@ -138,6 +138,8 @@ private:
    * @brief 从参数构建话题配置
    */
   TopicConfig buildTopicConfig();
+
+  // NOTE: topic_config_ can be inspected via ROS parameters in tests
   
   /**
    * @brief 从参数构建历史窗口配置
@@ -201,6 +203,7 @@ private:
   // 是否启用历史/预测窗口发布
   bool enable_history_window_;
   bool enable_prediction_window_;
+  // (original implementation does not include a disable flag)
   
   // 线程安全
   std::mutex callback_mutex_;
