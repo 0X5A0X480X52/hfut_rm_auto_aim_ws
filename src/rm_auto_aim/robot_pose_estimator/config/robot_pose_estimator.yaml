@@ -1,0 +1,44 @@
+# Robot Pose Estimator Configuration
+
+# Debug mode
+debug: false
+
+# Predict rate (Hz)
+predict_rate: 100.0
+
+# Topic configuration
+topics:
+  tracked_armors_sub: "/armor_tracker/tracked_armors"
+  robots_pub: "/robot_pose_estimator/robots"
+  virtual_armors_pub: "/robot_pose_estimator/virtual_armors"
+  target_pub: "/robot_pose_estimator/target"
+  markers_pub: "/robot_pose_estimator/markers"
+
+# EKF parameters
+ekf:
+  # Process noise
+  sigma2_q_xyz: 0.05    # Position process noise
+  sigma2_q_yaw: 1.0     # Yaw process noise
+  sigma2_q_r: 0.05      # Radius process noise
+  
+  # Measurement noise
+  r_xyz: 0.05           # Position measurement noise
+  r_yaw: 0.02           # Yaw measurement noise
+
+# Tracking parameters
+tracking:
+  max_match_distance: 0.5   # Maximum matching distance (m)
+  max_match_yaw_diff: 1.0   # Maximum yaw difference (rad)
+  tracking_threshold: 5     # Frames to enter tracking state
+  lost_threshold: 100       # Frames to enter lost state
+  robot_timeout: 2.0        # Robot timeout (s)
+
+# Robot geometry parameters
+robot:
+  balance_radius: 0.15      # Balance infantry radius (m)
+  standard_radius: 0.23     # Standard robot radius (m)
+  hero_radius: 0.28         # Hero robot radius (m)
+  outpost_radius: 0.26      # Outpost radius (m)
+
+# Virtual armor generation
+virtual_armor_generation: true
