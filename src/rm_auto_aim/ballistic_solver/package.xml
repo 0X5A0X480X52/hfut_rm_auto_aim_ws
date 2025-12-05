@@ -5,7 +5,19 @@
 <package format="3">
   <name>ballistic_solver</name>
   <version>1.0.0</version>
-  <description>Ballistic solver package - computes pitch/yaw for hitting target position</description>
+  <description>
+    Ballistic solver package for RoboMaster Auto Aim system.
+    
+    Computes pitch and yaw angles required to hit a target position,
+    considering gravity and air resistance. Supports both static and
+    moving targets.
+    
+    Features:
+    - Iterative trajectory calculation with gravity compensation
+    - Air resistance model support (ideal and resistance-based)
+    - Moving target prediction
+    - ROS2 service interface for real-time queries
+  </description>
   <maintainer email="your_email@example.com">Maintainer Name</maintainer>
   <license>Apache-2.0</license>
 
@@ -16,10 +28,13 @@
   <depend>eigen</depend>
   <depend>geometry_msgs</depend>
   <depend>rm_interfaces</depend>
-  <depend>rm_utils</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
+  <test_depend>launch_testing_ament_cmake</test_depend>
+  <test_depend>launch_testing</test_depend>
+  <test_depend>pytest</test_depend>
+  <test_depend>rclpy</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
