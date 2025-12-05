@@ -43,7 +43,10 @@ std::vector<rm_interfaces::msg::Armor> VirtualArmorGenerator::generateArmors(
   
   // 确定装甲板类型
   std::string armor_type = "small";
-  if (robot_state.robot_type == RobotType::BALANCE_2) {
+  if (robot_state.robot_type == RobotType::BALANCE_2 ||
+      robot_state.robot_type == RobotType::HERO_4 ||
+      robot_state.robot_type == RobotType::OUTPOST_3 ||
+      robot_state.robot_type == RobotType::BASE) {
     armor_type = "large";
   }
   

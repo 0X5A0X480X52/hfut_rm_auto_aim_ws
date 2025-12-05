@@ -29,6 +29,13 @@ RobotPoseEstimatorNode::RobotPoseEstimatorNode(const rclcpp::NodeOptions& option
   , debug_mode_(false)
   , predict_rate_(100.0) {
   
+  // 注册日志器（如果尚未注册）
+  try {
+    FYT_REGISTER_LOGGER("robot_pose_estimator", "logs/robot_pose_estimator", INFO);
+  } catch (...) {
+    // Logger may already be registered, ignore
+  }
+  
   FYT_INFO("robot_pose_estimator", "Initializing Robot Pose Estimator Node...");
   
   // 声明和加载参数

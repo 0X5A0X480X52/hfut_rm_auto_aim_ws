@@ -90,9 +90,64 @@ install(DIRECTORY config launch
   OPTIONAL
 )
 
+# ============================================================================
+# Testing
+# ============================================================================
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
+  find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
   ament_lint_auto_find_test_dependencies()
+
+  # C++ Unit Tests
+  # Test robot_tracker
+  ament_add_gtest(test_robot_tracker test/test_robot_tracker.cpp)
+  target_link_libraries(test_robot_tracker ${PROJECT_NAME})
+  target_include_directories(test_robot_tracker PRIVATE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    ${EIGEN3_INCLUDE_DIRS}
+  )
+  ament_target_dependencies(test_robot_tracker
+    rclcpp
+    rm_interfaces
+    angles
+  )
+
+  # Test armor_grouper
+  ament_add_gtest(test_armor_grouper test/test_armor_grouper.cpp)
+  target_link_libraries(test_armor_grouper ${PROJECT_NAME})
+  target_include_directories(test_armor_grouper PRIVATE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    ${EIGEN3_INCLUDE_DIRS}
+  )
+  ament_target_dependencies(test_armor_grouper
+    rclcpp
+    rm_interfaces
+  )
+
+  # Test virtual_armor_generator
+  ament_add_gtest(test_virtual_armor_generator test/test_virtual_armor_generator.cpp)
+  target_link_libraries(test_virtual_armor_generator ${PROJECT_NAME})
+  target_include_directories(test_virtual_armor_generator PRIVATE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    ${EIGEN3_INCLUDE_DIRS}
+  )
+  ament_target_dependencies(test_virtual_armor_generator
+    rclcpp
+    rm_interfaces
+    geometry_msgs
+  )
+
+  # Python Integration Tests
+  ament_add_pytest_test(test_robot_pose_estimator_integration
+    test/test_robot_pose_estimator_integration.py
+    TIMEOUT 120
+  )
+  
+  ament_add_pytest_test(test_pipeline_integration
+    test/test_pipeline_integration.py
+    TIMEOUT 180
+  )
 endif()
 
 ament_export_include_directories(include)
