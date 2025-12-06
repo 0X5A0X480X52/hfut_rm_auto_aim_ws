@@ -17,6 +17,9 @@
 
 #include <memory>
 #include <string>
+#include <map>
+#include <vector>
+#include <mutex>
 
 #include <rclcpp/rclcpp.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
@@ -30,6 +33,7 @@
 #include "rm_interfaces/msg/tracked_robot.hpp"
 #include "rm_interfaces/msg/armors.hpp"
 #include "rm_interfaces/msg/target.hpp"
+#include "rm_interfaces/msg/track_history_windows.hpp"
 #include "rm_utils/heartbeat.hpp"
 
 namespace fyt::auto_aim {
@@ -40,6 +44,8 @@ namespace fyt::auto_aim {
 struct EstimatorTopicConfig {
   // 订阅话题 - 直接订阅armor_detector的检测结果，避免与armor_tracker形成反馈回路
   std::string armors_sub = "/armor_detector/armors";
+  // 订阅armor_tracker的历史窗口，用于建立track_id与armor_id的绑定关系
+  std::string history_windows_sub = "/armor_tracker/history_windows";
   
   // 发布话题
   std::string robots_pub = "/robot_pose_estimator/robots";
@@ -70,6 +76,12 @@ private:
    * @brief 检测装甲板回调（来自 armor_detector）
    */
   void armorsCallback(const rm_interfaces::msg::Armors::SharedPtr msg);
+  
+  /**
+   * @brief 历史窗口回调（来自 armor_tracker）
+   * 用于建立 track_id 与 armor_id 的绑定关系
+   */
+  void historyWindowsCallback(const rm_interfaces::msg::TrackHistoryWindows::SharedPtr msg);
   
   /**
    * @brief 定时器回调 - 预测更新
@@ -144,6 +156,15 @@ private:
   
   // 订阅者 - 订阅armor_detector的检测结果
   rclcpp::Subscription<rm_interfaces::msg::Armors>::SharedPtr armors_sub_;
+  // 订阅者 - 订阅armor_tracker的历史窗口
+  rclcpp::Subscription<rm_interfaces::msg::TrackHistoryWindows>::SharedPtr history_windows_sub_;
+  
+  // track_id -> armor_id 绑定映射（来自 armor_tracker 历史窗口）
+  std::map<int, std::string> track_id_to_armor_id_;
+  // armor_id -> track_ids 映射（反向索引）
+  std::map<std::string, std::vector<int>> armor_id_to_track_ids_;
+  // 互斥锁保护绑定映射
+  mutable std::mutex binding_mutex_;
   
   // 发布者
   rclcpp::Publisher<rm_interfaces::msg::TrackedRobots>::SharedPtr robots_pub_;

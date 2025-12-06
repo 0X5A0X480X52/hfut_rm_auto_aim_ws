@@ -187,6 +187,19 @@ void RobotPoseEstimatorCore::reset() {
   FYT_INFO("robot_pose_estimator", "Estimator reset");
 }
 
+void RobotPoseEstimatorCore::updateBindingCounts(const std::map<std::string, std::vector<int>>& binding_map) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  
+  for (auto& [robot_id, tracker] : trackers_) {
+    auto it = binding_map.find(robot_id);
+    if (it != binding_map.end()) {
+      tracker->setBoundTrackCount(static_cast<int>(it->second.size()));
+    } else {
+      tracker->setBoundTrackCount(0);
+    }
+  }
+}
+
 void RobotPoseEstimatorCore::updateConfig(const PoseEstimatorConfig& config) {
   std::lock_guard<std::mutex> lock(mutex_);
   config_ = config;

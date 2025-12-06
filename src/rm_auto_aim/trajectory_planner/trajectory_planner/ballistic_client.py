@@ -21,7 +21,7 @@ pitch angle given a target position and velocity.
 
 import math
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 import threading
 
 import rclpy
@@ -63,6 +63,7 @@ class BallisticClient:
     1. 异步调用 ballistic_solver 服务
     2. 给定目标3D位置和速度，获取pitch和yaw角
     3. 支持同步和异步调用方式
+    4. 使用缓存+异步更新避免阻塞控制循环
     """
     
     def __init__(self, 
@@ -86,6 +87,9 @@ class BallisticClient:
         
         # 缓存的结果
         self._last_result: Optional[BallisticResult] = None
+        
+        # 异步请求的 pending future
+        self._pending_future = None
         
         # 线程锁
         self._lock = threading.Lock()
@@ -145,34 +149,39 @@ class BallisticClient:
         )
         request.bullet_speed = bullet_speed if bullet_speed else self.config.default_bullet_speed
         
-        # 同步调用
+        # 非阻塞同步调用：使用循环等待而不是 spin_until_future_complete
+        # spin_until_future_complete 会阻塞整个节点的其他回调
         try:
             future = self.client.call_async(request)
-            rclpy.spin_until_future_complete(
-                self.node,
-                future,
-                timeout_sec=self.config.timeout
+            
+            # 使用非阻塞轮询等待，避免阻塞其他回调
+            import time
+            start_time = time.time()
+            timeout = self.config.timeout
+            
+            while not future.done():
+                elapsed = time.time() - start_time
+                if elapsed > timeout:
+                    return BallisticResult(
+                        success=False,
+                        message="Service call timed out"
+                    )
+                # 短暂休眠避免 CPU 空转，但不阻塞 ROS 回调
+                time.sleep(0.001)  # 1ms
+            
+            response = future.result()
+            result = BallisticResult(
+                pitch=response.pitch,
+                yaw=response.yaw,
+                flight_time=response.flight_time,
+                success=response.success,
+                message=response.message
             )
             
-            if future.done():
-                response = future.result()
-                result = BallisticResult(
-                    pitch=response.pitch,
-                    yaw=response.yaw,
-                    flight_time=response.flight_time,
-                    success=response.success,
-                    message=response.message
-                )
-                
-                with self._lock:
-                    self._last_result = result
-                
-                return result
-            else:
-                return BallisticResult(
-                    success=False,
-                    message="Service call timed out"
-                )
+            with self._lock:
+                self._last_result = result
+            
+            return result
                 
         except Exception as e:
             return BallisticResult(
@@ -253,9 +262,13 @@ class BallisticClient:
                                target_velocity: Tuple[float, float, float] = (0.0, 0.0, 0.0),
                                bullet_speed: Optional[float] = None) -> BallisticResult:
         """
-        根据给定的yaw角计算对应的pitch
+        根据给定的yaw角计算对应的pitch (非阻塞版本)
         
-        这个方法将目标投影到yaw方向上，然后计算垂直方向的弹道
+        使用异步请求 + 缓存机制：
+        1. 检查是否有 pending 的异步请求已完成
+        2. 如果有缓存结果且距离变化不大，使用缓存
+        3. 发起新的异步请求
+        4. 返回简单估算或缓存结果（立即返回，不阻塞）
         
         Args:
             yaw: 给定的yaw角 (弧度)
@@ -276,18 +289,54 @@ class BallisticClient:
         
         # 投影速度
         vx, vy, vz = target_velocity
-        # 速度在yaw方向上的分量
         v_horizontal = math.sqrt(vx**2 + vy**2)
-        target_yaw = math.atan2(y, x)
-        yaw_diff = yaw - target_yaw
         
         projected_vx = v_horizontal * math.cos(yaw)
         projected_vy = v_horizontal * math.sin(yaw)
         
-        return self.solve_sync(
-            target_position=(projected_x, projected_y, z),
-            target_velocity=(projected_vx, projected_vy, vz),
+        # 检查是否有 pending future 完成
+        with self._lock:
+            if self._pending_future is not None and self._pending_future.done():
+                try:
+                    response = self._pending_future.result()
+                    self._last_result = BallisticResult(
+                        pitch=response.pitch,
+                        yaw=response.yaw,
+                        flight_time=response.flight_time,
+                        success=response.success,
+                        message=response.message
+                    )
+                except Exception:
+                    pass
+                self._pending_future = None
+        
+        # 如果服务可用且没有 pending 请求，发起新的异步请求
+        if self.is_service_available():
+            with self._lock:
+                if self._pending_future is None:
+                    request = SolveBallistic.Request()
+                    request.target_position = Point(x=projected_x, y=projected_y, z=z)
+                    request.target_velocity = Vector3(x=projected_vx, y=projected_vy, z=vz)
+                    request.bullet_speed = bullet_speed if bullet_speed else self.config.default_bullet_speed
+                    self._pending_future = self.client.call_async(request)
+        
+        # 如果有缓存结果，使用缓存；否则使用简单估算
+        with self._lock:
+            if self._last_result is not None and self._last_result.success:
+                return self._last_result
+        
+        # 使用简单估算作为 fallback
+        simple_pitch = self.simple_pitch_estimate(
+            distance=horizontal_distance,
+            height=z,
             bullet_speed=bullet_speed
+        )
+        return BallisticResult(
+            pitch=simple_pitch,
+            yaw=yaw,
+            flight_time=horizontal_distance / (bullet_speed if bullet_speed else self.config.default_bullet_speed),
+            success=True,
+            message="Using simple estimate (non-blocking)"
         )
     
     def simple_pitch_estimate(self,
@@ -340,3 +389,108 @@ class BallisticClient:
         """获取最后一次解算结果"""
         with self._lock:
             return self._last_result
+    
+    def calculate_trajectory(self,
+                            distance: float,
+                            pitch: float,
+                            bullet_speed: Optional[float] = None,
+                            sample_interval: float = 0.03) -> List[Tuple[float, float]]:
+        """
+        计算弹道轨迹点序列
+        
+        基于抛物线模型计算弹道轨迹，用于可视化
+        
+        Args:
+            distance: 水平距离 (米)
+            pitch: 云台pitch角 (弧度)
+            bullet_speed: 子弹速度 (m/s)
+            sample_interval: 采样间隔 (米)
+        
+        Returns:
+            轨迹点列表 [(x, z), ...] 在 gimbal_link 坐标系下
+        """
+        v = bullet_speed if bullet_speed else self.config.default_bullet_speed
+        g = 9.8  # 重力加速度
+        
+        trajectory = []
+        
+        if distance <= 0:
+            return trajectory
+        
+        # 初速度分量
+        vx = v * math.cos(pitch)
+        vz = v * math.sin(pitch)
+        
+        # 沿水平距离采样
+        x = 0.0
+        while x < distance:
+            # 飞行时间
+            if vx > 0:
+                t = x / vx
+            else:
+                break
+            
+            # 垂直位置 (考虑重力)
+            z = vz * t - 0.5 * g * t * t
+            
+            trajectory.append((x, z))
+            x += sample_interval
+        
+        return trajectory
+    
+    def calculate_trajectory_3d(self,
+                               target_position: Tuple[float, float, float],
+                               pitch: float,
+                               yaw: float,
+                               bullet_speed: Optional[float] = None,
+                               sample_interval: float = 0.03) -> List[Tuple[float, float, float]]:
+        """
+        计算3D弹道轨迹点序列
+        
+        基于抛物线模型计算弹道轨迹，用于可视化
+        
+        Args:
+            target_position: 目标3D位置 (x, y, z)
+            pitch: 云台pitch角 (弧度)
+            yaw: 云台yaw角 (弧度)
+            bullet_speed: 子弹速度 (m/s)
+            sample_interval: 采样间隔 (米)
+        
+        Returns:
+            轨迹点列表 [(x, y, z), ...] 在 odom 坐标系下
+        """
+        v = bullet_speed if bullet_speed else self.config.default_bullet_speed
+        g = 9.8  # 重力加速度
+        
+        trajectory = []
+        
+        # 计算水平距离
+        horizontal_distance = math.sqrt(target_position[0]**2 + target_position[1]**2)
+        
+        if horizontal_distance <= 0:
+            return trajectory
+        
+        # 初速度分量 (在 odom 坐标系)
+        v_horizontal = v * math.cos(pitch)
+        vx = v_horizontal * math.cos(yaw)
+        vy = v_horizontal * math.sin(yaw)
+        vz = v * math.sin(pitch)
+        
+        # 沿水平距离采样
+        dist = 0.0
+        while dist < horizontal_distance:
+            # 飞行时间
+            if v_horizontal > 0:
+                t = dist / v_horizontal
+            else:
+                break
+            
+            # 3D位置
+            x = vx * t
+            y = vy * t
+            z = vz * t - 0.5 * g * t * t
+            
+            trajectory.append((x, y, z))
+            dist += sample_interval
+        
+        return trajectory

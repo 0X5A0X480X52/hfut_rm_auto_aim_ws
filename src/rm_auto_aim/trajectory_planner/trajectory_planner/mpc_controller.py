@@ -18,13 +18,23 @@ MPC Controller Module
 A QP-based Model Predictive Controller for gimbal yaw control.
 Based on quadratic programming optimization with tracking error,
 control effort, and control smoothness objectives.
+
+Performance optimized with OSQP solver (if available) for real-time control.
 """
 
 import numpy as np
 from scipy.optimize import minimize
+from scipy import sparse
 from dataclasses import dataclass
 from typing import Optional, Tuple, List
 import time
+
+# 尝试导入 OSQP（高性能 QP 求解器）
+try:
+    import osqp
+    OSQP_AVAILABLE = True
+except ImportError:
+    OSQP_AVAILABLE = False
 
 from trajectory_planner.gimbal_model import GimbalModel, GimbalConfig
 
@@ -53,6 +63,16 @@ class MPCConfig:
     # 优化器设置
     max_iterations: int = 30
     ftol: float = 1e-5
+    
+    # 是否使用 OSQP（如果可用）
+    use_osqp: bool = True
+    
+    # OSQP 设置
+    osqp_warm_start: bool = True
+    osqp_verbose: bool = False
+    osqp_polish: bool = False  # 关闭 polish 以提高速度
+    osqp_eps_abs: float = 1e-4
+    osqp_eps_rel: float = 1e-4
     
     @classmethod
     def from_dict(cls, config_dict: dict) -> 'MPCConfig':
@@ -95,8 +115,13 @@ class MPCController:
         # 预计算矩阵
         self._build_optimization_matrices()
         
+        # OSQP 求解器实例（懒初始化）
+        self._osqp_solver: Optional[osqp.OSQP] = None
+        self._use_osqp = OSQP_AVAILABLE and self.config.use_osqp
+        
         # 上一次的控制输入 (用于热启动)
         self.u_prev = 0.0
+        self._U_prev: Optional[np.ndarray] = None
         
         # 性能统计
         self.last_solve_time = 0.0
@@ -175,7 +200,7 @@ class MPCController:
         Returns:
             u_optimal: 最优控制输入 (第一个时间步)
             U_sequence: 完整控制序列 (N,)
-            solve_time: 求解时间 (秒)
+            solve_time: 求解时间 (毫秒)
         """
         start_time = time.perf_counter()
         
@@ -193,6 +218,144 @@ class MPCController:
         # J = 0.5 * U^T * H * U + f^T * U + const
         H = 2 * (self.B_pred.T @ self.Q @ self.B_pred + self.R + self.D.T @ self.S @ self.D)
         f = 2 * self.B_pred.T @ self.Q @ (A_pred_x0 - X_target_flat)
+        
+        # 尝试使用 OSQP（更快）
+        if self._use_osqp:
+            result = self._solve_osqp(H, f, current_state, A_pred_x0)
+            if result is not None:
+                u, U_optimal = result
+                solve_time = (time.perf_counter() - start_time) * 1000  # 转换为毫秒
+                self.last_solve_time = solve_time
+                self.last_success = True
+                return u, U_optimal, solve_time
+        
+        # OSQP 失败或不可用，使用 scipy 后备方案
+        result = self._solve_scipy(H, f, current_state, A_pred_x0)
+        solve_time = (time.perf_counter() - start_time) * 1000  # 转换为毫秒
+        self.last_solve_time = solve_time
+        
+        if result is not None:
+            u, U_optimal = result
+            self.last_success = True
+            return u, U_optimal, solve_time
+        else:
+            self.last_success = False
+            return 0.0, np.zeros(N), solve_time
+    
+    def _solve_osqp(self, H: np.ndarray, f: np.ndarray, 
+                    current_state: np.ndarray, A_pred_x0: np.ndarray) -> Optional[Tuple[float, np.ndarray]]:
+        """
+        使用 OSQP 求解 QP 问题
+        
+        Args:
+            H: Hessian 矩阵
+            f: 梯度向量
+            current_state: 当前状态
+            A_pred_x0: 预测矩阵与初始状态的乘积
+        
+        Returns:
+            (u_optimal, U_sequence) 或 None（如果求解失败）
+        """
+        N = self.config.prediction_horizon
+        n_state = GimbalModel.STATE_DIM
+        
+        # 边界约束
+        jerk_min = self.gimbal_model.config.jerk_min
+        jerk_max = self.gimbal_model.config.jerk_max
+        
+        # 角度边界
+        theta_min = self.gimbal_model.config.theta_min
+        theta_max = self.gimbal_model.config.theta_max
+        
+        # 构建约束矩阵
+        # 1. 控制输入边界: jerk_min <= U <= jerk_max
+        # 2. 角度约束: theta_min <= theta_k <= theta_max
+        
+        # 角度约束: theta_k = (A_pred_x0 + B_pred @ U)[k*n_state]
+        # 提取 B_pred 中与 theta 相关的行
+        B_theta = self.B_pred[::n_state, :]  # 每隔 n_state 行取一行（theta 分量）
+        
+        # 构建约束矩阵 A_con @ U <= b_upper 且 A_con @ U >= b_lower
+        # 角度约束: theta_min <= A_pred_x0[::n_state] + B_theta @ U <= theta_max
+        # 即: theta_min - A_pred_x0[::n_state] <= B_theta @ U <= theta_max - A_pred_x0[::n_state]
+        
+        A_pred_x0_theta = A_pred_x0[::n_state]  # 提取 theta 分量
+        
+        # 合并约束：[I; B_theta]
+        A_con = sparse.vstack([
+            sparse.eye(N),  # 控制输入约束
+            sparse.csc_matrix(B_theta)  # 角度约束
+        ], format='csc')
+        
+        # 下界和上界
+        l = np.concatenate([
+            np.full(N, jerk_min),  # 控制输入下界
+            np.full(N, theta_min) - A_pred_x0_theta  # 角度下界
+        ])
+        u = np.concatenate([
+            np.full(N, jerk_max),  # 控制输入上界
+            np.full(N, theta_max) - A_pred_x0_theta  # 角度上界
+        ])
+        
+        # 转换 H 为稀疏矩阵
+        P = sparse.csc_matrix(H)
+        
+        try:
+            # 创建或更新 OSQP 问题
+            if self._osqp_solver is None:
+                self._osqp_solver = osqp.OSQP()
+                self._osqp_solver.setup(
+                    P=P, q=f, A=A_con, l=l, u=u,
+                    warm_start=self.config.osqp_warm_start,
+                    verbose=self.config.osqp_verbose,
+                    polish=self.config.osqp_polish,
+                    eps_abs=self.config.osqp_eps_abs,
+                    eps_rel=self.config.osqp_eps_rel,
+                    max_iter=self.config.max_iterations * 10  # OSQP 迭代次数
+                )
+            else:
+                # 更新问题参数（热启动）
+                self._osqp_solver.update(q=f, l=l, u=u)
+            
+            # 设置热启动初值
+            if self.config.osqp_warm_start and self._U_prev is not None:
+                self._osqp_solver.warm_start(x=self._U_prev)
+            
+            # 求解
+            result = self._osqp_solver.solve()
+            
+            if result.info.status == 'solved' or result.info.status == 'solved_inaccurate':
+                U_optimal = result.x
+                u = self.gimbal_model.clip_control(U_optimal[0])
+                self.u_prev = u
+                self._U_prev = U_optimal
+                return u, U_optimal
+            else:
+                # 求解失败，重置求解器
+                self._osqp_solver = None
+                return None
+                
+        except Exception:
+            # 出错时重置求解器
+            self._osqp_solver = None
+            return None
+    
+    def _solve_scipy(self, H: np.ndarray, f: np.ndarray, 
+                     current_state: np.ndarray, A_pred_x0: np.ndarray) -> Optional[Tuple[float, np.ndarray]]:
+        """
+        使用 scipy 求解 QP 问题（后备方案）
+        
+        Args:
+            H: Hessian 矩阵
+            f: 梯度向量
+            current_state: 当前状态
+            A_pred_x0: 预测矩阵与初始状态的乘积
+        
+        Returns:
+            (u_optimal, U_sequence) 或 None（如果求解失败）
+        """
+        N = self.config.prediction_horizon
+        n_state = GimbalModel.STATE_DIM
         
         # 边界约束
         jerk_min = self.gimbal_model.config.jerk_min
@@ -215,8 +378,11 @@ class MPCController:
             return np.array(constraints)
         
         # 初始猜测 (热启动)
-        U0 = np.zeros(N)
-        U0[0] = self.u_prev
+        if self._U_prev is not None:
+            U0 = self._U_prev
+        else:
+            U0 = np.zeros(N)
+            U0[0] = self.u_prev
         
         # 求解QP问题
         result = minimize(
@@ -233,19 +399,14 @@ class MPCController:
             }
         )
         
-        solve_time = time.perf_counter() - start_time
-        self.last_solve_time = solve_time
-        
         if result.success:
             U_optimal = result.x
             u = self.gimbal_model.clip_control(U_optimal[0])
             self.u_prev = u
-            self.last_success = True
-            return u, U_optimal, solve_time
+            self._U_prev = U_optimal
+            return u, U_optimal
         else:
-            # 优化失败，返回保守控制
-            self.last_success = False
-            return 0.0, np.zeros(N), solve_time
+            return None
     
     def _prepare_target_trajectory(self, target_trajectory: np.ndarray) -> np.ndarray:
         """
@@ -321,5 +482,7 @@ class MPCController:
     def reset(self):
         """重置控制器状态"""
         self.u_prev = 0.0
+        self._U_prev = None
+        self._osqp_solver = None
         self.last_solve_time = 0.0
         self.last_success = True

@@ -59,6 +59,13 @@ RobotPoseEstimatorNode::RobotPoseEstimatorNode(const rclcpp::NodeOptions& option
     std::bind(&RobotPoseEstimatorNode::armorsCallback, this, std::placeholders::_1)
   );
   
+  // 创建订阅者 - 订阅armor_tracker的历史窗口，用于建立track_id与armor_id的绑定关系
+  history_windows_sub_ = this->create_subscription<rm_interfaces::msg::TrackHistoryWindows>(
+    topic_config_.history_windows_sub,
+    rclcpp::SensorDataQoS(),
+    std::bind(&RobotPoseEstimatorNode::historyWindowsCallback, this, std::placeholders::_1)
+  );
+  
   // 创建发布者
   robots_pub_ = this->create_publisher<rm_interfaces::msg::TrackedRobots>(
     topic_config_.robots_pub,
@@ -97,6 +104,7 @@ RobotPoseEstimatorNode::RobotPoseEstimatorNode(const rclcpp::NodeOptions& option
   
   FYT_INFO("robot_pose_estimator", "Robot Pose Estimator Node initialized");
   FYT_INFO("robot_pose_estimator", "  Subscribing to: {} (from detector, avoids feedback loop)", topic_config_.armors_sub);
+  FYT_INFO("robot_pose_estimator", "  Subscribing to: {} (for track_id binding)", topic_config_.history_windows_sub);
   FYT_INFO("robot_pose_estimator", "  Publishing robots to: {}", topic_config_.robots_pub);
   FYT_INFO("robot_pose_estimator", "  Publishing virtual armors to: {} (-> armor_tracker)", topic_config_.virtual_armors_pub);
   FYT_INFO("robot_pose_estimator", "  Publishing target to: {}", topic_config_.target_pub);
@@ -112,6 +120,7 @@ void RobotPoseEstimatorNode::declareParameters() {
   
   // 话题配置 - 订阅armor_detector的检测结果，避免与armor_tracker形成反馈回路
   this->declare_parameter("topics.armors_sub", "/armor_detector/armors");
+  this->declare_parameter("topics.history_windows_sub", "/armor_tracker/history_windows");
   this->declare_parameter("topics.robots_pub", "/robot_pose_estimator/robots");
   this->declare_parameter("topics.virtual_armors_pub", "/robot_pose_estimator/virtual_armors");
   this->declare_parameter("topics.target_pub", "/robot_pose_estimator/target");
@@ -174,6 +183,7 @@ EstimatorTopicConfig RobotPoseEstimatorNode::buildTopicConfig() {
   EstimatorTopicConfig config;
   
   config.armors_sub = this->get_parameter("topics.armors_sub").as_string();
+  config.history_windows_sub = this->get_parameter("topics.history_windows_sub").as_string();
   config.robots_pub = this->get_parameter("topics.robots_pub").as_string();
   config.virtual_armors_pub = this->get_parameter("topics.virtual_armors_pub").as_string();
   config.target_pub = this->get_parameter("topics.target_pub").as_string();
@@ -266,6 +276,40 @@ void RobotPoseEstimatorNode::predictTimerCallback() {
   // 这里可以用于发布心跳等
 }
 
+void RobotPoseEstimatorNode::historyWindowsCallback(
+    const rm_interfaces::msg::TrackHistoryWindows::SharedPtr msg) {
+  
+  std::map<std::string, std::vector<int>> armor_id_to_track_ids_copy;
+  
+  {
+    std::lock_guard<std::mutex> lock(binding_mutex_);
+    
+    // 清空旧的映射
+    track_id_to_armor_id_.clear();
+    armor_id_to_track_ids_.clear();
+    
+    // 从历史窗口建立 track_id <-> armor_id 的绑定关系
+    for (const auto& window : msg->windows) {
+      int track_id = window.track_id;
+      const std::string& armor_id = window.armor_id;
+      
+      // track_id -> armor_id
+      track_id_to_armor_id_[track_id] = armor_id;
+      
+      // armor_id -> track_ids（同一个armor_id可能有多个track_id）
+      armor_id_to_track_ids_[armor_id].push_back(track_id);
+    }
+    
+    armor_id_to_track_ids_copy = armor_id_to_track_ids_;
+    
+    FYT_DEBUG("robot_pose_estimator", "Updated armor binding: {} tracks, {} unique armor_ids", 
+              track_id_to_armor_id_.size(), armor_id_to_track_ids_.size());
+  }
+  
+  // 更新 estimator_core 中各 tracker 的绑定数量（用于置信度计算）
+  estimator_core_->updateBindingCounts(armor_id_to_track_ids_copy);
+}
+
 void RobotPoseEstimatorNode::publishRobots(
     const std::vector<RobotState>& robots,
     const std_msgs::msg::Header& header) {
@@ -273,8 +317,29 @@ void RobotPoseEstimatorNode::publishRobots(
   rm_interfaces::msg::TrackedRobots msg;
   msg.header = header;
   
+  // 获取当前的绑定映射（加锁）
+  std::map<std::string, std::vector<int>> armor_id_to_track_ids_copy;
+  {
+    std::lock_guard<std::mutex> lock(binding_mutex_);
+    armor_id_to_track_ids_copy = armor_id_to_track_ids_;
+  }
+  
   for (const auto& robot : robots) {
-    msg.robots.push_back(robotStateToMsg(robot, header));
+    auto robot_msg = robotStateToMsg(robot, header);
+    
+    // 使用绑定映射填充 bound_armor_ids
+    // robot.robot_id 就是 armor_id（例如 "3"）
+    auto it = armor_id_to_track_ids_copy.find(robot.robot_id);
+    if (it != armor_id_to_track_ids_copy.end()) {
+      // 将 track_id 转换为字符串
+      for (int track_id : it->second) {
+        robot_msg.bound_armor_ids.push_back(std::to_string(track_id));
+      }
+      FYT_DEBUG("robot_pose_estimator", "Robot {} bound to {} tracks", 
+                robot.robot_id, robot_msg.bound_armor_ids.size());
+    }
+    
+    msg.robots.push_back(robot_msg);
   }
   
   robots_pub_->publish(msg);

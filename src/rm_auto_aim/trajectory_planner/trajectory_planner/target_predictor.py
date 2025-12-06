@@ -177,7 +177,6 @@ class TargetPredictor:
         for track_id, prediction in self._predictions.items():
             if prediction.armor_id == robot_id:
                 matching_track_ids.append(track_id)
-        print(f"DEBUG: filter_by_robot_id({robot_id}) -> {matching_track_ids}")
         return matching_track_ids
     
     def select_best_armor(self, 
@@ -195,8 +194,6 @@ class TargetPredictor:
         """
         candidates = target_track_ids if target_track_ids else list(self._predictions.keys())
         
-        print(f"DEBUG: select_best_armor candidates: {candidates}")
-        
         if not candidates:
             self._selected_armor_track_id = None
             return None
@@ -206,29 +203,23 @@ class TargetPredictor:
         
         for track_id in candidates:
             if track_id not in self._predictions:
-                print(f"DEBUG: track_id {track_id} not in predictions")
                 continue
             
             prediction = self._predictions[track_id]
             
             # 检查置信度
             if not prediction.confidences or prediction.confidences[0] < self.config.min_confidence:
-                print(f"DEBUG: track_id {track_id} low confidence: {prediction.confidences[0] if prediction.confidences else 'no confidences'} < {self.config.min_confidence}")
                 continue
             
             # 检查有效数据
             if not prediction.positions or prediction.yaw_angles_from_origin is None:
-                print(f"DEBUG: track_id {track_id} missing data: positions={len(prediction.positions) if prediction.positions else 0}, yaw_angles={prediction.yaw_angles_from_origin is not None}")
                 continue
             
             # 检查距离
             pos = prediction.positions[0]
             distance = np.linalg.norm(pos)
             if distance > self.config.max_distance:
-                print(f"DEBUG: track_id {track_id} too far: {distance} > {self.config.max_distance}")
                 continue
-            
-            print(f"DEBUG: track_id {track_id} passed all checks, distance={distance:.2f}")
             
             # 根据策略计算评分
             if self.config.selection_strategy == "nearest_yaw":
@@ -246,13 +237,10 @@ class TargetPredictor:
                 score = abs(self._wrap_angle(
                     prediction.yaw_angles_from_origin[0] - reference_yaw))
             
-            print(f"DEBUG: track_id {track_id} score: {score}")
-            
             if score < best_score:
                 best_score = score
                 best_track_id = track_id
         
-        print(f"DEBUG: select_best_armor result: {best_track_id}")
         self._selected_armor_track_id = best_track_id
         return best_track_id
     

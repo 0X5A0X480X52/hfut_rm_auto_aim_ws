@@ -186,11 +186,9 @@ class TargetManager:
             
             if self._target_robot_id in self._robots:
                 bound_armor_ids = self._robots[self._target_robot_id].bound_armor_ids.copy()
-                print(f"DEBUG: get_target_armor_ids for robot {self._target_robot_id}: bound_track_ids = {bound_armor_ids}")
                 return bound_armor_ids
             
             # 如果机器人不在列表中，返回空列表（不再使用robot_id作为fallback）
-            print(f"DEBUG: get_target_armor_ids for robot {self._target_robot_id}: robot not in list, returning []")
             return []
     
     def get_target_robot_info(self) -> Optional[RobotInfo]:

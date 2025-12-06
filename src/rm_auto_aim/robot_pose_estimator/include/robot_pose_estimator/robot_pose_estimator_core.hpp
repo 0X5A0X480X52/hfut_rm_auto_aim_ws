@@ -95,6 +95,12 @@ public:
   void reset();
 
   /**
+   * @brief 更新绑定的 track 数量
+   * @param binding_map armor_id 到 track_id 列表的映射
+   */
+  void updateBindingCounts(const std::map<std::string, std::vector<int>>& binding_map);
+
+  /**
    * @brief 更新配置
    * @param config 新配置
    */

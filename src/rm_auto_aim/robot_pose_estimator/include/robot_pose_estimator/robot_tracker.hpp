@@ -105,6 +105,12 @@ public:
   void setBoundArmorIds(const std::vector<std::string>& armor_ids);
 
   /**
+   * @brief 设置当前绑定的 track 数量（来自 armor_tracker）
+   * @param count 绑定的 track 数量
+   */
+  void setBoundTrackCount(int count);
+
+  /**
    * @brief 获取跟踪器状态
    */
   State getState() const { return state_; }
@@ -216,11 +222,15 @@ private:
   // 绑定的装甲板ID列表
   std::vector<std::string> bound_armor_ids_;
   
+  // 来自 armor_tracker 的绑定 track 数量（用于置信度计算）
+  int bound_track_count_ = 0;
+  
   // 最后匹配的装甲板
   ArmorState last_armor_;
   
-  // 平滑置信度（用于避免突变）
-  mutable double smoothed_confidence_ = 0.25;
+  // 滑动窗口用于平滑置信度（保存最近若干帧的观测置信度）
+  mutable std::deque<double> confidence_window_;
+  mutable size_t confidence_window_size_ = 20;  // 默认窗口大小
 };
 
 }  // namespace fyt::auto_aim

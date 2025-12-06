@@ -16,6 +16,7 @@
 
 #include <cmath>
 #include <cfloat>
+#include <numeric>
 
 #include <angles/angles.h>
 #include "rm_utils/logger/log.hpp"
@@ -37,6 +38,9 @@ void RobotTracker::init(const ArmorState& armor) {
   detect_count_ = 0;
   lost_count_ = 0;
   last_armor_ = armor;
+  // 初始化置信度窗口
+  confidence_window_.clear();
+  confidence_window_.push_back(armor.confidence > 0.0 ? armor.confidence : 1.0);
   
   FYT_INFO("robot_pose_estimator", "Init tracker for robot {}, type: {}", 
            robot_id_, getRobotTypeName(robot_type_));
@@ -126,6 +130,13 @@ bool RobotTracker::update(const std::vector<ArmorState>& armors, double dt) {
     updateStep(measurement_);
     matched = true;
     last_armor_ = matched_armor;
+    // 记录观测置信度到滑动窗口（使用检测提供的置信度，若无则视为1.0）
+    double obs_conf = matched_armor.confidence > 0.0 ? matched_armor.confidence : 1.0;
+    confidence_window_.push_back(obs_conf);
+    // 裁剪窗口大小
+    while (confidence_window_.size() > confidence_window_size_) {
+      confidence_window_.pop_front();
+    }
   }
   
   // 限制半径范围
@@ -240,7 +251,7 @@ void RobotTracker::updateStateMachine(bool matched) {
       if (matched) {
         detect_count_++;
         if (detect_count_ > config_.tracking_threshold) {
-          detect_count_ = 0;
+          // 保持 detect_count_ 的值，不重置，用于置信度计算
           state_ = State::TRACKING;
           FYT_DEBUG("robot_pose_estimator", "Robot {} state: TRACKING", robot_id_);
         }
@@ -252,6 +263,10 @@ void RobotTracker::updateStateMachine(bool matched) {
       break;
       
     case State::TRACKING:
+      if (matched) {
+        // 在 TRACKING 状态下继续增加 detect_count_，但设置上限
+        detect_count_ = std::min(detect_count_ + 1, config_.tracking_threshold * 3);
+      }
       if (!matched) {
         state_ = State::TEMP_LOST;
         lost_count_++;
@@ -262,14 +277,19 @@ void RobotTracker::updateStateMachine(bool matched) {
     case State::TEMP_LOST:
       if (!matched) {
         lost_count_++;
+        // 每丢失一帧，降低 detect_count_
+        detect_count_ = std::max(0, detect_count_ - 1);
         if (lost_count_ > config_.lost_threshold) {
           lost_count_ = 0;
+          detect_count_ = 0;
           state_ = State::LOST;
           FYT_DEBUG("robot_pose_estimator", "Robot {} state: LOST", robot_id_);
         }
       } else {
         state_ = State::TRACKING;
         lost_count_ = 0;
+        // 恢复跟踪时，增加 detect_count_
+        detect_count_ = std::min(detect_count_ + 1, config_.tracking_threshold * 3);
         FYT_DEBUG("robot_pose_estimator", "Robot {} state: TRACKING", robot_id_);
       }
       break;
@@ -416,18 +436,23 @@ void RobotTracker::setBoundArmorIds(const std::vector<std::string>& armor_ids) {
   bound_armor_ids_ = armor_ids;
 }
 
+void RobotTracker::setBoundTrackCount(int count) {
+  bound_track_count_ = count;
+}
+
 double RobotTracker::getConfidence() const {
-  // 平滑置信度计算：结合状态基线、最近观测置信度和检测稳定性
+  // 基于状态的基线置信度
   double base = 0.0;
   switch (state_) {
     case State::TRACKING:
-      base = 0.8;  // 跟踪中为较高基线，但不直接返回 1.0
+      base = 0.8;
       break;
     case State::TEMP_LOST:
-      base = 0.5 - 0.5 * (static_cast<double>(lost_count_) / std::max(1, config_.lost_threshold));
+      // 丢失时从 0.5 逐渐衰减到 0
+      base = 0.5 * (1.0 - static_cast<double>(lost_count_) / std::max(1, config_.lost_threshold));
       break;
     case State::DETECTING:
-      base = 0.3;
+      base = 0.4;
       break;
     case State::LOST:
     default:
@@ -435,35 +460,50 @@ double RobotTracker::getConfidence() const {
       break;
   }
 
-  // 使用最近一次观测的置信度对基线进行调节（如果没有观测则默认为 1.0）
+  // 检测器置信度因子
   double armor_conf = last_armor_.confidence;
   if (armor_conf <= 0.0) {
-    armor_conf = 1.0;
+    armor_conf = 1.0;  // 无观测时默认为 1.0
   }
 
-  // 对于 TRACKING 状态，使用 detect_count_ 提供额外的稳定性因子，避免短脉冲直接跳到最高置信度
+  // 稳定性因子：基于连续检测次数
   double stability_factor = 1.0;
-  if (state_ == State::TRACKING) {
-    double denom = static_cast<double>(std::max(1, config_.tracking_threshold));
-    stability_factor = std::min(1.0, static_cast<double>(detect_count_) / (denom * 1.5));
+  if (state_ == State::TRACKING || state_ == State::DETECTING) {
+    int max_count = std::max(1, config_.tracking_threshold * 2);
+    // detect_count_ 达到 threshold 时 factor = 1.0
+    stability_factor = std::min(1.0, static_cast<double>(detect_count_) / max_count);
+    // 确保最低为 0.5，避免置信度过低
+    stability_factor = std::max(0.5, stability_factor);
+  } else if (state_ == State::TEMP_LOST) {
+    // 临时丢失时，稳定性逐渐降低
+    int max_count = std::max(1, config_.tracking_threshold * 2);
+    stability_factor = std::min(1.0, static_cast<double>(detect_count_) / max_count);
+    stability_factor = std::max(0.3, stability_factor);
   }
 
-  double conf = base * armor_conf * stability_factor;
-  if (conf < 0.0) conf = 0.0;
-  if (conf > 1.0) conf = 1.0;
-  // 指数平滑以避免突变（使用可变的上次平滑值）
-  const double alpha = 0.4;  // 平滑系数（越小越平滑）
-  // 如果尚未初始化（第一次调用），直接使用当前值
-  if (smoothed_confidence_ <= 0.0) {
-    smoothed_confidence_ = conf;
-  } else {
-    smoothed_confidence_ = alpha * conf + (1.0 - alpha) * smoothed_confidence_;
+  // 绑定因子：基于绑定的 track 数量
+  // 即使无绑定也给 0.7 的基础值，有绑定时增加
+  double binding_factor = 0.7;
+  if (bound_track_count_ >= 1) {
+    // 1个绑定 -> 0.85, 2个及以上 -> 1.0
+    binding_factor = std::min(1.0, 0.7 + 0.15 * bound_track_count_);
   }
 
-  // 保证范围
-  if (smoothed_confidence_ < 0.0) smoothed_confidence_ = 0.0;
-  if (smoothed_confidence_ > 1.0) smoothed_confidence_ = 1.0;
-  return smoothed_confidence_;
+  // 当前帧置信度
+  double current_conf = base * armor_conf * stability_factor * binding_factor;
+
+  // 滑动窗口平滑
+  double final_conf = current_conf;
+  if (!confidence_window_.empty()) {
+    double sum = std::accumulate(confidence_window_.begin(), confidence_window_.end(), 0.0);
+    double window_mean = sum / static_cast<double>(confidence_window_.size());
+    // 当前帧与窗口平均的加权融合（当前帧权重 0.3，历史权重 0.7）
+    final_conf = 0.3 * current_conf + 0.7 * window_mean;
+  }
+
+  // 限制范围
+  final_conf = std::clamp(final_conf, 0.0, 1.0);
+  return final_conf;
 }
 
 }  // namespace fyt::auto_aim

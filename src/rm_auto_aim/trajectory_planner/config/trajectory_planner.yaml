@@ -22,7 +22,7 @@ trajectory_planner:
     control_rate: 100.0
 
     # 开火判断阈值
-    fire_yaw_threshold: 0.05       # yaw误差阈值 (rad), 约3度
+    fire_yaw_threshold: 0.1       # yaw误差阈值 (rad), 约5.7度
     fire_pitch_threshold: 0.05     # pitch误差阈值 (rad)
     fire_distance_min: 1.0         # 最小开火距离 (m)
     fire_distance_max: 8.0         # 最大开火距离 (m)
@@ -32,10 +32,10 @@ trajectory_planner:
     target_lost_timeout: 0.5
 
     # 子弹速度 (m/s)
-    bullet_speed: 28.0
+    bullet_speed: 15.0
 
     # 调试模式
-    debug: false
+    debug: true
 
     # ==================== 云台配置 ====================
     gimbal:
@@ -63,14 +63,14 @@ trajectory_planner:
       r_control: 0.01
       
       # 控制变化率权重 (平滑性)
-      s_smooth: 5.0
+      s_smooth: 1.0
 
     # ==================== 目标预测器配置 ====================
     predictor:
       # 最小置信度
       min_confidence: 0.3
       
-      # 最大有效距离 (米) x 10000 以保持精度
+      # 最大有效距离 (米)
       max_distance: 10.0
       
       # 装甲板选择策略: nearest_yaw, nearest_distance, highest_confidence

@@ -260,8 +260,9 @@ void TargetSelectorNode::processTargetSelection(const TrackedRobots& robots) {
 }
 
 void TargetSelectorNode::startTrajectoryPlanning(const std::string& robot_id) {
-  if (!trajectory_action_client_->wait_for_action_server(std::chrono::seconds(1))) {
-    FYT_WARN("target_selector", "Trajectory action server not available");
+  // 等待 action server，给更长的启动时间以提高鲁棒性
+  if (!trajectory_action_client_->wait_for_action_server(std::chrono::seconds(2))) {
+    FYT_WARN("target_selector", "Trajectory action server not available after 2s");
     return;
   }
   
@@ -293,8 +294,9 @@ void TargetSelectorNode::stopTrajectoryPlanning() {
 }
 
 void TargetSelectorNode::callSetTargetService(const std::string& robot_id) {
-  if (!set_target_client_->wait_for_service(std::chrono::milliseconds(100))) {
-    FYT_WARN("target_selector", "SetTargetRobot service not available");
+  // Service 可能稍晚启动，等待更久一些再放弃
+  if (!set_target_client_->wait_for_service(std::chrono::seconds(1))) {
+    FYT_WARN("target_selector", "SetTargetRobot service not available after 1s");
     return;
   }
   

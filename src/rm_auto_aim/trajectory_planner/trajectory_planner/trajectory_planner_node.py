@@ -32,7 +32,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallb
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
-from std_msgs.msg import Header
+from std_msgs.msg import Header, ColorRGBA
 from sensor_msgs.msg import JointState
 from visualization_msgs.msg import MarkerArray, Marker
 from geometry_msgs.msg import Point
@@ -123,8 +123,9 @@ class TrajectoryPlannerNode(Node):
     def __init__(self):
         super().__init__('trajectory_planner')
         
-        # 设置日志级别为 DEBUG
-        self.get_logger().set_level(rclpy.logging.LoggingSeverity.DEBUG)
+        # 设置日志级别为 INFO（生产环境）或 DEBUG（调试时）
+        # DEBUG 模式会显著降低性能
+        self.get_logger().set_level(rclpy.logging.LoggingSeverity.INFO)
         
         self.get_logger().info("Initializing Trajectory Planner Node...")
         
@@ -146,10 +147,12 @@ class TrajectoryPlannerNode(Node):
         self.target_predictor = TargetPredictor(predictor_config)
         self.target_manager = TargetManager(manager_config)
         
-        # 回调组
-        self.service_callback_group = MutuallyExclusiveCallbackGroup()
+        # 回调组 - 全部使用 ReentrantCallbackGroup 避免阻塞
+        # MutuallyExclusiveCallbackGroup 会导致回调互相阻塞，降低帧率
+        self.service_callback_group = ReentrantCallbackGroup()
         self.action_callback_group = ReentrantCallbackGroup()
-        self.timer_callback_group = MutuallyExclusiveCallbackGroup()
+        self.timer_callback_group = ReentrantCallbackGroup()  # 定时器也用可重入组
+        self.subscription_callback_group = ReentrantCallbackGroup()  # 订阅使用可重入组
         
         # 创建弹道解算客户端 (需要在订阅之前)
         self.ballistic_client = BallisticClient(self, ballistic_config)
@@ -161,26 +164,29 @@ class TrajectoryPlannerNode(Node):
             depth=10
         )
         
-        # 订阅者
+        # 订阅者 - 使用可重入回调组，确保与定时器不互斥
         self.prediction_windows_sub = self.create_subscription(
             TrackPredictionWindows,
             self.topic_config.prediction_windows_sub,
             self._prediction_windows_callback,
-            sensor_qos
+            sensor_qos,
+            callback_group=self.subscription_callback_group
         )
         
         self.robots_sub = self.create_subscription(
             TrackedRobots,
             self.topic_config.robots_sub,
             self._robots_callback,
-            sensor_qos
+            sensor_qos,
+            callback_group=self.subscription_callback_group
         )
         
         self.joint_states_sub = self.create_subscription(
             JointState,
             self.topic_config.joint_states_sub,
             self._joint_states_callback,
-            sensor_qos
+            sensor_qos,
+            callback_group=self.subscription_callback_group
         )
         
         # 发布者
@@ -455,8 +461,9 @@ class TrajectoryPlannerNode(Node):
         self.get_logger().info(f"Received trajectory plan goal for robot: {goal_request.robot_id}")
         self.get_logger().debug(f"Goal callback: current planning status: {self._planning_status}")
         
-        # 检查是否已经有正在执行的Action
-        if self._planning_status != self.STATUS_IDLE:
+        # 允许在 IDLE 或 PLANNING 状态下接受 goal
+        # PLANNING 状态可能由 SetTargetRobot service 设置，此时应该接受 action goal
+        if self._planning_status not in (self.STATUS_IDLE, self.STATUS_PLANNING):
             self.get_logger().warn(f"Goal callback: rejecting goal, current status: {self._planning_status}")
             return GoalResponse.REJECT
         
@@ -579,14 +586,52 @@ class TrajectoryPlannerNode(Node):
         
         self.get_logger().debug(f"Control loop: status={self._planning_status}, time={current_time:.3f}")
         
+        # 仅在 IDLE 状态且没有目标时才发布空闲命令
+        # PLANNING/TRACKING 状态由 Service 或 Action 触发后进入工作模式
         if self._planning_status == self.STATUS_IDLE:
-            self.get_logger().debug("Control loop: IDLE status, publishing idle command")
-            self._publish_idle_cmd()
-            return
+            # 检查是否有通过 service 设置的目标（即使 action 未启动）
+            if not self.target_manager.target_robot_id:
+                self.get_logger().debug("Control loop: IDLE status and no target, publishing idle command")
+                self._publish_idle_cmd()
+                return
+            else:
+                # 有目标但状态是 IDLE，可能是 service 设置后未启动 action，自动切换到 PLANNING
+                self.get_logger().debug(f"Control loop: IDLE but has target {self.target_manager.target_robot_id}, switching to PLANNING")
+                self._planning_status = self.STATUS_PLANNING
         
         # 检查目标是否有效
         if not self.target_manager.is_target_valid(current_time):
+            # 原有提示
             self.get_logger().debug("Control loop: target not valid, publishing idle command")
+
+            # 详细调试信息，帮助排查为什么无效
+            try:
+                target_id = self.target_manager.target_robot_id
+                available_ids = self.target_manager.available_robot_ids
+                min_conf = getattr(self.target_manager.config, 'min_confidence', None)
+                robot_info = self.target_manager.get_target_robot_info()
+                last_update = getattr(self.target_manager, '_last_robots_update_time', None)
+                time_since_update = None
+                if last_update is not None:
+                    time_since_update = current_time - last_update
+
+                self.get_logger().debug(
+                    f"Control loop debug: target_id={target_id}, available_ids={available_ids}, "
+                    f"min_conf={min_conf}, last_update={last_update}, time_since_update={time_since_update}"
+                )
+
+                if robot_info is None:
+                    self.get_logger().debug("Control loop debug: target robot info is None (not tracked or cleared)")
+                else:
+                    self.get_logger().debug(
+                        f"Control loop debug: robot_info: id={robot_info.robot_id}, "
+                        f"conf={robot_info.confidence:.3f}, num_armors={robot_info.num_armors}, "
+                        f"bound_armor_ids={robot_info.bound_armor_ids}"
+                    )
+            except Exception as e:
+                self.get_logger().warning(f"Control loop debug: failed to gather target_manager debug info: {e}")
+
+            # 保持原有行为：发布空闲命令
             self._publish_idle_cmd()
             return
         
@@ -604,6 +649,13 @@ class TrajectoryPlannerNode(Node):
                 # 如果不是数字，可能是旧格式的armor_id，尝试通过armor_id筛选
                 track_ids = self.target_predictor.filter_by_robot_id(track_id_str)
                 target_track_ids.extend(track_ids)
+        
+        # 如果 bound_armor_ids 为空但有目标机器人，通过 robot_id（=armor_id）来过滤
+        if not target_track_ids:
+            target_robot_id = self.target_manager.target_robot_id
+            if target_robot_id:
+                self.get_logger().debug(f"Control loop: bound_armor_ids empty, filtering by robot_id={target_robot_id}")
+                target_track_ids = self.target_predictor.filter_by_robot_id(target_robot_id)
         
         self.get_logger().debug(f"Control loop: target track IDs: {target_track_ids}")
         
@@ -829,16 +881,29 @@ class TrajectoryPlannerNode(Node):
         self.trajectory_pub.publish(msg)
     
     def _publish_markers(self, target_info: Optional[dict], target_trajectory: np.ndarray):
-        """发布可视化标记"""
+        """
+        发布可视化标记
+        
+        包括:
+        1. 目标位置球体标记
+        2. 目标速度箭头标记
+        3. 预测yaw轨迹点标记
+        4. 弹道轨迹线标记（从云台到目标）
+        5. 命中预测点标记
+        """
         marker_array = MarkerArray()
+        now = self.get_clock().now().to_msg()
+        marker_id = 0
         
         # 目标位置标记
         if target_info:
+            # 1. 目标位置球体（红色）
             target_marker = Marker()
             target_marker.header.frame_id = "odom"
-            target_marker.header.stamp = self.get_clock().now().to_msg()
-            target_marker.ns = "trajectory_planner"
-            target_marker.id = 0
+            target_marker.header.stamp = now
+            target_marker.ns = "trajectory_planner/target"
+            target_marker.id = marker_id
+            marker_id += 1
             target_marker.type = Marker.SPHERE
             target_marker.action = Marker.ADD
             
@@ -858,6 +923,181 @@ class TrajectoryPlannerNode(Node):
             target_marker.color.a = 0.8
             
             marker_array.markers.append(target_marker)
+            
+            # 2. 目标速度箭头（黄色）
+            vel = target_info.get('velocity', [0, 0, 0])
+            if np.linalg.norm(vel) > 0.01:
+                velocity_marker = Marker()
+                velocity_marker.header.frame_id = "odom"
+                velocity_marker.header.stamp = now
+                velocity_marker.ns = "trajectory_planner/velocity"
+                velocity_marker.id = marker_id
+                marker_id += 1
+                velocity_marker.type = Marker.ARROW
+                velocity_marker.action = Marker.ADD
+                
+                # 箭头起点和终点
+                start_point = Point()
+                start_point.x = pos[0]
+                start_point.y = pos[1]
+                start_point.z = pos[2]
+                
+                end_point = Point()
+                end_point.x = pos[0] + vel[0]
+                end_point.y = pos[1] + vel[1]
+                end_point.z = pos[2] + vel[2]
+                
+                velocity_marker.points = [start_point, end_point]
+                
+                velocity_marker.scale.x = 0.03  # 箭杆直径
+                velocity_marker.scale.y = 0.05  # 箭头直径
+                velocity_marker.scale.z = 0.0
+                
+                velocity_marker.color.r = 1.0
+                velocity_marker.color.g = 1.0
+                velocity_marker.color.b = 0.0
+                velocity_marker.color.a = 0.8
+                
+                marker_array.markers.append(velocity_marker)
+            
+            # 3. 弹道轨迹线（粉色/绿色，根据开火状态）
+            yaw = self._current_gimbal_state[0]
+            pitch = self._current_pitch
+            distance = target_info.get('distance', 5.0)
+            
+            # 计算弹道轨迹
+            trajectory_3d = self.ballistic_client.calculate_trajectory_3d(
+                target_position=tuple(pos),
+                pitch=pitch,
+                yaw=yaw,
+                bullet_speed=self.planner_config.bullet_speed,
+                sample_interval=0.03
+            )
+            
+            if trajectory_3d:
+                trajectory_marker = Marker()
+                # Use gimbal_link to match armor_solver trajectory visualization
+                trajectory_marker.header.frame_id = "gimbal_link"
+                trajectory_marker.header.stamp = now
+                trajectory_marker.ns = "trajectory_planner/ballistic"
+                trajectory_marker.id = marker_id
+                marker_id += 1
+                trajectory_marker.type = Marker.LINE_STRIP
+                trajectory_marker.action = Marker.ADD
+                
+                for point in trajectory_3d:
+                    p = Point()
+                    p.x = point[0]
+                    p.y = point[1]
+                    p.z = point[2]
+                    trajectory_marker.points.append(p)
+                
+                trajectory_marker.scale.x = 0.01  # 线宽
+                
+                # 根据开火建议设置颜色
+                fire_advice = self._compute_fire_advice(
+                    yaw_error=abs(GimbalModel.angle_difference(
+                        target_info.get('yaw_from_origin', yaw), yaw)),
+                    pitch_error=0.0,
+                    distance=distance,
+                    confidence=target_info.get('confidence', 0.0)
+                )
+                
+                if fire_advice:
+                    # 可开火：绿色
+                    trajectory_marker.color.r = 0.0
+                    trajectory_marker.color.g = 1.0
+                    trajectory_marker.color.b = 0.0
+                else:
+                    # 未锁定：粉色
+                    trajectory_marker.color.r = 1.0
+                    trajectory_marker.color.g = 0.75
+                    trajectory_marker.color.b = 0.79
+                trajectory_marker.color.a = 1.0
+                
+                marker_array.markers.append(trajectory_marker)
+            
+            # 4. 预测点命中位置（青色球体）
+            if trajectory_3d:
+                hit_marker = Marker()
+                # Hit point is in gimbal frame (match ballistic trajectory)
+                hit_marker.header.frame_id = "gimbal_link"
+                hit_marker.header.stamp = now
+                hit_marker.ns = "trajectory_planner/hit_point"
+                hit_marker.id = marker_id
+                marker_id += 1
+                hit_marker.type = Marker.SPHERE
+                hit_marker.action = Marker.ADD
+                
+                # 使用弹道终点作为命中预测点
+                last_point = trajectory_3d[-1]
+                hit_marker.pose.position.x = last_point[0]
+                hit_marker.pose.position.y = last_point[1]
+                hit_marker.pose.position.z = last_point[2]
+                hit_marker.pose.orientation.w = 1.0
+                
+                hit_marker.scale.x = 0.08
+                hit_marker.scale.y = 0.08
+                hit_marker.scale.z = 0.08
+                
+                hit_marker.color.r = 0.0
+                hit_marker.color.g = 1.0
+                hit_marker.color.b = 1.0
+                hit_marker.color.a = 0.8
+                
+                marker_array.markers.append(hit_marker)
+        
+        # 5. 预测yaw轨迹点（渐变颜色点序列）
+        if len(target_trajectory) > 0:
+            yaw_trajectory_marker = Marker()
+            # Yaw trajectory points are easier to interpret in gimbal frame
+            yaw_trajectory_marker.header.frame_id = "gimbal_link"
+            yaw_trajectory_marker.header.stamp = now
+            yaw_trajectory_marker.ns = "trajectory_planner/yaw_trajectory"
+            yaw_trajectory_marker.id = marker_id
+            marker_id += 1
+            yaw_trajectory_marker.type = Marker.POINTS
+            yaw_trajectory_marker.action = Marker.ADD
+            
+            yaw_trajectory_marker.scale.x = 0.03
+            yaw_trajectory_marker.scale.y = 0.03
+            
+            # 使用预测的yaw轨迹创建可视化点
+            # 假设目标距离固定，仅展示yaw方向变化
+            target_distance = target_info.get('distance', 3.0) if target_info else 3.0
+            target_height = target_info['position'][2] if target_info else 0.3
+            
+            for i, yaw_angle in enumerate(target_trajectory):
+                p = Point()
+                p.x = target_distance * math.cos(yaw_angle)
+                p.y = target_distance * math.sin(yaw_angle)
+                p.z = target_height
+                yaw_trajectory_marker.points.append(p)
+                
+                # 渐变颜色：蓝色 -> 青色
+                color = ColorRGBA()
+                ratio = i / max(len(target_trajectory) - 1, 1)
+                color.r = 0.0
+                color.g = ratio
+                color.b = 1.0
+                color.a = 1.0 - ratio * 0.5  # 逐渐透明
+                yaw_trajectory_marker.colors.append(color)
+            
+            marker_array.markers.append(yaw_trajectory_marker)
+        
+        # 6. 清除旧的标记（通过发布 DELETE_ALL 然后再发布新标记）
+        # 为了避免残留标记，添加一个清除标记
+        delete_marker = Marker()
+        # Clear markers in gimbal frame to avoid leftover artifacts
+        delete_marker.header.frame_id = "gimbal_link"
+        delete_marker.header.stamp = now
+        delete_marker.ns = "trajectory_planner/cleanup"
+        delete_marker.action = Marker.DELETEALL
+        
+        # 先发布清除标记，再发布新标记
+        cleanup_array = MarkerArray()
+        cleanup_array.markers.append(delete_marker)
+        self.markers_pub.publish(cleanup_array)
         
         self.markers_pub.publish(marker_array)
 

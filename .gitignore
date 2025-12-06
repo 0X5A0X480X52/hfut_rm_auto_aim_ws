@@ -11,3 +11,4 @@ resources/**
 **/results/**
 **/test_data/**
 **/data/**
+logs/**
