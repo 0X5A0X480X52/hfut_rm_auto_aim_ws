@@ -175,21 +175,23 @@ class TargetManager:
     
     def get_target_armor_ids(self) -> List[str]:
         """
-        获取目标机器人绑定的装甲板ID列表
+        获取目标机器人绑定的装甲板track_id列表
         
         Returns:
-            装甲板ID列表
+            装甲板track_id列表（字符串格式）
         """
         with self._lock:
             if self._target_robot_id is None:
                 return []
             
             if self._target_robot_id in self._robots:
-                return self._robots[self._target_robot_id].bound_armor_ids.copy()
+                bound_armor_ids = self._robots[self._target_robot_id].bound_armor_ids.copy()
+                print(f"DEBUG: get_target_armor_ids for robot {self._target_robot_id}: bound_track_ids = {bound_armor_ids}")
+                return bound_armor_ids
             
-            # 如果机器人不在列表中，返回与robot_id相同的armor_id
-            # 这是一个fallback，因为有时armor_id就是robot_id
-            return [self._target_robot_id]
+            # 如果机器人不在列表中，返回空列表（不再使用robot_id作为fallback）
+            print(f"DEBUG: get_target_armor_ids for robot {self._target_robot_id}: robot not in list, returning []")
+            return []
     
     def get_target_robot_info(self) -> Optional[RobotInfo]:
         """

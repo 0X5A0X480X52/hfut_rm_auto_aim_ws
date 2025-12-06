@@ -48,6 +48,29 @@ void RobotPoseEstimatorCore::update(
   pruneTrackers();
 }
 
+void RobotPoseEstimatorCore::update(
+    const rm_interfaces::msg::Armors& armors, double dt) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  
+  // 1. 将装甲板按机器人ID分组（直接从检测结果）
+  auto armor_groups = grouper_.groupArmors(armors);
+  
+  // 2. 对每个机器人执行更新
+  for (const auto& [robot_id, armor_states] : armor_groups) {
+    processRobot(robot_id, armor_states, dt);
+  }
+  
+  // 3. 对未观测到的机器人执行预测
+  for (auto& [robot_id, tracker] : trackers_) {
+    if (armor_groups.find(robot_id) == armor_groups.end()) {
+      tracker->predict(dt);
+    }
+  }
+  
+  // 4. 清理丢失的跟踪器
+  pruneTrackers();
+}
+
 void RobotPoseEstimatorCore::predict(double dt) {
   std::lock_guard<std::mutex> lock(mutex_);
   
@@ -71,17 +94,35 @@ void RobotPoseEstimatorCore::processRobot(
       auto tracker = std::make_unique<RobotTracker>(config_);
       tracker->init(armors[0]);
       
+      // 设置绑定的装甲板track_id
+      std::vector<std::string> track_ids;
+      for (const auto& armor : armors) {
+        if (armor.track_id >= 0) {
+          track_ids.push_back(std::to_string(armor.track_id));
+        }
+      }
+      tracker->setBoundArmorIds(track_ids);
+      
       // 如果有多个装甲板，执行一次更新
       if (armors.size() > 1) {
         tracker->update(armors, dt);
       }
       
       trackers_[robot_id] = std::move(tracker);
-      FYT_INFO("robot_pose_estimator", "Created tracker for robot {}", robot_id);
+      FYT_INFO("robot_pose_estimator", "Created tracker for robot {} with {} bound track_ids", robot_id, track_ids.size());
     }
   } else {
     // 已有跟踪器，执行更新
     it->second->update(armors, dt);
+    
+    // 更新绑定的装甲板track_id
+    std::vector<std::string> track_ids;
+    for (const auto& armor : armors) {
+      if (armor.track_id >= 0) {
+        track_ids.push_back(std::to_string(armor.track_id));
+      }
+    }
+    it->second->setBoundArmorIds(track_ids);
   }
 }
 

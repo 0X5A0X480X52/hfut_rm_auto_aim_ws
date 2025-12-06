@@ -369,6 +369,9 @@ RobotState RobotTracker::getRobotState() const {
   state.is_tracking = (state_ == State::TRACKING || state_ == State::TEMP_LOST);
   state.confidence = getConfidence();
   
+  // 绑定的装甲板ID
+  state.bound_armor_ids = bound_armor_ids_;
+  
   return state;
 }
 
@@ -409,18 +412,58 @@ bool RobotTracker::shouldRemove() const {
   return state_ == State::LOST;
 }
 
+void RobotTracker::setBoundArmorIds(const std::vector<std::string>& armor_ids) {
+  bound_armor_ids_ = armor_ids;
+}
+
 double RobotTracker::getConfidence() const {
+  // 平滑置信度计算：结合状态基线、最近观测置信度和检测稳定性
+  double base = 0.0;
   switch (state_) {
     case State::TRACKING:
-      return 1.0;
+      base = 0.8;  // 跟踪中为较高基线，但不直接返回 1.0
+      break;
     case State::TEMP_LOST:
-      return 0.5 - 0.5 * (static_cast<double>(lost_count_) / config_.lost_threshold);
+      base = 0.5 - 0.5 * (static_cast<double>(lost_count_) / std::max(1, config_.lost_threshold));
+      break;
     case State::DETECTING:
-      return 0.3;
+      base = 0.3;
+      break;
     case State::LOST:
     default:
-      return 0.0;
+      base = 0.0;
+      break;
   }
+
+  // 使用最近一次观测的置信度对基线进行调节（如果没有观测则默认为 1.0）
+  double armor_conf = last_armor_.confidence;
+  if (armor_conf <= 0.0) {
+    armor_conf = 1.0;
+  }
+
+  // 对于 TRACKING 状态，使用 detect_count_ 提供额外的稳定性因子，避免短脉冲直接跳到最高置信度
+  double stability_factor = 1.0;
+  if (state_ == State::TRACKING) {
+    double denom = static_cast<double>(std::max(1, config_.tracking_threshold));
+    stability_factor = std::min(1.0, static_cast<double>(detect_count_) / (denom * 1.5));
+  }
+
+  double conf = base * armor_conf * stability_factor;
+  if (conf < 0.0) conf = 0.0;
+  if (conf > 1.0) conf = 1.0;
+  // 指数平滑以避免突变（使用可变的上次平滑值）
+  const double alpha = 0.4;  // 平滑系数（越小越平滑）
+  // 如果尚未初始化（第一次调用），直接使用当前值
+  if (smoothed_confidence_ <= 0.0) {
+    smoothed_confidence_ = conf;
+  } else {
+    smoothed_confidence_ = alpha * conf + (1.0 - alpha) * smoothed_confidence_;
+  }
+
+  // 保证范围
+  if (smoothed_confidence_ < 0.0) smoothed_confidence_ = 0.0;
+  if (smoothed_confidence_ > 1.0) smoothed_confidence_ = 1.0;
+  return smoothed_confidence_;
 }
 
 }  // namespace fyt::auto_aim

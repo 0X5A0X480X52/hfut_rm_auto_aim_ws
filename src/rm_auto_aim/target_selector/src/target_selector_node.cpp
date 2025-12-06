@@ -167,6 +167,9 @@ void TargetSelectorNode::initStrategy() {
 }
 
 void TargetSelectorNode::robotsCallback(const TrackedRobots::SharedPtr msg) {
+  FYT_DEBUG("target_selector", "robotsCallback invoked. header stamp: {} | robots count: {}", 
+            msg->header.stamp.sec, msg->robots.size());
+  
   if (msg->robots.empty()) {
     // 没有检测到机器人,停止跟踪
     if (is_tracking_active_) {
@@ -177,19 +180,32 @@ void TargetSelectorNode::robotsCallback(const TrackedRobots::SharedPtr msg) {
     return;
   }
   
+  // 打印机器人信息
+  for (const auto& robot : msg->robots) {
+    FYT_DEBUG("target_selector", "Robot detected: id={}, confidence={:.3f}, position=({:.2f},{:.2f},{:.2f})",
+              robot.robot_id, robot.confidence, 
+              robot.center_position.x, robot.center_position.y, robot.center_position.z);
+  }
+  
   // 处理目标选择
   processTargetSelection(*msg);
 }
 
 void TargetSelectorNode::processTargetSelection(const TrackedRobots& robots) {
+  FYT_DEBUG("target_selector", "processTargetSelection called with {} robots", robots.robots.size());
+  
   // 更新选择配置
   selection_config_.current_target_id = current_target_id_;
+  FYT_DEBUG("target_selector", "Current target ID: '{}'", current_target_id_);
   
   // 使用策略选择目标
   auto result = strategy_->selectTarget(robots, selection_config_);
   
+  FYT_DEBUG("target_selector", "Strategy selectTarget returned: {}", result.has_value() ? "valid result" : "nullopt");
+  
   if (!result.has_value()) {
     // 没有合适的目标
+    FYT_DEBUG("target_selector", "No suitable target found by strategy");
     if (is_tracking_active_) {
       FYT_INFO("target_selector", "No suitable target, stopping tracking");
       stopTrajectoryPlanning();
@@ -204,6 +220,8 @@ void TargetSelectorNode::processTargetSelection(const TrackedRobots& robots) {
     empty_target.confidence = 0.0;
     empty_target.selection_strategy = strategy_->getName();
     selected_target_pub_->publish(empty_target);
+    
+    FYT_DEBUG("target_selector", "Published empty target with robot_id='{}'", empty_target.robot_id);
     
     if (config_.debug && marker_pub_) {
       publishMarkers(robots, std::nullopt);

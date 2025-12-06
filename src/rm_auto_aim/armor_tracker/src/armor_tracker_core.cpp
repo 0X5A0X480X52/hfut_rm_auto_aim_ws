@@ -15,6 +15,8 @@
 #include "armor_tracker/armor_tracker_core.hpp"
 
 #include <algorithm>
+#include <limits>
+#include "rm_utils/logger/log.hpp"
 
 namespace fyt::auto_aim {
 
@@ -30,8 +32,30 @@ ArmorTrackerCore::ArmorTrackerCore(const TrackerConfig& config)
     try {
       model_config = ModelConfigLoader::loadFromYaml(config_.model_config_file);
     } catch (const std::exception& e) {
-      // 使用默认配置
+      // 使用默认配置，但需要根据模型类型设置正确的维度
+      FYT_WARN("armor_tracker", "Failed to load model config from {}, using default", config_.model_config_file);
     }
+  }
+  
+  // 根据模型名称设置正确的默认配置
+  if (config_.model_name == "CV_KF") {
+    // CV_KF: 3D跟踪，状态维度6 (x,vx,y,vy,z,vz)，观测维度3 (x,y,z)
+    model_config.Dim = 3;
+    model_config.T = 0.01;  // 100Hz
+    model_config.R = Eigen::MatrixXd::Identity(3, 3) * 0.01;  // 观测噪声
+    model_config.X_0 = Eigen::VectorXd::Zero(6);  // 初始状态
+  } else if (config_.model_name == "CA_KF" || config_.model_name == "CS_KF" || config_.model_name == "Singer_KF") {
+    // 这些模型: 3D跟踪，状态维度9 (x,vx,ax,y,vy,ay,z,vz,az)，观测维度3 (x,y,z)
+    model_config.Dim = 3;
+    model_config.T = 0.01;
+    model_config.R = Eigen::MatrixXd::Identity(3, 3) * 0.01;
+    model_config.X_0 = Eigen::VectorXd::Zero(9);
+  } else if (config_.model_name == "CTRV_EKF") {
+    // CTRV_EKF: 状态维度5 (x,y,v,theta,omega)，观测维度2 (x,y)
+    model_config.Dim = 1;  // CTRV是2D模型
+    model_config.T = 0.01;
+    model_config.R = Eigen::MatrixXd::Identity(2, 2) * 0.01;
+    model_config.X_0 = Eigen::VectorXd::Zero(5);
   }
 
   // 创建 PointTracker（适用于3D点跟踪）
@@ -67,6 +91,8 @@ void ArmorTrackerCore::update(const std::vector<ArmorObservation>& observations)
   std::lock_guard<std::mutex> lock(mutex_);
 
   if (!tracker_ || observations.empty()) {
+    FYT_DEBUG("armor_tracker", "[update] Early return: tracker={}, observations.size()={}", 
+              (tracker_ ? "valid" : "null"), observations.size());
     return;
   }
 
@@ -74,7 +100,12 @@ void ArmorTrackerCore::update(const std::vector<ArmorObservation>& observations)
   std::vector<Detection> detections;
   detections.reserve(observations.size());
 
-  for (const auto& obs : observations) {
+  FYT_DEBUG("armor_tracker", "[update] Processing {} observations", observations.size());
+  for (size_t i = 0; i < observations.size(); ++i) {
+    const auto& obs = observations[i];
+    FYT_DEBUG("armor_tracker", "  Obs[{}]: armor_id='{}', pos=({:.3f}, {:.3f}, {:.3f})",
+             i, obs.armor_id, obs.position.x(), obs.position.y(), obs.position.z());
+    
     auto strategy = strategy_manager_->getStrategy(obs.source);
     if (strategy) {
       // 预处理
@@ -85,17 +116,73 @@ void ArmorTrackerCore::update(const std::vector<ArmorObservation>& observations)
     }
   }
 
+  // 打印更新前的跟踪器状态
+  auto tracks_before = tracker_->getTracks();
+  FYT_DEBUG("armor_tracker", "[update] Before: {} tracks, {} detections", 
+            tracks_before.size(), detections.size());
+
   // 更新跟踪器
   tracker_->update(detections);
 
   // 更新装甲板信息映射
+  // 只对刚刚被更新的track（time_since_update == 0）更新armor_id映射
+  // 这样可以确保只有被匈牙利算法实际匹配到的track才会更新其armor_id
   auto tracks = tracker_->getTracks();
-  for (size_t i = 0; i < tracks.size() && i < observations.size(); ++i) {
-    armor_info_map_[tracks[i].track_id] = {
-      observations[i].armor_id,
-      observations[i].armor_type
-    };
-    source_type_map_[tracks[i].track_id] = observations[i].source;
+  FYT_DEBUG("armor_tracker", "[update] After: {} tracks", tracks.size());
+  
+  for (size_t i = 0; i < tracks.size(); ++i) {
+    int track_id = tracks[i].track_id;
+    
+    // 只有刚被更新的track才需要更新armor_id映射
+    if (tracks[i].time_since_update != 0) {
+      // 跳过未被更新的track，保留其原有的armor_id
+      auto [old_id, old_type] = findArmorInfo(track_id);
+      FYT_DEBUG("armor_tracker", "  Track[{}] not updated (tsu={}), keep id='{}'",
+               track_id, tracks[i].time_since_update, old_id);
+      continue;
+    }
+    
+    // 从 track state 中提取位置（适配不同模型）
+    Eigen::Vector3d track_pos;
+    const auto& state = tracks[i].state;
+    if (state.size() >= 9) {
+      // CA_KF/CS_KF/Singer_KF: [x, vx, ax, y, vy, ay, z, vz, az]
+      track_pos = Eigen::Vector3d(state(0), state(3), state(6));
+    } else if (state.size() >= 6) {
+      // CV_KF: [x, vx, y, vy, z, vz]
+      track_pos = Eigen::Vector3d(state(0), state(2), state(4));
+    } else if (state.size() >= 5) {
+      // CTRV_EKF: [x, y, v, theta, omega]
+      track_pos = Eigen::Vector3d(state(0), state(1), 0);
+    } else {
+      track_pos = Eigen::Vector3d::Zero();
+    }
+    
+    // 找到最近的observation
+    double min_dist = std::numeric_limits<double>::max();
+    size_t best_obs_idx = 0;
+    for (size_t j = 0; j < observations.size(); ++j) {
+      double dist = (track_pos - observations[j].position).norm();
+      if (dist < min_dist) {
+        min_dist = dist;
+        best_obs_idx = j;
+      }
+    }
+    
+    // 更新映射（只有距离在合理范围内）
+    if (min_dist < config_.max_match_distance * 2.0 && !observations.empty()) {
+      armor_info_map_[track_id] = {
+        observations[best_obs_idx].armor_id,
+        observations[best_obs_idx].armor_type
+      };
+      source_type_map_[track_id] = observations[best_obs_idx].source;
+      FYT_DEBUG("armor_tracker", "  Track[{}] updated -> Obs[{}] (id='{}', dist={:.4f})",
+               track_id, best_obs_idx, observations[best_obs_idx].armor_id, min_dist);
+    } else {
+      auto [old_id, old_type] = findArmorInfo(track_id);
+      FYT_DEBUG("armor_tracker", "  Track[{}] no match (dist={:.4f}), keep id='{}'",
+               track_id, min_dist, old_id);
+    }
   }
 
   // 记录最后的来源类型
@@ -207,15 +294,9 @@ ArmorTrackerCore::Detection ArmorTrackerCore::observationToDetection(
   det.id = std::hash<std::string>{}(obs.armor_id) % 1000;
   det.confidence = obs.confidence;
 
-  // 将3D位置映射到bbox（用于内部数据关联）
-  // 这里使用简化的映射：将 x, y, z 编码到 bbox 中
-  // PointTracker 会从 bbox 中心提取位置
-  det.bbox = cv::Rect(
-    static_cast<int>(obs.position.x() * 1000),  // x -> bbox.x
-    static_cast<int>(obs.position.y() * 1000),  // y -> bbox.y
-    static_cast<int>(obs.position.z() * 1000),  // z -> bbox.width (用于存储)
-    static_cast<int>(obs.yaw * 1000)            // yaw -> bbox.height (用于存储)
-  );
+  // 直接使用米作为单位，不进行缩放
+  det.position = obs.position;  // 米
+  det.yaw = obs.yaw;            // 弧度
 
   return det;
 }
@@ -233,27 +314,31 @@ TrackedArmorState ArmorTrackerCore::trackResultToState(
   // 从状态向量提取位置和速度
   // 根据模型配置，状态向量格式可能不同
   // 假设使用 3D CV_KF: [x, vx, y, vy, z, vz] 或类似格式
+  // 注意：数据直接以米为单位，不需要缩放
   const auto& s = result.state;
 
-  if (s.size() >= 6) {
-    // 3D 位置和速度
+  if (s.size() >= 9) {
+    // 3D CA_KF/CS_KF/Singer_KF: [x, vx, ax, y, vy, ay, z, vz, az]
+    // 位置索引: 0,3,6  速度索引: 1,4,7
+    state.position = Eigen::Vector3d(s(0), s(3), s(6));
+    state.velocity = Eigen::Vector3d(s(1), s(4), s(7));
+    state.yaw = 0.0;
+    state.yaw_velocity = 0.0;
+
+  } else if (s.size() >= 6) {
+    // 3D CV_KF: [x, vx, y, vy, z, vz]
+    // 位置索引: 0,2,4  速度索引: 1,3,5
     state.position = Eigen::Vector3d(s(0), s(2), s(4));
     state.velocity = Eigen::Vector3d(s(1), s(3), s(5));
 
-    // 如果状态向量包含 yaw
-    if (s.size() >= 8) {
-      state.yaw = s(6);
-      state.yaw_velocity = s(7);
-    } else {
-      // 从 bbox 恢复 yaw
-      state.yaw = result.bbox.height / 1000.0;
-      state.yaw_velocity = 0.0;
-    }
+    // 如果状态向量包含 yaw（非常规情况），保守处理
+    state.yaw = 0.0;
+    state.yaw_velocity = 0.0;
   } else if (s.size() >= 4) {
-    // 2D 模式，从 bbox 恢复 z
-    state.position = Eigen::Vector3d(s(0), s(2), result.bbox.width / 1000.0);
+    // 2D 模式
+    state.position = Eigen::Vector3d(s(0), s(2), 0.0);
     state.velocity = Eigen::Vector3d(s(1), s(3), 0.0);
-    state.yaw = result.bbox.height / 1000.0;
+    state.yaw = 0.0;
     state.yaw_velocity = 0.0;
   }
 

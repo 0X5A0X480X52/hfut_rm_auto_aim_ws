@@ -26,6 +26,7 @@
 #include "robot_pose_estimator/armor_grouper.hpp"
 #include "robot_pose_estimator/virtual_armor_generator.hpp"
 #include "rm_interfaces/msg/tracked_armors.hpp"
+#include "rm_interfaces/msg/armors.hpp"
 
 namespace fyt::auto_aim {
 
@@ -56,6 +57,13 @@ public:
    * @param dt 时间间隔
    */
   void update(const rm_interfaces::msg::TrackedArmors& tracked_armors, double dt);
+
+  /**
+   * @brief 更新姿态估计（从检测结果）
+   * @param armors 检测的装甲板（来自armor_detector）
+   * @param dt 时间间隔
+   */
+  void update(const rm_interfaces::msg::Armors& armors, double dt);
 
   /**
    * @brief 仅执行预测步骤

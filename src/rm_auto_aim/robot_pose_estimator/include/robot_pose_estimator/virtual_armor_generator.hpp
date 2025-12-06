@@ -84,7 +84,7 @@ public:
    * @brief 创建 Armor 消息
    * @param position 装甲板位置
    * @param yaw 装甲板yaw角
-   * @param armor_id 装甲板ID
+   * @param armor_id 装甲板ID (也用于判断pitch角)
    * @param armor_type 装甲板类型
    * @return Armor 消息
    */
@@ -93,6 +93,10 @@ public:
     double yaw,
     const std::string& armor_id,
     const std::string& armor_type) const;
+
+private:
+  // 装甲板倾斜角度常量 (约15度)
+  static constexpr double ARMOR_PITCH_ANGLE = 0.2618;  // rad
 };
 
 }  // namespace fyt::auto_aim

@@ -1,10 +1,10 @@
 # Robot Pose Estimator
 
-机器人姿态估计模块，基于 `armor_tracker` 的输出，估计机器人的中心位置、姿态和几何参数。
+机器人姿态估计模块，基于 `armor_detector` 的检测结果，估计机器人的中心位置、姿态和几何参数。
 
 ## 功能概述
 
-1. **装甲板分组**: 将跟踪到的装甲板按机器人ID分组
+1. **装甲板分组**: 将检测到的装甲板按机器人ID分组
 2. **机器人类型识别**: 根据装甲板ID和类型识别机器人类型（平衡步兵、标准机器人、英雄、前哨站等）
 3. **EKF状态估计**: 使用扩展卡尔曼滤波估计机器人中心位置、速度、yaw角和旋转半径
 4. **虚拟装甲板生成**: 生成所有装甲板（包括被遮挡的）的估计位置
@@ -13,32 +13,47 @@
 ## 数据流
 
 ```
-/armor_tracker/tracked_armors (TrackedArmors)
-         |
-         v
-  [robot_pose_estimator]
-         |
-         +---> /robot_pose_estimator/robots (TrackedRobots)
-         |
-         +---> /robot_pose_estimator/virtual_armors (Armors)
-         |
-         +---> /robot_pose_estimator/target (Target) - 兼容 armor_solver
+                       /armor_detector/armors (Armors)
+                                 |
+                    +------------+-----------+
+                    |                        |
+                    v                        v
+          [robot_pose_estimator]        [armor_tracker]
+                    |                        ^
+                    +---> /robot_pose_estimator/virtual_armors (Armors)
+                    |                        |
+                    +------------------------+
+                    |
+                    +---> /robot_pose_estimator/robots (TrackedRobots)
+                    |
+                    +---> /robot_pose_estimator/target (Target)
 ```
+
+**注意**: 为避免反馈回路，`robot_pose_estimator` 直接订阅 `armor_detector` 的检测结果，
+而不是 `armor_tracker` 的跟踪结果。虚拟装甲板单向流向 `armor_tracker`。
 
 ## 订阅话题
 
 | 话题 | 类型 | 说明 |
 |------|------|------|
-| `/armor_tracker/tracked_armors` | `rm_interfaces/TrackedArmors` | 跟踪的装甲板列表 |
+| `/armor_detector/armors` | `rm_interfaces/Armors` | 检测到的装甲板列表（直接从detector获取） |
 
 ## 发布话题
 
 | 话题 | 类型 | 说明 |
 |------|------|------|
 | `/robot_pose_estimator/robots` | `rm_interfaces/TrackedRobots` | 机器人状态列表 |
-| `/robot_pose_estimator/virtual_armors` | `rm_interfaces/Armors` | 虚拟装甲板位置 |
+| `/robot_pose_estimator/virtual_armors` | `rm_interfaces/Armors` | 虚拟装甲板位置（发送给armor_tracker） |
 | `/robot_pose_estimator/target` | `rm_interfaces/Target` | 兼容 armor_solver 的目标消息 |
 | `/robot_pose_estimator/markers` | `visualization_msgs/MarkerArray` | 可视化标记 (debug模式) |
+
+## 可视化
+
+在 debug 模式下，会发布以下可视化标记到 `/robot_pose_estimator/markers`:
+
+- **robot_centers**: 机器人中心位置（绿色球体）
+- **robot_ids**: 机器人ID和类型文本
+- **predicted_armors**: 预测的装甲板位置（蓝色方块，类似 armor_solver 的可视化风格）
 
 ## 输入过滤
 

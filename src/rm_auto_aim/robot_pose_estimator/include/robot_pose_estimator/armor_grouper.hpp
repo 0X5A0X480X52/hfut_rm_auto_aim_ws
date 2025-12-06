@@ -22,6 +22,8 @@
 #include "robot_pose_estimator/robot_types.hpp"
 #include "rm_interfaces/msg/tracked_armor.hpp"
 #include "rm_interfaces/msg/tracked_armors.hpp"
+#include "rm_interfaces/msg/armor.hpp"
+#include "rm_interfaces/msg/armors.hpp"
 
 namespace fyt::auto_aim {
 
@@ -54,11 +56,26 @@ public:
     const std::vector<uint8_t>& valid_states);
 
   /**
+   * @brief 将检测到的装甲板分组到各个机器人
+   * @param armors 检测的装甲板消息（来自armor_detector）
+   * @return 按机器人ID分组的装甲板状态
+   */
+  std::map<std::string, std::vector<ArmorState>> groupArmors(
+    const rm_interfaces::msg::Armors& armors);
+
+  /**
    * @brief 将 TrackedArmor 转换为 ArmorState
    * @param msg 跟踪装甲板消息
    * @return 装甲板状态
    */
   ArmorState trackedArmorToState(const rm_interfaces::msg::TrackedArmor& msg);
+
+  /**
+   * @brief 将 Armor 转换为 ArmorState
+   * @param msg 检测装甲板消息
+   * @return 装甲板状态
+   */
+  ArmorState armorToState(const rm_interfaces::msg::Armor& msg);
 
   /**
    * @brief 检查跟踪状态是否有效

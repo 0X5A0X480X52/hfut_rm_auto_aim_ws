@@ -117,9 +117,11 @@ rm_interfaces::msg::Armor VirtualArmorGenerator::createArmorMsg(
   armor.pose.position.y = position.y();
   armor.pose.position.z = position.z();
   
-  // 从 yaw 创建四元数（只有 yaw，pitch 和 roll 为 0）
+  // 从 yaw 和 pitch 创建四元数
+  // outpost 的装甲板向下倾斜，其他机器人的装甲板向上倾斜
+  double pitch = (armor_id == "outpost") ? -ARMOR_PITCH_ANGLE : ARMOR_PITCH_ANGLE;
   tf2::Quaternion q;
-  q.setRPY(0, 0, yaw);
+  q.setRPY(0, pitch, yaw);
   armor.pose.orientation = tf2::toMsg(q);
   
   return armor;

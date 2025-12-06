@@ -23,6 +23,9 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
 
@@ -204,6 +207,14 @@ private:
   bool enable_history_window_;
   bool enable_prediction_window_;
   // (original implementation does not include a disable flag)
+  
+  // TF 变换
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+  
+  // 坐标系名称
+  std::string world_frame_;
+  std::string camera_frame_;
   
   // 线程安全
   std::mutex callback_mutex_;

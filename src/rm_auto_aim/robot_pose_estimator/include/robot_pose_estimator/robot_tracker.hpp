@@ -99,6 +99,12 @@ public:
   std::vector<Eigen::Vector3d> getArmorPositions() const;
 
   /**
+   * @brief 设置绑定的装甲板ID列表
+   * @param armor_ids 装甲板ID列表
+   */
+  void setBoundArmorIds(const std::vector<std::string>& armor_ids);
+
+  /**
    * @brief 获取跟踪器状态
    */
   State getState() const { return state_; }
@@ -207,8 +213,14 @@ private:
   int lost_count_ = 0;
   double last_yaw_ = 0.0;
   
+  // 绑定的装甲板ID列表
+  std::vector<std::string> bound_armor_ids_;
+  
   // 最后匹配的装甲板
   ArmorState last_armor_;
+  
+  // 平滑置信度（用于避免突变）
+  mutable double smoothed_confidence_ = 0.25;
 };
 
 }  // namespace fyt::auto_aim

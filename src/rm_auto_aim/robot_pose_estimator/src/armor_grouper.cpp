@@ -43,6 +43,25 @@ std::map<std::string, std::vector<ArmorState>> ArmorGrouper::groupArmors(
   return groups;
 }
 
+std::map<std::string, std::vector<ArmorState>> ArmorGrouper::groupArmors(
+    const rm_interfaces::msg::Armors& armors) {
+  
+  std::map<std::string, std::vector<ArmorState>> groups;
+  
+  for (const auto& armor : armors.armors) {
+    // 转换为 ArmorState
+    ArmorState state = armorToState(armor);
+    
+    // 获取机器人ID
+    std::string robot_id = getRobotIdFromArmorId(state.armor_id);
+    
+    // 添加到对应组
+    groups[robot_id].push_back(state);
+  }
+  
+  return groups;
+}
+
 ArmorState ArmorGrouper::trackedArmorToState(const rm_interfaces::msg::TrackedArmor& msg) {
   ArmorState state;
   
@@ -66,6 +85,36 @@ ArmorState ArmorGrouper::trackedArmorToState(const rm_interfaces::msg::TrackedAr
   state.confidence = msg.confidence;
   state.is_observed = (msg.source_type == rm_interfaces::msg::TrackedArmor::SOURCE_DETECT);
   state.track_id = msg.track_id;
+  
+  return state;
+}
+
+ArmorState ArmorGrouper::armorToState(const rm_interfaces::msg::Armor& msg) {
+  ArmorState state;
+  
+  state.armor_id = msg.number;
+  state.armor_type = msg.type;
+  
+  state.position = Eigen::Vector3d(
+    msg.pose.position.x,
+    msg.pose.position.y,
+    msg.pose.position.z
+  );
+  
+  // 检测结果没有速度信息，设为0
+  state.velocity = Eigen::Vector3d::Zero();
+  
+  // 从四元数计算 yaw
+  double qw = msg.pose.orientation.w;
+  double qx = msg.pose.orientation.x;
+  double qy = msg.pose.orientation.y;
+  double qz = msg.pose.orientation.z;
+  state.yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
+  
+  state.yaw_velocity = 0.0;  // 检测结果没有角速度信息
+  state.confidence = 1.0;     // 检测结果没有confidence字段，默认设为1.0
+  state.is_observed = true;   // 检测结果总是观测
+  state.track_id = -1;        // 检测结果没有track_id
   
   return state;
 }

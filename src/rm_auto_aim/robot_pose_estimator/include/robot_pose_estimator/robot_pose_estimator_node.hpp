@@ -20,6 +20,9 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include "robot_pose_estimator/robot_pose_estimator_core.hpp"
 #include "rm_interfaces/msg/tracked_armors.hpp"
@@ -35,8 +38,8 @@ namespace fyt::auto_aim {
  * @brief 话题配置结构
  */
 struct EstimatorTopicConfig {
-  // 订阅话题
-  std::string tracked_armors_sub = "/armor_tracker/tracked_armors";
+  // 订阅话题 - 直接订阅armor_detector的检测结果，避免与armor_tracker形成反馈回路
+  std::string armors_sub = "/armor_detector/armors";
   
   // 发布话题
   std::string robots_pub = "/robot_pose_estimator/robots";
@@ -48,10 +51,10 @@ struct EstimatorTopicConfig {
 /**
  * @brief 机器人姿态估计节点
  * 
- * 订阅: /armor_tracker/tracked_armors
+ * 订阅: /armor_detector/armors (直接从检测器获取，避免反馈回路)
  * 发布: 
  *   - /robot_pose_estimator/robots (TrackedRobots)
- *   - /robot_pose_estimator/virtual_armors (Armors)
+ *   - /robot_pose_estimator/virtual_armors (Armors) -> 发往armor_tracker
  *   - /robot_pose_estimator/target (Target) - 兼容 armor_solver
  *   - /robot_pose_estimator/markers (MarkerArray) - 可视化
  */
@@ -64,9 +67,9 @@ private:
   // ==================== 回调函数 ====================
   
   /**
-   * @brief 跟踪装甲板回调
+   * @brief 检测装甲板回调（来自 armor_detector）
    */
-  void trackedArmorsCallback(const rm_interfaces::msg::TrackedArmors::SharedPtr msg);
+  void armorsCallback(const rm_interfaces::msg::Armors::SharedPtr msg);
   
   /**
    * @brief 定时器回调 - 预测更新
@@ -139,8 +142,8 @@ private:
   // 核心估计器
   std::unique_ptr<RobotPoseEstimatorCore> estimator_core_;
   
-  // 订阅者
-  rclcpp::Subscription<rm_interfaces::msg::TrackedArmors>::SharedPtr tracked_armors_sub_;
+  // 订阅者 - 订阅armor_detector的检测结果
+  rclcpp::Subscription<rm_interfaces::msg::Armors>::SharedPtr armors_sub_;
   
   // 发布者
   rclcpp::Publisher<rm_interfaces::msg::TrackedRobots>::SharedPtr robots_pub_;
@@ -160,6 +163,11 @@ private:
   // 参数
   bool debug_mode_;
   double predict_rate_;
+  std::string target_frame_;  // 目标坐标系
+  
+  // TF2
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
   
   // 话题配置
   EstimatorTopicConfig topic_config_;

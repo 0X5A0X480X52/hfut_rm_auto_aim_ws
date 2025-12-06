@@ -1,0 +1,45 @@
+# ========================================
+# 解耦架构集成测试启动参数配置
+# ========================================
+
+# --------- 通用参数 ---------
+# 命名空间 所有节点、话题都会以这个命名空间开头
+namespace: ''
+
+# true: 读取视频 false: 读取相机
+video_play: true
+
+# true: 虚拟下位机 false: 实车
+virtual_serial: true
+
+# true: 开启调试模式 (发布可视化markers)
+debug: true
+
+# --------- 相机/URDF参数 ---------
+odom2camera:
+  xyz: "\"0.0 0.0785  0.05553\""
+  rpy: "\"0.0  0.0  0.0\""
+
+# --------- 节点启动延迟 (秒) ---------
+# 用于控制节点启动顺序，确保依赖关系正确
+delays:
+  serial: 1.5
+  camera_detector: 2.0
+  ballistic_solver: 2.0
+  armor_tracker: 2.5
+  robot_pose_estimator: 3.0
+  target_selector: 3.5
+  trajectory_planner: 4.0
+
+# --------- 解耦架构数据流 ---------
+# armor_detector/armors
+#       ↓
+# armor_tracker/tracked_armors
+#       ↓
+# robot_pose_estimator/robots + robot_pose_estimator/virtual_armors
+#       ↓
+# target_selector/selected_target
+#       ↓
+# trajectory_planner/gimbal_cmd
+#       ↑
+# ballistic_solver (服务)

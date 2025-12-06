@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include "rm_utils/logger/log.hpp"
 
 namespace fyt::auto_aim {
 
@@ -24,27 +25,42 @@ std::vector<const SelectionStrategy::TrackedRobot*> SelectionStrategy::filterCan
     const SelectionConfig& config) const {
   std::vector<const TrackedRobot*> candidates;
   
+  FYT_DEBUG("target_selector", "Filtering {} robots with config: min_conf={:.3f}, max_dist={:.2f}, max_yaw_dev={:.3f}",
+            robots.robots.size(), config.min_confidence, config.max_distance, config.max_yaw_deviation);
+  
   for (const auto& robot : robots.robots) {
+    FYT_DEBUG("target_selector", "Evaluating robot {}: confidence={:.3f}", robot.robot_id, robot.confidence);
+    
     // Skip robots with low confidence
     if (robot.confidence < config.min_confidence) {
+      FYT_DEBUG("target_selector", "Robot {} rejected: confidence {:.3f} < {:.3f}", 
+                robot.robot_id, robot.confidence, config.min_confidence);
       continue;
     }
     
     // Calculate distance
     double distance = calculateDistanceToRobot(robot);
+    FYT_DEBUG("target_selector", "Robot {} distance: {:.3f}", robot.robot_id, distance);
     if (distance > config.max_distance) {
+      FYT_DEBUG("target_selector", "Robot {} rejected: distance {:.3f} > {:.3f}", 
+                robot.robot_id, distance, config.max_distance);
       continue;
     }
     
     // Calculate yaw deviation
     double yaw_deviation = calculateYawDeviation(robot, config.reference_yaw);
+    FYT_DEBUG("target_selector", "Robot {} yaw deviation: {:.3f}", robot.robot_id, yaw_deviation);
     if (yaw_deviation > config.max_yaw_deviation) {
+      FYT_DEBUG("target_selector", "Robot {} rejected: yaw deviation {:.3f} > {:.3f}", 
+                robot.robot_id, yaw_deviation, config.max_yaw_deviation);
       continue;
     }
     
+    FYT_DEBUG("target_selector", "Robot {} accepted as candidate", robot.robot_id);
     candidates.push_back(&robot);
   }
   
+  FYT_DEBUG("target_selector", "Filtering complete: {} candidates selected", candidates.size());
   return candidates;
 }
 

@@ -123,6 +123,9 @@ class TrajectoryPlannerNode(Node):
     def __init__(self):
         super().__init__('trajectory_planner')
         
+        # 设置日志级别为 DEBUG
+        self.get_logger().set_level(rclpy.logging.LoggingSeverity.DEBUG)
+        
         self.get_logger().info("Initializing Trajectory Planner Node...")
         
         # 声明参数
@@ -291,7 +294,7 @@ class TrajectoryPlannerNode(Node):
         
         # 目标预测器配置
         self.declare_parameter('predictor.min_confidence', 0.3)
-        self.declare_parameter('predictor.max_distance', 10.0)
+        self.declare_parameter('predictor.max_distance', 10.0)  # 最大距离10米
         self.declare_parameter('predictor.selection_strategy', 'nearest_yaw')
         
         # 目标管理器配置
@@ -376,30 +379,48 @@ class TrajectoryPlannerNode(Node):
     
     def _prediction_windows_callback(self, msg: TrackPredictionWindows):
         """预测窗口回调"""
+        self.get_logger().debug(f"Received prediction windows: {len(msg.windows)} windows")
+        for i, window in enumerate(msg.windows):
+            self.get_logger().debug(f"  Window {i}: track_id={window.track_id}, armor_id={window.armor_id}, "
+                                   f"armor_type={window.armor_type}, predictions={len(window.predictions)}")
         self.target_predictor.update_predictions(msg)
     
     def _robots_callback(self, msg: TrackedRobots):
         """机器人信息回调"""
+        self.get_logger().debug(f"Received robots: {len(msg.robots)} robots")
+        for i, robot in enumerate(msg.robots):
+            self.get_logger().debug(f"  Robot {i}: id={robot.robot_id}, confidence={robot.confidence:.3f}, "
+                                   f"position=({robot.center_position.x:.2f}, {robot.center_position.y:.2f}, {robot.center_position.z:.2f}), "
+                                   f"bound_armor_ids={list(robot.bound_armor_ids)}")
         current_time = self.get_clock().now().nanoseconds * 1e-9
         self.target_manager.update_robots(msg, current_time)
     
     def _joint_states_callback(self, msg: JointState):
         """关节状态回调 - 获取当前云台状态"""
+        self.get_logger().debug(f"Received joint states: {len(msg.name)} joints")
+        
         # 查找yaw关节
         try:
             yaw_idx = msg.name.index('yaw_joint')
+            old_yaw = self._current_gimbal_state[0]
             self._current_gimbal_state[0] = msg.position[yaw_idx]
             if len(msg.velocity) > yaw_idx:
                 self._current_gimbal_state[1] = msg.velocity[yaw_idx]
+            self.get_logger().debug(f"  Yaw joint: pos={self._current_gimbal_state[0]:.3f} "
+                                   f"(changed: {abs(self._current_gimbal_state[0] - old_yaw):.3f}), "
+                                   f"vel={self._current_gimbal_state[1]:.3f}")
         except ValueError:
-            pass
+            self.get_logger().debug("  Yaw joint not found in joint states")
         
         # 查找pitch关节
         try:
             pitch_idx = msg.name.index('pitch_joint')
+            old_pitch = self._current_pitch
             self._current_pitch = msg.position[pitch_idx]
+            self.get_logger().debug(f"  Pitch joint: pos={self._current_pitch:.3f} "
+                                   f"(changed: {abs(self._current_pitch - old_pitch):.3f})")
         except ValueError:
-            pass
+            self.get_logger().debug("  Pitch joint not found in joint states")
     
     # ==================== 服务处理 ====================
     
@@ -407,7 +428,12 @@ class TrajectoryPlannerNode(Node):
                                   request: SetTargetRobot.Request,
                                   response: SetTargetRobot.Response) -> SetTargetRobot.Response:
         """处理设置目标机器人服务请求"""
+        self.get_logger().info(f"SetTargetRobot service called: robot_id='{request.robot_id}'")
+        
         success, message, previous_id = self.target_manager.set_target_robot(request.robot_id)
+        
+        self.get_logger().debug(f"SetTargetRobot result: success={success}, message='{message}', "
+                               f"previous_id='{previous_id}'")
         
         response.success = success
         response.message = message
@@ -427,6 +453,13 @@ class TrajectoryPlannerNode(Node):
     def _goal_callback(self, goal_request) -> GoalResponse:
         """Action目标回调"""
         self.get_logger().info(f"Received trajectory plan goal for robot: {goal_request.robot_id}")
+        self.get_logger().debug(f"Goal callback: current planning status: {self._planning_status}")
+        
+        # 检查是否已经有正在执行的Action
+        if self._planning_status != self.STATUS_IDLE:
+            self.get_logger().warn(f"Goal callback: rejecting goal, current status: {self._planning_status}")
+            return GoalResponse.REJECT
+        
         return GoalResponse.ACCEPT
     
     def _cancel_callback(self, goal_handle) -> CancelResponse:
@@ -439,6 +472,8 @@ class TrajectoryPlannerNode(Node):
         request = goal_handle.request
         
         self.get_logger().info(f"Executing trajectory plan for robot: {request.robot_id}")
+        self.get_logger().debug(f"Execute trajectory plan: enable_tracking={request.enable_tracking}, "
+                               f"robot_id={request.robot_id}")
         
         # 设置目标
         self.target_manager.set_target_robot(request.robot_id)
@@ -454,9 +489,12 @@ class TrajectoryPlannerNode(Node):
         rate = self.create_rate(self.planner_config.control_rate)
         start_time = self.get_clock().now()
         
+        self.get_logger().debug(f"Execute trajectory plan: starting control loop with rate {self.planner_config.control_rate} Hz")
+        
         while rclpy.ok() and self._is_tracking_enabled:
             # 检查取消请求
             if goal_handle.is_cancel_requested:
+                self.get_logger().debug("Execute trajectory plan: action canceled")
                 goal_handle.canceled()
                 result.success = False
                 result.message = "Action canceled"
@@ -467,15 +505,23 @@ class TrajectoryPlannerNode(Node):
             # 获取目标信息
             target_info = self.target_predictor.get_target_info()
             
+            self.get_logger().debug(f"Execute trajectory plan: target_info available: {target_info is not None}")
+            
             if target_info:
                 self._planning_status = self.STATUS_TRACKING
                 self._last_target_time = self.get_clock().now().nanoseconds * 1e-9
+                
+                self.get_logger().debug(f"Execute trajectory plan: target info - distance={target_info['distance']:.2f}, "
+                                       f"yaw_from_origin={target_info['yaw_from_origin']:.3f}, "
+                                       f"confidence={target_info.get('confidence', 0.0):.3f}")
                 
                 # 计算误差
                 yaw_error = GimbalModel.angle_difference(
                     target_info['yaw_from_origin'],
                     self._current_gimbal_state[0]
                 )
+                
+                self.get_logger().debug(f"Execute trajectory plan: yaw error: {yaw_error:.3f} rad ({math.degrees(yaw_error):.1f} deg)")
                 
                 # 简单的pitch误差估算
                 pitch_error = 0.0  # TODO: 更准确的pitch误差计算
@@ -489,12 +535,19 @@ class TrajectoryPlannerNode(Node):
                 feedback.target_locked = abs(yaw_error) < self.planner_config.fire_yaw_threshold
                 feedback.planning_status = self._planning_status
                 
+                self.get_logger().debug(f"Execute trajectory plan: feedback - target_locked={feedback.target_locked}, "
+                                       f"planning_status={feedback.planning_status}")
+                
                 goal_handle.publish_feedback(feedback)
             else:
                 # 检查目标丢失超时
                 current_time = self.get_clock().now().nanoseconds * 1e-9
                 if self._last_target_time is not None:
-                    if current_time - self._last_target_time > self.planner_config.target_lost_timeout:
+                    time_since_lost = current_time - self._last_target_time
+                    self.get_logger().debug(f"Execute trajectory plan: target lost, time_since_lost={time_since_lost:.3f}s, "
+                                           f"timeout={self.planner_config.target_lost_timeout:.3f}s")
+                    if time_since_lost > self.planner_config.target_lost_timeout:
+                        self.get_logger().debug("Execute trajectory plan: target lost timeout exceeded")
                         self._planning_status = self.STATUS_LOST_TARGET
                         
                         feedback.header.stamp = self.get_clock().now().to_msg()
@@ -506,6 +559,8 @@ class TrajectoryPlannerNode(Node):
             self._total_tracking_time = (self.get_clock().now() - start_time).nanoseconds * 1e-9
             
             rate.sleep()
+        
+        self.get_logger().debug(f"Execute trajectory plan: loop exited, total_tracking_time={self._total_tracking_time:.3f}s")
         
         # 完成
         goal_handle.succeed()
@@ -520,27 +575,37 @@ class TrajectoryPlannerNode(Node):
     
     def _control_loop(self):
         """主控制循环"""
-        if self._planning_status == self.STATUS_IDLE:
-            return
-        
         current_time = self.get_clock().now().nanoseconds * 1e-9
         
-        # 检查目标是否有效
-        if not self.target_manager.is_target_valid(current_time):
+        self.get_logger().debug(f"Control loop: status={self._planning_status}, time={current_time:.3f}")
+        
+        if self._planning_status == self.STATUS_IDLE:
+            self.get_logger().debug("Control loop: IDLE status, publishing idle command")
             self._publish_idle_cmd()
             return
         
-        # 获取目标装甲板ID列表
+        # 检查目标是否有效
+        if not self.target_manager.is_target_valid(current_time):
+            self.get_logger().debug("Control loop: target not valid, publishing idle command")
+            self._publish_idle_cmd()
+            return
+        
+        # 获取目标装甲板ID列表（现在是track_id字符串）
         target_armor_ids = self.target_manager.get_target_armor_ids()
+        self.get_logger().debug(f"Control loop: target armor IDs (track_ids): {target_armor_ids}")
         
-        # 设置目标预测器的过滤条件
-        self.target_predictor.set_target_armor_ids(target_armor_ids)
-        
-        # 获取目标装甲板track_ids
+        # 将track_id字符串转换为整数列表
         target_track_ids = []
-        for armor_id in target_armor_ids:
-            track_ids = self.target_predictor.filter_by_robot_id(armor_id)
-            target_track_ids.extend(track_ids)
+        for track_id_str in target_armor_ids:
+            try:
+                track_id = int(track_id_str)
+                target_track_ids.append(track_id)
+            except ValueError:
+                # 如果不是数字，可能是旧格式的armor_id，尝试通过armor_id筛选
+                track_ids = self.target_predictor.filter_by_robot_id(track_id_str)
+                target_track_ids.extend(track_ids)
+        
+        self.get_logger().debug(f"Control loop: target track IDs: {target_track_ids}")
         
         # 选择最佳装甲板
         current_yaw = self._current_gimbal_state[0]
@@ -549,7 +614,10 @@ class TrajectoryPlannerNode(Node):
             target_track_ids=target_track_ids if target_track_ids else None
         )
         
+        self.get_logger().debug(f"Control loop: selected track ID: {selected_track_id}")
+        
         if selected_track_id is None:
+            self.get_logger().debug("Control loop: no track selected, publishing idle command")
             self._publish_idle_cmd()
             self._planning_status = self.STATUS_LOST_TARGET
             return
@@ -561,8 +629,11 @@ class TrajectoryPlannerNode(Node):
         target_yaw_trajectory = self.target_predictor.get_target_yaw_trajectory(selected_track_id)
         
         if target_yaw_trajectory is None:
+            self.get_logger().debug("Control loop: no yaw trajectory available, publishing idle command")
             self._publish_idle_cmd()
             return
+        
+        self.get_logger().debug(f"Control loop: target yaw trajectory length: {len(target_yaw_trajectory)}")
         
         # MPC优化求解
         u_optimal, U_sequence, solve_time = self.mpc_controller.solve(
@@ -570,8 +641,12 @@ class TrajectoryPlannerNode(Node):
             target_yaw_trajectory
         )
         
+        self.get_logger().debug(f"Control loop: MPC solve time: {solve_time:.3f}ms, u_optimal: {u_optimal}")
+        
         # 更新云台状态 (仿真/预测)
         next_state = self.gimbal_model.predict(self._current_gimbal_state, u_optimal)
+        self.get_logger().debug(f"Control loop: predicted next state: yaw={next_state[0]:.3f}, "
+                               f"yaw_vel={next_state[1]:.3f}, yaw_acc={next_state[2]:.3f}")
         
         # 计算pitch
         target_info = self.target_predictor.get_target_info(selected_track_id)
@@ -583,8 +658,13 @@ class TrajectoryPlannerNode(Node):
             target_position = target_info['position']
             target_velocity = target_info['velocity']
             
+            self.get_logger().debug(f"Control loop: target info - distance={distance:.2f}, "
+                                   f"position=({target_position[0]:.2f}, {target_position[1]:.2f}, {target_position[2]:.2f}), "
+                                   f"velocity=({target_velocity[0]:.2f}, {target_velocity[1]:.2f}, {target_velocity[2]:.2f})")
+            
             # 使用弹道解算服务计算pitch
             if self.ballistic_client.is_service_available():
+                self.get_logger().debug("Control loop: using ballistic solver service")
                 # 在优化后的yaw方向上寻找可见装甲板并计算pitch
                 ballistic_result = self.ballistic_client.compute_pitch_from_yaw(
                     yaw=next_state[0],
@@ -594,7 +674,9 @@ class TrajectoryPlannerNode(Node):
                 )
                 if ballistic_result.success:
                     pitch = ballistic_result.pitch
+                    self.get_logger().debug(f"Control loop: ballistic solver success, pitch={pitch:.3f}")
                 else:
+                    self.get_logger().debug("Control loop: ballistic solver failed, using simple estimate")
                     # 使用简单估算
                     pitch = self.ballistic_client.simple_pitch_estimate(
                         distance=distance,
@@ -602,18 +684,23 @@ class TrajectoryPlannerNode(Node):
                         bullet_speed=self.planner_config.bullet_speed
                     )
             else:
+                self.get_logger().debug("Control loop: ballistic service not available, using simple estimate")
                 # 使用简单估算
                 pitch = self.ballistic_client.simple_pitch_estimate(
                     distance=distance,
                     height=target_position[2],
                     bullet_speed=self.planner_config.bullet_speed
                 )
+        else:
+            self.get_logger().debug("Control loop: no target info available")
         
         # 计算yaw误差
         yaw_error = GimbalModel.angle_difference(
             target_yaw_trajectory[0],
             self._current_gimbal_state[0]
         )
+        
+        self.get_logger().debug(f"Control loop: yaw error: {yaw_error:.3f} rad ({math.degrees(yaw_error):.1f} deg)")
         
         # 判断是否可以开火
         fire_advice = self._compute_fire_advice(
@@ -622,6 +709,8 @@ class TrajectoryPlannerNode(Node):
             distance=distance,
             confidence=target_info['confidence'] if target_info else 0.0
         )
+        
+        self.get_logger().debug(f"Control loop: fire advice: {fire_advice}")
         
         # 发布控制指令
         self._publish_gimbal_cmd(
@@ -646,24 +735,33 @@ class TrajectoryPlannerNode(Node):
                              distance: float,
                              confidence: float) -> bool:
         """计算开火建议"""
+        self.get_logger().debug(f"Compute fire advice: yaw_error={yaw_error:.3f}, pitch_error={pitch_error:.3f}, "
+                               f"distance={distance:.2f}, confidence={confidence:.3f}")
+        
         # 检查yaw误差
         if abs(yaw_error) > self.planner_config.fire_yaw_threshold:
+            self.get_logger().debug(f"Fire advice: yaw error {abs(yaw_error):.3f} > threshold {self.planner_config.fire_yaw_threshold:.3f}")
             return False
         
         # 检查pitch误差
         if abs(pitch_error) > self.planner_config.fire_pitch_threshold:
+            self.get_logger().debug(f"Fire advice: pitch error {abs(pitch_error):.3f} > threshold {self.planner_config.fire_pitch_threshold:.3f}")
             return False
         
         # 检查距离
         if distance < self.planner_config.fire_distance_min:
+            self.get_logger().debug(f"Fire advice: distance {distance:.2f} < min {self.planner_config.fire_distance_min:.2f}")
             return False
         if distance > self.planner_config.fire_distance_max:
+            self.get_logger().debug(f"Fire advice: distance {distance:.2f} > max {self.planner_config.fire_distance_max:.2f}")
             return False
         
         # 检查置信度
         if confidence < self.planner_config.fire_confidence_threshold:
+            self.get_logger().debug(f"Fire advice: confidence {confidence:.3f} < threshold {self.planner_config.fire_confidence_threshold:.3f}")
             return False
         
+        self.get_logger().debug("Fire advice: all conditions met, can fire")
         return True
     
     def _publish_gimbal_cmd(self, 
@@ -676,12 +774,19 @@ class TrajectoryPlannerNode(Node):
         """发布云台控制指令"""
         msg = GimbalCmd()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.pitch = pitch
-        msg.yaw = yaw
-        msg.yaw_diff = yaw_diff
-        msg.pitch_diff = pitch_diff
-        msg.distance = distance
+        msg.header.frame_id = "odom"  # 设置坐标系
+        
+        # 检查NaN值并替换为安全值
+        msg.pitch = pitch if not math.isnan(pitch) else self._current_pitch
+        msg.yaw = yaw if not math.isnan(yaw) else self._current_gimbal_state[0]
+        msg.yaw_diff = yaw_diff if not math.isnan(yaw_diff) else 0.0
+        msg.pitch_diff = pitch_diff if not math.isnan(pitch_diff) else 0.0
+        msg.distance = distance if not math.isnan(distance) else -1.0
         msg.fire_advice = fire_advice
+        
+        self.get_logger().debug(f"Publishing gimbal cmd: pitch={msg.pitch:.3f}, yaw={msg.yaw:.3f}, "
+                               f"yaw_diff={msg.yaw_diff:.3f}, pitch_diff={msg.pitch_diff:.3f}, "
+                               f"distance={msg.distance:.2f}, fire_advice={fire_advice}")
         
         self.gimbal_cmd_pub.publish(msg)
     
@@ -689,13 +794,15 @@ class TrajectoryPlannerNode(Node):
         """发布空闲状态控制指令"""
         msg = GimbalCmd()
         msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "odom"  # 设置坐标系
         msg.pitch = self._current_pitch
         msg.yaw = self._current_gimbal_state[0]
         msg.yaw_diff = 0.0
         msg.pitch_diff = 0.0
-        msg.distance = -1.0 # 无效距离
+        msg.distance = -1.0  # 无效距离
         msg.fire_advice = False
         
+        self.get_logger().debug(f"Publishing idle cmd: pitch={msg.pitch:.3f}, yaw={msg.yaw:.3f}")
         self.gimbal_cmd_pub.publish(msg)
     
     def _publish_trajectory(self, control_sequence: np.ndarray):

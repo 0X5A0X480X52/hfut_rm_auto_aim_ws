@@ -20,7 +20,11 @@ void SortTracker::predict() {
 }
 
 void SortTracker::update(const std::vector<Detection>& detections) {
-    // 1. Get predicted tracks
+    // 1. Predict step for all existing tracks to prepare Kalman priors
+    //    Ensures P_prior/X_prior are valid before calling update on each model.
+    predict();
+
+    // 2. Get predicted tracks
     std::vector<cv::Rect> predicted_boxes;
     std::vector<std::list<Track>::iterator> track_iterators;
     

@@ -310,13 +310,25 @@ class BallisticClient:
         v = bullet_speed if bullet_speed else self.config.default_bullet_speed
         g = 9.8  # 重力加速度
         
+        # 检查无效输入
+        if distance <= 0.01 or v <= 0:  # 最小距离1cm
+            # 距离太近，直接返回基于高度的角度
+            if abs(height) < 0.01:
+                return 0.0
+            # 简单地指向目标高度方向
+            return math.atan2(height, max(distance, 0.01))
+        
         # 飞行时间近似
         t = distance / v
         
         # 考虑重力补偿的pitch角
         # 目标高度 = v * sin(pitch) * t - 0.5 * g * t^2
-        # sin(pitch) = (height + 0.5 * g * t^2) / (v * t)
-        sin_pitch = (height + 0.5 * g * t**2) / (v * t) if t > 0 else 0
+        # sin_pitch = (height + 0.5 * g * t^2) / (v * t)
+        denominator = v * t
+        if abs(denominator) < 1e-6:
+            return math.atan2(height, distance)
+        
+        sin_pitch = (height + 0.5 * g * t**2) / denominator
         
         # 限制范围
         sin_pitch = max(-1.0, min(1.0, sin_pitch))

@@ -65,6 +65,14 @@ ArmorTrackerNode::ArmorTrackerNode(const rclcpp::NodeOptions & options)
   FYT_REGISTER_LOGGER("armor_tracker", "~/fyt2024-log", INFO);
   FYT_INFO("armor_tracker", "Starting ArmorTrackerNode (v2.0 - muit_obj_tracker based)!");
 
+  // 初始化 TF
+  tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+  
+  // 获取坐标系参数
+  world_frame_ = this->declare_parameter("world_frame", "odom");
+  camera_frame_ = this->declare_parameter("camera_frame", "camera_optical_frame");
+
   // 声明参数
   declareParameters();
   
@@ -347,7 +355,7 @@ void ArmorTrackerNode::publishTimerCallback()
   // 发布跟踪结果
   rm_interfaces::msg::TrackedArmors tracked_msg;
   tracked_msg.header.stamp = current_stamp;
-  tracked_msg.header.frame_id = "odom";
+  tracked_msg.header.frame_id = world_frame_;
   
   for (const auto & track : tracks) {
     tracked_msg.armors.push_back(stateToMessage(track, tracked_msg.header.stamp));
@@ -367,7 +375,7 @@ void ArmorTrackerNode::publishTimerCallback()
     if (history_windows_pub_) {
       auto history_msg = history_manager_->getAllHistoryWindows();
       history_msg.header.stamp = current_stamp;
-      history_msg.header.frame_id = "odom";
+      history_msg.header.frame_id = world_frame_;
       history_windows_pub_->publish(history_msg);
     }
   }
@@ -384,7 +392,7 @@ void ArmorTrackerNode::publishTimerCallback()
     if (prediction_windows_pub_) {
       auto prediction_msg = prediction_manager_->getAllPredictionWindows();
       prediction_msg.header.stamp = current_stamp;
-      prediction_msg.header.frame_id = "odom";
+      prediction_msg.header.frame_id = world_frame_;
       prediction_windows_pub_->publish(prediction_msg);
     }
   }
@@ -403,16 +411,64 @@ std::vector<ArmorObservation> ArmorTrackerNode::armorsToObservations(
   std::vector<ArmorObservation> observations;
   observations.reserve(msg.armors.size());
   
+  // 获取消息的坐标系
+  const std::string& source_frame = msg.header.frame_id;
+  
+  // 判断是否需要坐标转换
+  bool need_transform = (source_frame != world_frame_);
+  
+  if (need_transform) {
+    FYT_DEBUG("armor_tracker", "Will transform armors from '{}' to '{}'", source_frame, world_frame_);
+  }
+  
   for (const auto& armor : msg.armors) {
     ArmorObservation obs;
     obs.armor_id = armor.number;
     obs.armor_type = armor.type;
-    obs.position = Eigen::Vector3d(
-      armor.pose.position.x,
-      armor.pose.position.y,
-      armor.pose.position.z
-    );
-    obs.yaw = quaternionToYaw(armor.pose.orientation);
+    
+    if (need_transform) {
+      // 需要坐标转换：从 source_frame 转换到 world_frame_
+      try {
+        // 创建源坐标系中的位姿
+        geometry_msgs::msg::PoseStamped source_pose;
+        source_pose.header = msg.header;
+        source_pose.pose = armor.pose;
+        
+        // 转换到世界坐标系
+        geometry_msgs::msg::PoseStamped world_pose;
+        tf_buffer_->transform(source_pose, world_pose, world_frame_);
+        
+        // 设置转换后的位置
+        obs.position = Eigen::Vector3d(
+          world_pose.pose.position.x,
+          world_pose.pose.position.y,
+          world_pose.pose.position.z
+        );
+        
+        // 从转换后的姿态提取yaw角
+        obs.yaw = quaternionToYaw(world_pose.pose.orientation);
+        
+      } catch (tf2::TransformException &ex) {
+        FYT_WARN("armor_tracker", "TF transform failed from '{}' to '{}' for armor {}: {}", 
+                 source_frame, world_frame_, armor.number, ex.what());
+        // 如果转换失败，使用原始位置（作为fallback）
+        obs.position = Eigen::Vector3d(
+          armor.pose.position.x,
+          armor.pose.position.y,
+          armor.pose.position.z
+        );
+        obs.yaw = quaternionToYaw(armor.pose.orientation);
+      }
+    } else {
+      // 不需要转换，直接使用原始位置
+      obs.position = Eigen::Vector3d(
+        armor.pose.position.x,
+        armor.pose.position.y,
+        armor.pose.position.z
+      );
+      obs.yaw = quaternionToYaw(armor.pose.orientation);
+    }
+    
     obs.confidence = 1.0f - armor.distance_to_image_center;  // 简化的置信度计算
     obs.source = source;
     obs.timestamp = msg.header.stamp;
@@ -428,7 +484,8 @@ std::vector<ArmorObservation> ArmorTrackerNode::armorsToObservations(
       snprintf(buf, sizeof(buf), "%s(%.2f,%.2f,%.2f)", o.armor_id.c_str(), o.position.x(), o.position.y(), o.position.z());
       obs_info += std::string(buf) + ",";
     }
-    FYT_DEBUG("armor_tracker", "Converted {} armors to observations: {}", observations.size(), obs_info);
+    FYT_DEBUG("armor_tracker", "Converted {} armors to observations (frame: {} -> {}): {}", 
+              observations.size(), source_frame, world_frame_, obs_info);
   }
   
   return observations;
@@ -442,7 +499,7 @@ rm_interfaces::msg::TrackedArmor ArmorTrackerNode::stateToMessage(
   rm_interfaces::msg::TrackedArmor msg;
   
   msg.header.stamp = stamp;
-  msg.header.frame_id = "odom";
+  msg.header.frame_id = world_frame_;
   
   msg.track_id = state.track_id;
   msg.armor_id = state.armor_id;
@@ -487,7 +544,7 @@ void ArmorTrackerNode::publishMarkers(const std::vector<TrackedArmorState>& trac
     
     // 位置标记
     visualization_msgs::msg::Marker marker;
-    marker.header.frame_id = "odom";
+    marker.header.frame_id = world_frame_;
     marker.header.stamp = this->now();
     marker.ns = "armor_tracker";
     marker.id = static_cast<int>(i);

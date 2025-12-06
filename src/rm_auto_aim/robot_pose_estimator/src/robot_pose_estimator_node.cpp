@@ -38,6 +38,10 @@ RobotPoseEstimatorNode::RobotPoseEstimatorNode(const rclcpp::NodeOptions& option
   
   FYT_INFO("robot_pose_estimator", "Initializing Robot Pose Estimator Node...");
   
+  // 初始化 TF2
+  tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+  
   // 声明和加载参数
   declareParameters();
   
@@ -48,11 +52,11 @@ RobotPoseEstimatorNode::RobotPoseEstimatorNode(const rclcpp::NodeOptions& option
   // 创建核心估计器
   estimator_core_ = std::make_unique<RobotPoseEstimatorCore>(config);
   
-  // 创建订阅者
-  tracked_armors_sub_ = this->create_subscription<rm_interfaces::msg::TrackedArmors>(
-    topic_config_.tracked_armors_sub,
+  // 创建订阅者 - 直接订阅armor_detector的检测结果
+  armors_sub_ = this->create_subscription<rm_interfaces::msg::Armors>(
+    topic_config_.armors_sub,
     rclcpp::SensorDataQoS(),
-    std::bind(&RobotPoseEstimatorNode::trackedArmorsCallback, this, std::placeholders::_1)
+    std::bind(&RobotPoseEstimatorNode::armorsCallback, this, std::placeholders::_1)
   );
   
   // 创建发布者
@@ -92,9 +96,9 @@ RobotPoseEstimatorNode::RobotPoseEstimatorNode(const rclcpp::NodeOptions& option
   heartbeat_ = HeartBeatPublisher::create(this);
   
   FYT_INFO("robot_pose_estimator", "Robot Pose Estimator Node initialized");
-  FYT_INFO("robot_pose_estimator", "  Subscribing to: {}", topic_config_.tracked_armors_sub);
+  FYT_INFO("robot_pose_estimator", "  Subscribing to: {} (from detector, avoids feedback loop)", topic_config_.armors_sub);
   FYT_INFO("robot_pose_estimator", "  Publishing robots to: {}", topic_config_.robots_pub);
-  FYT_INFO("robot_pose_estimator", "  Publishing virtual armors to: {}", topic_config_.virtual_armors_pub);
+  FYT_INFO("robot_pose_estimator", "  Publishing virtual armors to: {} (-> armor_tracker)", topic_config_.virtual_armors_pub);
   FYT_INFO("robot_pose_estimator", "  Publishing target to: {}", topic_config_.target_pub);
 }
 
@@ -103,8 +107,11 @@ void RobotPoseEstimatorNode::declareParameters() {
   debug_mode_ = this->declare_parameter("debug", false);
   predict_rate_ = this->declare_parameter("predict_rate", 100.0);
   
-  // 话题配置
-  this->declare_parameter("topics.tracked_armors_sub", "/armor_tracker/tracked_armors");
+  // 坐标系配置 - 与 armor_detector 保持一致
+  target_frame_ = this->declare_parameter("target_frame", "odom");
+  
+  // 话题配置 - 订阅armor_detector的检测结果，避免与armor_tracker形成反馈回路
+  this->declare_parameter("topics.armors_sub", "/armor_detector/armors");
   this->declare_parameter("topics.robots_pub", "/robot_pose_estimator/robots");
   this->declare_parameter("topics.virtual_armors_pub", "/robot_pose_estimator/virtual_armors");
   this->declare_parameter("topics.target_pub", "/robot_pose_estimator/target");
@@ -166,7 +173,7 @@ PoseEstimatorConfig RobotPoseEstimatorNode::buildConfig() {
 EstimatorTopicConfig RobotPoseEstimatorNode::buildTopicConfig() {
   EstimatorTopicConfig config;
   
-  config.tracked_armors_sub = this->get_parameter("topics.tracked_armors_sub").as_string();
+  config.armors_sub = this->get_parameter("topics.armors_sub").as_string();
   config.robots_pub = this->get_parameter("topics.robots_pub").as_string();
   config.virtual_armors_pub = this->get_parameter("topics.virtual_armors_pub").as_string();
   config.target_pub = this->get_parameter("topics.target_pub").as_string();
@@ -175,8 +182,8 @@ EstimatorTopicConfig RobotPoseEstimatorNode::buildTopicConfig() {
   return config;
 }
 
-void RobotPoseEstimatorNode::trackedArmorsCallback(
-    const rm_interfaces::msg::TrackedArmors::SharedPtr msg) {
+void RobotPoseEstimatorNode::armorsCallback(
+    const rm_interfaces::msg::Armors::SharedPtr msg) {
   
   // 计算时间间隔
   rclcpp::Time current_time = this->now();
@@ -186,25 +193,65 @@ void RobotPoseEstimatorNode::trackedArmorsCallback(
   // 限制 dt 范围
   dt = std::clamp(dt, 0.001, 0.1);
   
-  // 更新估计器
-  estimator_core_->update(*msg, dt);
+  // 获取源坐标系
+  const std::string& source_frame = msg->header.frame_id;
+  bool need_transform = (source_frame != target_frame_);
+  
+  // 转换装甲板位置到目标坐标系
+  rm_interfaces::msg::Armors transformed_msg;
+  transformed_msg.header.stamp = msg->header.stamp;
+  transformed_msg.header.frame_id = target_frame_;  // 使用目标坐标系
+  
+  for (const auto& armor : msg->armors) {
+    rm_interfaces::msg::Armor transformed_armor = armor;
+    
+    if (need_transform) {
+      try {
+        // 创建源坐标系中的位姿
+        geometry_msgs::msg::PoseStamped source_pose;
+        source_pose.header = msg->header;
+        source_pose.pose = armor.pose;
+        
+        // 转换到目标坐标系
+        geometry_msgs::msg::PoseStamped target_pose;
+        tf_buffer_->transform(source_pose, target_pose, target_frame_);
+        
+        // 使用转换后的位姿
+        transformed_armor.pose = target_pose.pose;
+        
+      } catch (tf2::TransformException &ex) {
+        FYT_WARN("robot_pose_estimator", "TF transform failed: {}", ex.what());
+        continue;  // 跳过这个装甲板
+      }
+    }
+    
+    transformed_msg.armors.push_back(transformed_armor);
+  }
+  
+  // 使用转换后的消息更新估计器
+  estimator_core_->update(transformed_msg, dt);
   
   // 获取机器人状态
   auto robots = estimator_core_->getTrackingRobots();
   
+  // 使用目标坐标系的 header 发布
+  std_msgs::msg::Header output_header;
+  output_header.stamp = msg->header.stamp;
+  output_header.frame_id = target_frame_;
+  
   // 发布机器人状态
-  publishRobots(robots, msg->header);
+  publishRobots(robots, output_header);
   
   // 发布虚拟装甲板
   if (estimator_core_->getConfig().virtual_armor_generation) {
     auto virtual_armors = estimator_core_->generateVirtualArmors();
-    publishVirtualArmors(virtual_armors, msg->header);
+    publishVirtualArmors(virtual_armors, output_header);
   }
   
   // 发布 Target 消息（选择最佳机器人）
   const RobotState* best_robot = selectBestRobot(robots);
   if (best_robot != nullptr) {
-    publishTarget(*best_robot, msg->header);
+    publishTarget(*best_robot, output_header);
   }
   
   // 发布可视化标记
@@ -277,9 +324,7 @@ rm_interfaces::msg::TrackedRobot RobotPoseEstimatorNode::robotStateToMsg(
   msg.confidence = state.confidence;
   
   // 绑定的装甲板ID
-  for (const auto& armor_state : state.armor_states) {
-    msg.bound_armor_ids.push_back(armor_state.armor_id);
-  }
+  msg.bound_armor_ids = state.bound_armor_ids;
   
   return msg;
 }
@@ -364,7 +409,7 @@ void RobotPoseEstimatorNode::publishMarkers(const std::vector<RobotState>& robot
   for (const auto& robot : robots) {
     // 机器人中心球体
     visualization_msgs::msg::Marker center_marker;
-    center_marker.header.frame_id = "odom";
+    center_marker.header.frame_id = target_frame_;
     center_marker.header.stamp = this->now();
     center_marker.ns = "robot_centers";
     center_marker.id = id++;
@@ -391,7 +436,7 @@ void RobotPoseEstimatorNode::publishMarkers(const std::vector<RobotState>& robot
     
     // 机器人ID文本
     visualization_msgs::msg::Marker text_marker;
-    text_marker.header.frame_id = "odom";
+    text_marker.header.frame_id = target_frame_;
     text_marker.header.stamp = this->now();
     text_marker.ns = "robot_ids";
     text_marker.id = id++;
@@ -414,6 +459,78 @@ void RobotPoseEstimatorNode::publishMarkers(const std::vector<RobotState>& robot
     text_marker.lifetime = rclcpp::Duration::from_seconds(0.1);
     
     marker_array.markers.push_back(text_marker);
+    
+    // 绘制装甲板 CUBE (类似 armor_solver 的可视化方式)
+    if (robot.is_tracking) {
+      double yaw = robot.yaw;
+      double r1 = robot.radius_1;
+      double r2 = robot.radius_2;
+      double xc = robot.center_position.x();
+      double yc = robot.center_position.y();
+      double zc = robot.center_position.z();
+      double d_za = robot.d_za;
+      double d_zc = robot.d_zc;
+      int a_n = robot.num_armors;
+      
+      // 判断装甲板尺寸
+      bool is_large = (robot.robot_type == RobotType::BALANCE_2 ||
+                       robot.robot_type == RobotType::HERO_4 ||
+                       robot.robot_type == RobotType::OUTPOST_3 ||
+                       robot.robot_type == RobotType::BASE);
+      double armor_width = is_large ? 0.23 : 0.135;
+      
+      bool is_current_pair = true;
+      for (int i = 0; i < a_n; ++i) {
+        double tmp_yaw = yaw + i * (2.0 * M_PI / a_n);
+        double r = 0.0;
+        double p_z = 0.0;
+        
+        // 只有4装甲板有两个半径和高度
+        if (a_n == 4) {
+          r = is_current_pair ? r1 : r2;
+          p_z = zc + d_zc + (is_current_pair ? 0.0 : d_za);
+          is_current_pair = !is_current_pair;
+        } else {
+          r = r1;
+          p_z = zc + d_zc;
+        }
+        
+        double p_x = xc - r * std::cos(tmp_yaw);
+        double p_y = yc - r * std::sin(tmp_yaw);
+        
+        visualization_msgs::msg::Marker armor_marker;
+        armor_marker.header.frame_id = target_frame_;
+        armor_marker.header.stamp = this->now();
+        armor_marker.ns = "predicted_armors";
+        armor_marker.id = id++;
+        armor_marker.type = visualization_msgs::msg::Marker::CUBE;
+        armor_marker.action = visualization_msgs::msg::Marker::ADD;
+        
+        armor_marker.pose.position.x = p_x;
+        armor_marker.pose.position.y = p_y;
+        armor_marker.pose.position.z = p_z;
+        
+        // 设置朝向（装甲板朝外）
+        tf2::Quaternion q;
+        q.setRPY(0, robot.robot_id == "outpost" ? -0.2618 : 0.2618, tmp_yaw);
+        armor_marker.pose.orientation = tf2::toMsg(q);
+        
+        // 装甲板尺寸
+        armor_marker.scale.x = 0.03;          // 厚度
+        armor_marker.scale.y = armor_width;    // 宽度
+        armor_marker.scale.z = 0.125;          // 高度
+        
+        // 蓝色表示预测装甲板
+        armor_marker.color.r = 0.0;
+        armor_marker.color.g = 0.5;
+        armor_marker.color.b = 1.0;
+        armor_marker.color.a = 0.8;
+        
+        armor_marker.lifetime = rclcpp::Duration::from_seconds(0.1);
+        
+        marker_array.markers.push_back(armor_marker);
+      }
+    }
   }
   
   marker_pub_->publish(marker_array);
