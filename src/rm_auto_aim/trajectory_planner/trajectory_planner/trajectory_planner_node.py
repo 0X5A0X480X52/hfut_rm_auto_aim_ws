@@ -693,7 +693,7 @@ class TrajectoryPlannerNode(Node):
         msg.yaw = self._current_gimbal_state[0]
         msg.yaw_diff = 0.0
         msg.pitch_diff = 0.0
-        msg.distance = 0.0
+        msg.distance = -1.0 # 无效距离
         msg.fire_advice = False
         
         self.gimbal_cmd_pub.publish(msg)

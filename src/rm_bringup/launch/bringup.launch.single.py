@@ -49,7 +49,7 @@ def generate_launch_description():
     # 图像
     if launch_params['video_play']: 
         image_node  = Node(
-            package='mindvision_camera',
+            package='video_player',
             executable='video_player_node',
             name='video_player',
             parameters=[get_params('video_player')],

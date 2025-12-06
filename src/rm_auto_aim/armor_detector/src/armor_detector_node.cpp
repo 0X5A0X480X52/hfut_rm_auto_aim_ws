@@ -32,6 +32,7 @@
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/convert.h>
+#include <tf2/exceptions.h>
 #include <tf2/time.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/create_timer_ros.h>
@@ -152,11 +153,12 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
 void ArmorDetectorNode::imageCallback(
     const sensor_msgs::msg::Image::ConstSharedPtr img_msg) {
   // Get the transform from odom to gimbal
+  FYT_DEBUG("armor_detector", "Image frame_id: {}, odom_frame: {}", img_msg->header.frame_id, odom_frame_);
   try {
-    rclcpp::Time target_time = img_msg->header.stamp;
+    // Use tf2::TimePointZero to get the latest available transform
+    // This avoids extrapolation errors when timestamps are not perfectly synchronized
     auto odom_to_gimbal = tf2_buffer_->lookupTransform(
-        odom_frame_, img_msg->header.frame_id, target_time,
-        rclcpp::Duration::from_seconds(0.01));
+        odom_frame_, img_msg->header.frame_id, tf2::TimePointZero);
     auto msg_q = odom_to_gimbal.transform.rotation;
     tf2::Quaternion tf_q;
     tf2::fromMsg(msg_q, tf_q);
@@ -166,8 +168,8 @@ void ArmorDetectorNode::imageCallback(
         tf2_matrix.getRow(1)[1], tf2_matrix.getRow(1)[2],
         tf2_matrix.getRow(2)[0], tf2_matrix.getRow(2)[1],
         tf2_matrix.getRow(2)[2];
-  } catch (...) {
-    FYT_ERROR("armor_detector", "Something Wrong when lookUpTransform");
+  } catch (tf2::TransformException &ex) {
+    FYT_ERROR("armor_detector", "Transform error: {}", ex.what());
     return;
   }
   // try {

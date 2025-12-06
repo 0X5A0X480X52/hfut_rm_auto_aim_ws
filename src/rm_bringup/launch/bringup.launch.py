@@ -45,9 +45,8 @@ def generate_launch_description():
     # 图像
     if launch_params['video_play']: 
         image_node  = ComposableNode(
-            package='mindvision_camera',
-            # executable='video_player_node',
-            plugin='fyt::camera_driver::VideoPlayerNode',
+            package='video_player',
+            plugin='video_player::VideoPlayerNode',
             name='video_player',
             parameters=[get_params('video_player')],
             extra_arguments=[{'use_intra_process_comms': True}]

@@ -59,7 +59,7 @@ public:
      * @brief 预测下一时刻的状态。
      * @return 预测的状态矩阵。
      */
-  Eigen::MatrixXd getCurrentPridection() const { return H.transpose() * X_prior; }
+  Eigen::MatrixXd getCurrentPridection() const { return H * X_prior; }
 
   /**
      * @brief 预测下一时刻的状态。
