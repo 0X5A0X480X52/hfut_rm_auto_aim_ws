@@ -12,7 +12,7 @@
     ros2 launch rm_bringup bringup_decoupled.launch.py
 
 带参数启动:
-    ros2 launch rm_bringup bringup_decoupled.launch.py video_play:=true virtual_serial:=true debug:=true
+    ros2 launch rm_bringup bringup_decoupled.launch.py image_source:=video virtual_serial:=true debug:=true
 """
 
 import os
@@ -38,10 +38,10 @@ def generate_launch_description():
         get_package_share_directory('rm_bringup'), 'config', 'launch_params.yaml')))
 
     # 声明启动参数
-    declare_video_play = DeclareLaunchArgument(
-        'video_play',
-        default_value=str(launch_params.get('video_play', True)).lower(),
-        description='Use video player instead of camera'
+    declare_image_source = DeclareLaunchArgument(
+        'image_source',
+        default_value=str(launch_params.get('image_source', 'video')),
+        description='Image source: video | mindvision | hik'
     )
 
     declare_virtual_serial = DeclareLaunchArgument(
@@ -84,8 +84,9 @@ def generate_launch_description():
 
     # ==================== 图像节点 ====================
     def create_image_node(context):
-        video_play = LaunchConfiguration('video_play').perform(context).lower() == 'true'
-        if video_play:
+        image_source = LaunchConfiguration('image_source').perform(context)
+        image_source = image_source.lower() if image_source else 'video'
+        if image_source == 'video':
             return ComposableNode(
                 package='video_player',
                 plugin='video_player::VideoPlayerNode',
@@ -93,7 +94,24 @@ def generate_launch_description():
                 parameters=[get_bringup_params('video_player')],
                 extra_arguments=[{'use_intra_process_comms': True}]
             )
+        elif image_source == 'mindvision':
+            return ComposableNode(
+                package='mindvision_camera',
+                plugin='mindvision_camera::MVCameraNode',
+                name='camera_driver',
+                parameters=[get_bringup_params('camera_driver')],
+                extra_arguments=[{'use_intra_process_comms': True}]
+            )
+        elif image_source == 'hik':
+            return ComposableNode(
+                package='ros2_hik_camera',
+                plugin='ros2_hik_camera::HikCameraNode',
+                name='hik_camera',
+                parameters=[get_bringup_params('camera_driver')],
+                extra_arguments=[{'use_intra_process_comms': True}]
+            )
         else:
+            # default to mindvision
             return ComposableNode(
                 package='mindvision_camera',
                 plugin='mindvision_camera::MVCameraNode',
@@ -201,14 +219,31 @@ def generate_launch_description():
 
     # ==================== 使用组件容器提高图像传输效率 ====================
     def create_camera_detector_container(context):
-        video_play = LaunchConfiguration('video_play').perform(context).lower() == 'true'
+        image_source = LaunchConfiguration('image_source').perform(context)
+        image_source = image_source.lower() if image_source else 'video'
         
-        if video_play:
+        if image_source == 'video':
             image_node = ComposableNode(
                 package='video_player',
                 plugin='video_player::VideoPlayerNode',
                 name='video_player',
                 parameters=[get_bringup_params('video_player')],
+                extra_arguments=[{'use_intra_process_comms': True}]
+            )
+        elif image_source == 'mindvision':
+            image_node = ComposableNode(
+                package='mindvision_camera',
+                plugin='mindvision_camera::MVCameraNode',
+                name='camera_driver',
+                parameters=[get_bringup_params('camera_driver')],
+                extra_arguments=[{'use_intra_process_comms': True}]
+            )
+        elif image_source == 'hik':
+            image_node = ComposableNode(
+                package='ros2_hik_camera',
+                plugin='ros2_hik_camera::HikCameraNode',
+                name='hik_camera',
+                parameters=[get_bringup_params('camera_driver')],
                 extra_arguments=[{'use_intra_process_comms': True}]
             )
         else:
@@ -304,7 +339,7 @@ def generate_launch_description():
     # ==================== 构建启动描述 ====================
     return LaunchDescription([
         # 声明参数
-        declare_video_play,
+        declare_image_source,
         declare_virtual_serial,
         declare_debug,
         declare_namespace,

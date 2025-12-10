@@ -11,6 +11,8 @@ def generate_launch_description():
 
     from launch_ros.descriptions import ComposableNode
     from launch_ros.actions import ComposableNodeContainer, Node, SetParameter, PushRosNamespace
+    from launch.actions import DeclareLaunchArgument
+    from launch.substitutions import LaunchConfiguration
     from launch.actions import TimerAction, Shutdown
     from launch import LaunchDescription
 
@@ -42,8 +44,12 @@ def generate_launch_description():
     def get_params(name):
         return os.path.join(get_package_share_directory('rm_bringup'), 'config', 'node_params', '{}_params.yaml'.format(name))
 
-    # 图像
-    if launch_params['video_play']: 
+    # 图像： image_source 可选值: 'video' | 'mindvision' | 'hik'
+    declare_image_source = DeclareLaunchArgument(
+        'image_source', default_value=str(launch_params.get('image_source', 'video')),
+        description='Image source: video | mindvision | hik')
+    image_source = launch_params.get('image_source', 'video')
+    if image_source == 'video': 
         image_node  = ComposableNode(
             package='video_player',
             plugin='video_player::VideoPlayerNode',
@@ -51,10 +57,27 @@ def generate_launch_description():
             parameters=[get_params('video_player')],
             extra_arguments=[{'use_intra_process_comms': True}]
         )
-    else:
+    elif image_source == 'mindvision':
          image_node  = ComposableNode(
             package='mindvision_camera',
             # executable='mindvision_camera_node',
+            plugin='mindvision_camera::MVCameraNode',            
+            name='camera_driver',
+            parameters=[get_params('camera_driver')],
+            extra_arguments=[{'use_intra_process_comms': True}]
+        )
+    elif image_source == 'hik':
+         image_node  = ComposableNode(
+            package='ros2_hik_camera',
+            plugin='ros2_hik_camera::HikCameraNode',            
+            name='hik_camera',
+            parameters=[get_params('camera_driver')],
+            extra_arguments=[{'use_intra_process_comms': True}]
+        )
+    else:
+         # default
+         image_node  = ComposableNode(
+            package='mindvision_camera',
             plugin='mindvision_camera::MVCameraNode',            
             name='camera_driver',
             parameters=[get_params('camera_driver')],
@@ -158,6 +181,7 @@ def generate_launch_description():
     push_namespace = PushRosNamespace(launch_params['namespace'])
     
     launch_description_list = [
+        declare_image_source,
         robot_gimbal_publisher,
         push_namespace,
         delay_serial_node,

@@ -47,12 +47,29 @@ def generate_launch_description():
         return os.path.join(get_package_share_directory('rm_bringup'), 'config', 'node_params', '{}_params.yaml'.format(name))
 
     # 图像
-    if launch_params['video_play']: 
+    image_source = launch_params.get('image_source', 'video')
+    if image_source == 'video': 
         image_node  = Node(
             package='video_player',
             executable='video_player_node',
             name='video_player',
             parameters=[get_params('video_player')],
+            output='both',
+        )
+    elif image_source == 'mindvision':
+         image_node  = Node(
+            package='mindvision_camera',
+            executable='mindvision_camera_node',
+            name='camera_driver',
+            parameters=[get_params('camera_driver')],
+            output='both',
+        )
+    elif image_source == 'hik':
+         image_node  = Node(
+            package='ros2_hik_camera',
+            executable='ros2_hik_camera_node',
+            name='hik_camera',
+            parameters=[get_params('camera_driver')],
             output='both',
         )
     else:
@@ -137,7 +154,15 @@ def generate_launch_description():
     )
 
     # 将所有节点按顺序添加到 launch_description_list
+    from launch.actions import DeclareLaunchArgument
+    from launch.substitutions import LaunchConfiguration
+
+    declare_image_source = DeclareLaunchArgument(
+        'image_source', default_value=str(launch_params.get('image_source', 'video')),
+        description='Image source: video | mindvision | hik')
+
     launch_description_list = [
+        declare_image_source,
         robot_gimbal_publisher,
         push_namespace := PushRosNamespace(launch_params['namespace']),
         delay_serial_node,

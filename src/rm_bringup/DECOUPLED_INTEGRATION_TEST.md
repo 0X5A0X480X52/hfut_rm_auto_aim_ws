@@ -71,7 +71,8 @@ source install/setup.bash
 ros2 launch rm_bringup bringup_decoupled.launch.py
 
 # 使用视频播放和虚拟串口
-ros2 launch rm_bringup bringup_decoupled.launch.py video_play:=true virtual_serial:=true
+# 使用 image_source 参数指定 image_source:=video | mindvision | hik
+ros2 launch rm_bringup bringup_decoupled.launch.py image_source:=video virtual_serial:=true
 
 # 开启调试模式
 ros2 launch rm_bringup bringup_decoupled.launch.py debug:=true
