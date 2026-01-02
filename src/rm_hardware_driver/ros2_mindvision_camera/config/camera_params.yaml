@@ -10,5 +10,5 @@
     exposure_time: 3500
     gain: 6.0
     flip_image: true
-  # Frame id for published Image and CameraInfo
-  frame_id: camera_optical_frame
+    # Frame id for published Image and CameraInfo
+    frame_id: camera_optical_frame
