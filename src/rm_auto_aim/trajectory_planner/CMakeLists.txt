@@ -27,6 +27,7 @@ install(DIRECTORY
 # Install Python executables
 install(PROGRAMS
   scripts/trajectory_planner_node.py
+  scripts/test_trajectory_planner_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

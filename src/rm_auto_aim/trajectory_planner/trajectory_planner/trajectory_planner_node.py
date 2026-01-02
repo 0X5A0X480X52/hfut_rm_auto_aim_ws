@@ -52,6 +52,7 @@ from trajectory_planner.mpc_controller import MPCController, MPCConfig
 from trajectory_planner.target_predictor import TargetPredictor, TargetPredictorConfig
 from trajectory_planner.target_manager import TargetManager, TargetManagerConfig
 from trajectory_planner.ballistic_client import BallisticClient, BallisticClientConfig
+from trajectory_planner.audit_logger import MPCAuditLogger
 
 
 @dataclass
@@ -98,6 +99,11 @@ class PlannerConfig:
     
     # 子弹速度
     bullet_speed: float = 28.0
+    
+    # 审计模式
+    audit_mode: bool = False              # 启用MPC审计日志
+    audit_log_path: str = "/tmp/mpc_audit.csv"  # 审计日志文件路径
+    audit_buffer_size: int = 100
 
 
 class TrajectoryPlannerNode(Node):
@@ -123,10 +129,6 @@ class TrajectoryPlannerNode(Node):
     def __init__(self):
         super().__init__('trajectory_planner')
         
-        # 设置日志级别为 INFO（生产环境）或 DEBUG（调试时）
-        # DEBUG 模式会显著降低性能
-        self.get_logger().set_level(rclpy.logging.LoggingSeverity.INFO)
-        
         self.get_logger().info("Initializing Trajectory Planner Node...")
         
         # 声明参数
@@ -141,18 +143,39 @@ class TrajectoryPlannerNode(Node):
         manager_config = self._build_manager_config()
         ballistic_config = self._build_ballistic_config()
         
+        # 根据debug参数设置日志级别
+        if self.planner_config.debug:
+            self.get_logger().set_level(rclpy.logging.LoggingSeverity.DEBUG)
+            self.get_logger().info("Logger level set to DEBUG mode")
+        else:
+            self.get_logger().set_level(rclpy.logging.LoggingSeverity.INFO)
+            self.get_logger().info("Logger level set to INFO mode")
+        
         # 创建核心模块
         self.gimbal_model = GimbalModel(gimbal_config)
         self.mpc_controller = MPCController(self.gimbal_model, mpc_config)
-        self.target_predictor = TargetPredictor(predictor_config)
+        self.target_predictor = TargetPredictor(predictor_config, logger=self.get_logger())
         self.target_manager = TargetManager(manager_config)
-        
+
         # 回调组 - 全部使用 ReentrantCallbackGroup 避免阻塞
         # MutuallyExclusiveCallbackGroup 会导致回调互相阻塞，降低帧率
         self.service_callback_group = ReentrantCallbackGroup()
         self.action_callback_group = ReentrantCallbackGroup()
         self.timer_callback_group = ReentrantCallbackGroup()  # 定时器也用可重入组
         self.subscription_callback_group = ReentrantCallbackGroup()  # 订阅使用可重入组
+        
+        # 创建审计日志记录器（如果启用）
+        self.audit_logger: Optional[MPCAuditLogger] = None
+        if self.planner_config.audit_mode:
+            self.audit_logger = MPCAuditLogger(
+                log_path=self.planner_config.audit_log_path,
+                buffer_size=self.planner_config.audit_buffer_size,
+                horizon=mpc_config.prediction_horizon
+            )
+            # 定期flush以保证测试过程中也能尽快写盘，避免进程异常退出导致丢失缓冲数据
+            self._audit_flush_timer = self.create_timer(1.0, self._audit_flush_callback, callback_group=self.timer_callback_group)
+            self.get_logger().info(f"MPC Audit mode enabled: {self.planner_config.audit_log_path} (horizon={mpc_config.prediction_horizon}, buffer={self.planner_config.audit_buffer_size})")
+        
         
         # 创建弹道解算客户端 (需要在订阅之前)
         self.ballistic_client = BallisticClient(self, ballistic_config)
@@ -283,6 +306,9 @@ class TrajectoryPlannerNode(Node):
         self.declare_parameter('target_lost_timeout', 0.5)
         self.declare_parameter('bullet_speed', 28.0)
         self.declare_parameter('debug', False)
+        self.declare_parameter('audit_mode', False)
+        self.declare_parameter('audit_log_path', '/tmp/mpc_audit.csv')
+        self.declare_parameter('audit_buffer_size', 100)
         
         # 云台配置
         self.declare_parameter('gimbal.dt', 0.01)
@@ -302,6 +328,8 @@ class TrajectoryPlannerNode(Node):
         self.declare_parameter('predictor.min_confidence', 0.3)
         self.declare_parameter('predictor.max_distance', 10.0)  # 最大距离10米
         self.declare_parameter('predictor.selection_strategy', 'nearest_yaw')
+        self.declare_parameter('predictor.enable_occlusion_check', True)
+        self.declare_parameter('predictor.max_facing_angle_deviation', 1.57)
         
         # 目标管理器配置
         self.declare_parameter('manager.target_timeout', 2.0)
@@ -331,6 +359,9 @@ class TrajectoryPlannerNode(Node):
             target_lost_timeout=self.get_parameter('target_lost_timeout').value,
             bullet_speed=self.get_parameter('bullet_speed').value,
             debug=self.get_parameter('debug').value,
+            audit_mode=self.get_parameter('audit_mode').value,
+            audit_log_path=self.get_parameter('audit_log_path').value,
+            audit_buffer_size=self.get_parameter('audit_buffer_size').value,
         )
     
     def _build_gimbal_config(self) -> GimbalConfig:
@@ -364,6 +395,8 @@ class TrajectoryPlannerNode(Node):
             dt=self.get_parameter('gimbal.dt').value,
             max_distance=self.get_parameter('predictor.max_distance').value,
             selection_strategy=self.get_parameter('predictor.selection_strategy').value,
+            enable_occlusion_check=self.get_parameter('predictor.enable_occlusion_check').value,
+            max_facing_angle_deviation=self.get_parameter('predictor.max_facing_angle_deviation').value,
         )
     
     def _build_manager_config(self) -> TargetManagerConfig:
@@ -688,12 +721,12 @@ class TrajectoryPlannerNode(Node):
         self.get_logger().debug(f"Control loop: target yaw trajectory length: {len(target_yaw_trajectory)}")
         
         # MPC优化求解
-        u_optimal, U_sequence, solve_time = self.mpc_controller.solve(
+        u_optimal, U_sequence, solve_time, solver_status, predicted_traj = self.mpc_controller.solve(
             self._current_gimbal_state,
             target_yaw_trajectory
         )
         
-        self.get_logger().debug(f"Control loop: MPC solve time: {solve_time:.3f}ms, u_optimal: {u_optimal}")
+        self.get_logger().debug(f"Control loop: MPC solve time: {solve_time:.3f}ms, u_optimal: {u_optimal}, status: {solver_status}")
         
         # 更新云台状态 (仿真/预测)
         next_state = self.gimbal_model.predict(self._current_gimbal_state, u_optimal)
@@ -764,6 +797,90 @@ class TrajectoryPlannerNode(Node):
         
         self.get_logger().debug(f"Control loop: fire advice: {fire_advice}")
         
+        # 记录候选目标信息（并转换到云台坐标系）
+        candidate_list = None
+        if self.audit_logger is not None:
+            # 获取候选列表（原始坐标系/世界坐标系）
+            candidate_list = self.target_predictor.get_candidate_predictions(
+                horizon=self.mpc_controller.config.prediction_horizon,
+                reference_yaw=self._current_gimbal_state[0]
+            )
+
+            # 统一坐标系转换：将所有位置和角度从世界坐标系转换到云台坐标系
+            # 转换方法：绕z轴旋转 -gimbal_yaw（使云台yaw=0对齐到+X轴）
+            # 注意：同一帧内所有数据使用同一个gimbal_yaw，保证一致性
+            gimbal_yaw = float(self._current_gimbal_state[0])
+            cos_yaw = math.cos(gimbal_yaw)
+            sin_yaw = math.sin(gimbal_yaw)
+
+            def _to_gimbal_point(pt):
+                """将世界坐标系的点转换到云台坐标系"""
+                if pt is None:
+                    return [float('nan'), float('nan'), float('nan')]
+                x, y, z = pt
+                # 2D旋转矩阵：[cos, sin; -sin, cos] @ [x; y]
+                xg = cos_yaw * x + sin_yaw * y
+                yg = -sin_yaw * x + cos_yaw * y
+                return [float(xg), float(yg), float(z if z is not None else float('nan'))]
+
+            def _to_gimbal_traj(pos_traj):
+                """将世界坐标系的轨迹转换到云台坐标系"""
+                if pos_traj is None:
+                    return None
+                return [_to_gimbal_point(p) for p in pos_traj]
+
+            def _wrap_angle(a):
+                """将角度归一化到 [-pi, pi]"""
+                while a > math.pi:
+                    a -= 2 * math.pi
+                while a < -math.pi:
+                    a += 2 * math.pi
+                return a
+
+            # 为每个候选目标添加云台坐标系字段
+            for cand in (candidate_list or []):
+                # 转换位置
+                cand['position_gimbal'] = _to_gimbal_point(cand.get('position', [float('nan')] * 3))
+                cand['pos_trajectory_gimbal'] = _to_gimbal_traj(cand.get('pos_trajectory', None))
+                
+                # 转换yaw角：yaw_gimbal = wrap(yaw_world - gimbal_yaw)
+                view_yaw = cand.get('view_yaw', float('nan'))
+                cand['view_yaw_gimbal'] = _wrap_angle(view_yaw - gimbal_yaw) if not np.isnan(view_yaw) else float('nan')
+                
+                yaw_traj = cand.get('yaw_trajectory', None)
+                if yaw_traj is None:
+                    cand['yaw_trajectory_gimbal'] = [float('nan')] * self.mpc_controller.config.prediction_horizon
+                else:
+                    cand['yaw_trajectory_gimbal'] = [_wrap_angle(y - gimbal_yaw) for y in yaw_traj]
+
+            # 为选中目标添加云台坐标系字段（复用相同的转换参数）
+            if target_info is not None:
+                # 转换位置
+                if 'position' in target_info and target_info['position'] is not None:
+                    target_info['position_gimbal'] = _to_gimbal_point(target_info['position'])
+                
+                # 转换yaw角
+                if 'yaw_from_origin' in target_info:
+                    tyaw = float(target_info['yaw_from_origin'])
+                    target_info['yaw_from_origin_gimbal'] = _wrap_angle(tyaw - gimbal_yaw)
+
+        # 记录审计日志（包含转换后的字段）
+        if self.audit_logger is not None:
+            self.audit_logger.log_frame(
+                current_state=self._current_gimbal_state,
+                target_trajectory=target_yaw_trajectory,
+                u_optimal=u_optimal,
+                U_sequence=U_sequence,
+                predicted_trajectory=predicted_traj,
+                solve_time_ms=solve_time,
+                solver_status=solver_status,
+                target_info=target_info,
+                yaw_error=yaw_error,
+                pitch_error=pitch - self._current_pitch,
+                fire_advice=fire_advice,
+                candidates=candidate_list,
+            )
+        
         # 发布控制指令
         self._publish_gimbal_cmd(
             pitch=pitch,
@@ -781,6 +898,11 @@ class TrajectoryPlannerNode(Node):
         if self.planner_config.debug and self.markers_pub:
             self._publish_markers(target_info, target_yaw_trajectory)
     
+    def _audit_flush_callback(self):
+        """定期flush审计缓冲，使文件尽快落盘（避免长时间缓存导致测试期间看不到文件内容）"""
+        if self.audit_logger is not None:
+            self.audit_logger.flush()
+
     def _compute_fire_advice(self, 
                              yaw_error: float,
                              pitch_error: float,
@@ -1115,6 +1237,9 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        # 关闭审计日志
+        if hasattr(node, 'audit_logger') and node.audit_logger is not None:
+            node.audit_logger.close()
         node.destroy_node()
         rclpy.shutdown()
 

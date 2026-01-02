@@ -63,6 +63,14 @@ class TargetPredictorConfig:
     
     # 最大有效距离 (米)
     max_distance: float = 10.0
+    
+    # 启用遮挡检查（基于装甲板朝向）
+    enable_occlusion_check: bool = True
+    
+    # 装甲板朝向最大偏差角（弧度）
+    # 装甲板法向与云台视线方向的夹角必须接近±π（即装甲板正面朝向云台）
+    # 默认π/2表示允许±90度范围内的装甲板
+    max_facing_angle_deviation: float = 1.57  # π/2
 
 
 class TargetPredictor:
@@ -76,14 +84,16 @@ class TargetPredictor:
     4. 提取目标的预测轨迹供MPC使用
     """
     
-    def __init__(self, config: Optional[TargetPredictorConfig] = None):
+    def __init__(self, config: Optional[TargetPredictorConfig] = None, logger=None):
         """
         初始化目标预测器
         
         Args:
             config: 预测器配置
+            logger: 可选的日志记录器（用于调试输出）
         """
         self.config = config if config else TargetPredictorConfig()
+        self.logger = logger
         
         # 存储最新的预测数据
         self._predictions: Dict[int, ArmorPrediction] = {}
@@ -221,6 +231,29 @@ class TargetPredictor:
             if distance > self.config.max_distance:
                 continue
             
+            # 遮挡检查：基于装甲板朝向判断可见性
+            if self.config.enable_occlusion_check and prediction.yaws:
+                # armor_yaw: 装甲板的朝向角（法向方向）
+                armor_yaw = prediction.yaws[0]
+                # view_direction_yaw: 从云台到装甲板的方向角
+                view_direction_yaw = prediction.yaw_angles_from_origin[0]
+                
+                # 装甲板朝向云台的条件：装甲板法向应与视线方向相反
+                # 即 armor_yaw 与 view_direction_yaw 的差值应接近 ±π
+                facing_angle_diff = abs(abs(self._wrap_angle(armor_yaw - view_direction_yaw)) - math.pi)
+                
+                if facing_angle_diff > self.config.max_facing_angle_deviation:
+                    # 装甲板背向云台或被遮挡，跳过
+                    if self.logger:
+                        self.logger.debug(
+                            f"Armor track_id={track_id} filtered by occlusion: "
+                            f"armor_yaw={armor_yaw:.3f}rad ({math.degrees(armor_yaw):.1f}deg), "
+                            f"view_yaw={view_direction_yaw:.3f}rad ({math.degrees(view_direction_yaw):.1f}deg), "
+                            f"facing_diff={facing_angle_diff:.3f}rad ({math.degrees(facing_angle_diff):.1f}deg) "
+                            f"> max={self.config.max_facing_angle_deviation:.3f}rad"
+                        )
+                    continue
+            
             # 根据策略计算评分
             if self.config.selection_strategy == "nearest_yaw":
                 # 选择与当前云台yaw最接近的装甲板
@@ -305,6 +338,104 @@ class TargetPredictor:
             3D位置 [x, y, z]，无有效数据返回None
         """
         tid = track_id if track_id is not None else self._selected_armor_track_id
+        
+        if tid is None or tid not in self._predictions:
+            return None
+        prediction = self._predictions[tid]
+        if not prediction.positions:
+            return None
+        if step < len(prediction.positions):
+            return prediction.positions[step]
+        else:
+            # 如果没有未来步的位置信息，则返回最后一个已知位置
+            return prediction.positions[-1]
+
+    def get_candidate_predictions(self, horizon: Optional[int] = None,
+                                  candidate_track_ids: Optional[list] = None,
+                                  reference_yaw: float = 0.0) -> list:
+        """
+        返回候选目标及其预测信息列表，用于审计记录
+
+        Args:
+            horizon: 期望的预测步数（N），None则使用配置默认
+            candidate_track_ids: 指定候选track id列表，None则使用所有当前预测中的track
+            reference_yaw: 参考yaw角（当前云台yaw），用于计算遮挡过滤信息
+
+        Returns:
+            List[dict] 每个dict包含: track_id, armor_id, armor_type, position (step0), distance, confidence, 
+                      yaw_trajectory (N,), pos_trajectory (N,3)或None, armor_yaw, view_yaw, facing_diff,
+                      is_occluded, filter_reason
+        """
+        N = horizon if horizon is not None else self.config.prediction_steps
+        candidates = candidate_track_ids if candidate_track_ids is not None else list(self._predictions.keys())
+        results = []
+        for idx, tid in enumerate(candidates):
+            if tid not in self._predictions:
+                continue
+            pred = self._predictions[tid]
+            
+            # 基本信息
+            position0 = pred.positions[0] if pred.positions else np.array([np.nan, np.nan, np.nan])
+            distance = np.linalg.norm(position0) if position0 is not None and not np.any(np.isnan(position0)) else float('nan')
+            confidence = pred.confidences[0] if pred.confidences else 0.0
+            
+            # yaw轨迹
+            yaw_traj = self.get_target_yaw_trajectory(tid, horizon=N)
+            
+            # position trajectory（如果可用）
+            pos_traj = None
+            if pred.positions and len(pred.positions) >= N:
+                pos_array = np.stack(pred.positions[:N], axis=0)
+                pos_traj = pos_array
+            elif pred.positions:
+                # 填充到N长度，重复最后一个已知位置
+                arr = [p for p in pred.positions]
+                while len(arr) < N:
+                    arr.append(arr[-1] if arr else np.array([np.nan, np.nan, np.nan]))
+                pos_traj = np.stack(arr[:N], axis=0)
+            
+            # 遮挡检查信息
+            armor_yaw = float('nan')
+            view_yaw = float('nan')
+            facing_diff = float('nan')
+            is_occluded = False
+            filter_reason = ""
+            
+            # 检查各种过滤条件
+            if not pred.confidences or pred.confidences[0] < self.config.min_confidence:
+                filter_reason = f"low_confidence({confidence:.2f}<{self.config.min_confidence})"
+            elif not pred.positions or pred.yaw_angles_from_origin is None:
+                filter_reason = "no_data"
+            elif distance > self.config.max_distance:
+                filter_reason = f"too_far({distance:.2f}m>{self.config.max_distance}m)"
+            elif self.config.enable_occlusion_check and pred.yaws and pred.yaw_angles_from_origin is not None:
+                armor_yaw = pred.yaws[0]
+                view_yaw = pred.yaw_angles_from_origin[0]
+                facing_diff = abs(abs(self._wrap_angle(armor_yaw - view_yaw)) - math.pi)
+                if facing_diff > self.config.max_facing_angle_deviation:
+                    is_occluded = True
+                    filter_reason = f"occluded(facing_diff={math.degrees(facing_diff):.1f}°>{math.degrees(self.config.max_facing_angle_deviation):.1f}°)"
+            
+            # 如果没有过滤原因，说明是有效候选
+            if not filter_reason:
+                filter_reason = "valid"
+            
+            results.append({
+                'track_id': int(tid),
+                'armor_id': pred.armor_id if hasattr(pred, 'armor_id') else 'unknown',
+                'armor_type': pred.armor_type if hasattr(pred, 'armor_type') else 'unknown',
+                'position': position0.tolist() if position0 is not None else [np.nan, np.nan, np.nan],
+                'distance': float(distance),
+                'confidence': float(confidence),
+                'yaw_trajectory': yaw_traj.tolist() if yaw_traj is not None else [float('nan')] * N,
+                'pos_trajectory': pos_traj.tolist() if pos_traj is not None else None,
+                'armor_yaw': float(armor_yaw),
+                'view_yaw': float(view_yaw),
+                'facing_diff': float(facing_diff),
+                'is_occluded': bool(is_occluded),
+                'filter_reason': filter_reason,
+            })
+        return results
         
         if tid is None or tid not in self._predictions:
             return None

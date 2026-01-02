@@ -36,6 +36,11 @@ trajectory_planner:
 
     # 调试模式
     debug: true
+    
+    # 审计模式 - MPC输入输出日志记录
+    audit_mode: true
+    audit_log_path: "/tmp/mpc_audit.csv"
+    audit_buffer_size: 10  # 写文件前的缓冲帧数（测试时可设小一些以确保及时落盘）
 
     # ==================== 云台配置 ====================
     gimbal:
@@ -52,7 +57,7 @@ trajectory_planner:
     # ==================== MPC配置 ====================
     mpc:
       # 预测时域步数
-      prediction_horizon: 18
+      prediction_horizon: 10
       
       # 跟踪误差权重
       q_theta: 100.0     # 角度误差权重
@@ -60,10 +65,10 @@ trajectory_planner:
       q_alpha: 1.0       # 角加速度误差权重
       
       # 控制输入权重
-      r_control: 0.01
+      r_control: 1.0
       
       # 控制变化率权重 (平滑性)
-      s_smooth: 1.0
+      s_smooth: 0.05
 
     # ==================== 目标预测器配置 ====================
     predictor:
@@ -75,6 +80,14 @@ trajectory_planner:
       
       # 装甲板选择策略: nearest_yaw, nearest_distance, highest_confidence
       selection_strategy: "nearest_yaw"
+      
+      # 启用遮挡检查（基于装甲板朝向）
+      enable_occlusion_check: true
+      
+      # 装甲板朝向最大偏差角（弧度）
+      # 装甲板法向与云台视线方向必须接近相反（±π），表示装甲板正面朝向云台
+      # 1.57 (π/2) 表示允许±90度范围内的装甲板可见
+      max_facing_angle_deviation: 1.05
 
     # ==================== 目标管理器配置 ====================
     manager:

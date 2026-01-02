@@ -189,7 +189,7 @@ class MPCController:
     
     def solve(self, 
               current_state: np.ndarray,
-              target_trajectory: np.ndarray) -> Tuple[float, np.ndarray, float]:
+              target_trajectory: np.ndarray) -> Tuple[float, np.ndarray, float, str, np.ndarray]:
         """
         求解MPC优化问题
         
@@ -201,6 +201,8 @@ class MPCController:
             u_optimal: 最优控制输入 (第一个时间步)
             U_sequence: 完整控制序列 (N,)
             solve_time: 求解时间 (毫秒)
+            solver_status: 求解状态 ('solved', 'solved_inaccurate', 'failed')
+            predicted_trajectory: 预测状态轨迹 (N+1, 3)
         """
         start_time = time.perf_counter()
         
@@ -220,14 +222,18 @@ class MPCController:
         f = 2 * self.B_pred.T @ self.Q @ (A_pred_x0 - X_target_flat)
         
         # 尝试使用 OSQP（更快）
+        solver_status = 'failed'
         if self._use_osqp:
             result = self._solve_osqp(H, f, current_state, A_pred_x0)
             if result is not None:
-                u, U_optimal = result
+                u, U_optimal, osqp_status = result
                 solve_time = (time.perf_counter() - start_time) * 1000  # 转换为毫秒
                 self.last_solve_time = solve_time
                 self.last_success = True
-                return u, U_optimal, solve_time
+                solver_status = osqp_status
+                # 计算预测轨迹
+                predicted_traj = self.predict_trajectory(current_state, U_optimal)
+                return u, U_optimal, solve_time, solver_status, predicted_traj
         
         # OSQP 失败或不可用，使用 scipy 后备方案
         result = self._solve_scipy(H, f, current_state, A_pred_x0)
@@ -237,13 +243,37 @@ class MPCController:
         if result is not None:
             u, U_optimal = result
             self.last_success = True
-            return u, U_optimal, solve_time
+            solver_status = 'solved_scipy'
+            predicted_traj = self.predict_trajectory(current_state, U_optimal)
+            return u, U_optimal, solve_time, solver_status, predicted_traj
         else:
             self.last_success = False
-            return 0.0, np.zeros(N), solve_time
+            solver_status = 'failed'
+            predicted_traj = np.tile(current_state, (N+1, 1))  # 失败时返回静止轨迹
+            return 0.0, np.zeros(N), solve_time, solver_status, predicted_traj
+
+    def predict_trajectory(self, current_state: np.ndarray, U_sequence: np.ndarray) -> np.ndarray:
+        """基于当前状态和控制序列预测状态轨迹（N+1, state_dim）
+
+        Returns:
+            predicted_traj: numpy array of shape (N+1, n_state)
+        """
+        N = self.config.prediction_horizon
+        n_state = GimbalModel.STATE_DIM
+        # A_pred @ current_state gives stacked states for steps 1..N
+        A_pred_x0 = self.A_pred @ current_state
+        X_pred_flat = A_pred_x0 + self.B_pred @ U_sequence
+        try:
+            X_pred = X_pred_flat.reshape(N, n_state)
+        except Exception:
+            # 出错时返回静止轨迹
+            return np.tile(current_state, (N+1, 1))
+        # 包含初始状态
+        predicted_traj = np.vstack([current_state.reshape(1, n_state), X_pred])
+        return predicted_traj
     
     def _solve_osqp(self, H: np.ndarray, f: np.ndarray, 
-                    current_state: np.ndarray, A_pred_x0: np.ndarray) -> Optional[Tuple[float, np.ndarray]]:
+                    current_state: np.ndarray, A_pred_x0: np.ndarray) -> Optional[Tuple[float, np.ndarray, str]]:
         """
         使用 OSQP 求解 QP 问题
         
@@ -254,7 +284,7 @@ class MPCController:
             A_pred_x0: 预测矩阵与初始状态的乘积
         
         Returns:
-            (u_optimal, U_sequence) 或 None（如果求解失败）
+            (u_optimal, U_sequence, solver_status) 或 None（如果求解失败）
         """
         N = self.config.prediction_horizon
         n_state = GimbalModel.STATE_DIM
@@ -329,7 +359,7 @@ class MPCController:
                 u = self.gimbal_model.clip_control(U_optimal[0])
                 self.u_prev = u
                 self._U_prev = U_optimal
-                return u, U_optimal
+                return u, U_optimal, result.info.status
             else:
                 # 求解失败，重置求解器
                 self._osqp_solver = None

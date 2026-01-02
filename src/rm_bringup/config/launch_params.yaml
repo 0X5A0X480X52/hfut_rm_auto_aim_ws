@@ -12,7 +12,7 @@ odom2camera:
 namespace: ''
 # image_source: (video | mindvision | hik)
 # video: 读取本地视频, mindvision: 使用MindVision相机驱动, hik: 使用海康HIK相机驱动
-image_source: "hik"
+image_source: "video"
 # true: 虚拟下位机 false: 实车 
 virtual_serial: true
 # true: 英雄解算 false: 传统解算
