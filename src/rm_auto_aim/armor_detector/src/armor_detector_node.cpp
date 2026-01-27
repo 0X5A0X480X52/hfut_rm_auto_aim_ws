@@ -314,7 +314,11 @@ std::unique_ptr<Detector> ArmorDetectorNode::initDetector() {
 std::vector<Armor> ArmorDetectorNode::detectArmors(
     const sensor_msgs::msg::Image::ConstSharedPtr &img_msg) {
   // Convert ROS img to cv::Mat
-  auto img = cv_bridge::toCvShare(img_msg, "rgb8")->image;
+  // Use toCvCopy instead of toCvShare to ensure we own the memory we're about to write to.
+  // Using toCvShare with modification violates const-correctness of intra-process communication
+  // and causes race conditions with other subscribers (like CompressedPublisher).
+  auto img_ptr = cv_bridge::toCvCopy(img_msg, "rgb8");
+  auto img = img_ptr->image;
 
   auto armors = detector_->detect(img);
 

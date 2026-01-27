@@ -219,7 +219,7 @@ HikCameraNode::HikCameraNode(const rclcpp::NodeOptions & options)
     RCLCPP_INFO(this->get_logger(), "Publishing image!");
     // Use configurable frame_id
     image_msg_.header.frame_id = frame_id_;
-    image_msg_.encoding = "rgb8";
+    image_msg_.encoding = "bgr8";
 
     // Allocate image data buffer
     MV_FRAME_OUT_INFO_EX frame_info;
