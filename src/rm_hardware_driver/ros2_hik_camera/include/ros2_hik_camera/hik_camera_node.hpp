@@ -19,6 +19,8 @@
 #include <opencv2/opencv.hpp>
 
 // C++ system
+#include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <thread>
@@ -26,6 +28,8 @@
 
 namespace ros2_hik_camera
 {
+
+class RawStreamRecorder;
 
 class HikCameraNode : public rclcpp::Node
 {
@@ -41,6 +45,9 @@ private:
   // Camera control
   void startGrabbing();
   void stopGrabbing();
+
+  void stopRawStreamRecorder();
+  void recordRawFrame(const MV_FRAME_OUT_INFO_EX & frame_info);
   
   // Parameter callback
   rcl_interfaces::msg::SetParametersResult parametersCallback(
@@ -77,6 +84,12 @@ private:
   int image_height_;
   std::string frame_id_;
   int fail_count_ = 0;
+  double frame_rate_ = 30.0;
+  bool raw_stream_enabled_ = false;
+  std::string raw_stream_path_;
+  int raw_stream_interval_ = 1;
+  int64_t raw_frame_counter_ = 0;
+  std::unique_ptr<RawStreamRecorder> raw_stream_recorder_;
 
   // Parameter callback handle
   OnSetParametersCallbackHandle::SharedPtr params_callback_handle_;

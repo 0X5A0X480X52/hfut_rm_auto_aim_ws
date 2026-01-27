@@ -13,13 +13,152 @@
 #include <sensor_msgs/msg/image.hpp>
 
 // C++ system
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
 #include <cstring>
+#include <deque>
+#include <fstream>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
 
 // #include "rm_utils/heartbeat.hpp"
+
+namespace
+{
+
+class RawStreamRecorder
+{
+public:
+  RawStreamRecorder() = default;
+  ~RawStreamRecorder()
+  {
+    stop();
+  }
+
+  bool start(const std::string & path, int width, int height, uint32_t media_type, double fps, int interval)
+  {
+    stop();
+    file_.open(path, std::ios::binary);
+    if (!file_) {
+      return false;
+    }
+
+    file_ << "YAWFMT\n";
+    file_ << "WIDTH " << width << "\n";
+    file_ << "HEIGHT " << height << "\n";
+    file_ << "MEDIATYPE " << media_type << "\n";
+    file_ << "FPS " << fps << "\n";
+    file_ << "INTERVAL " << interval << "\n";
+    file_ << "===DATA===\n";
+    file_.flush();
+
+    running_ = true;
+    stop_requested_ = false;
+    recorded_frames_ = 0;
+    worker_thread_ = std::thread(&RawStreamRecorder::worker, this);
+    return true;
+  }
+
+  void stop()
+  {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!running_) {
+        return;
+      }
+      stop_requested_ = true;
+    }
+    cond_.notify_one();
+    if (worker_thread_.joinable()) {
+      worker_thread_.join();
+    }
+
+    if (file_) {
+      file_ << "===META===\nFRAMES " << recorded_frames_ << "\n";
+      file_.flush();
+      file_.close();
+    }
+    running_ = false;
+    stop_requested_ = false;
+    queue_.clear();
+  }
+
+  bool isRunning() const
+  {
+    return running_;
+  }
+
+  bool enqueue(const void * data, size_t length)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!running_ || stop_requested_ || queue_.size() >= kMaxQueueSize) {
+      return false;
+    }
+
+    FrameItem item;
+    item.buffer.resize(length);
+    std::memcpy(item.buffer.data(), data, length);
+    item.timestamp_us = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::system_clock::now().time_since_epoch())
+        .count());
+    queue_.push_back(std::move(item));
+    cond_.notify_one();
+    return true;
+  }
+
+private:
+  void worker()
+  {
+    while (true) {
+      FrameItem item;
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        cond_.wait(lock, [this]() { return stop_requested_ || !queue_.empty(); });
+        if (queue_.empty()) {
+          if (stop_requested_) {
+            break;
+          }
+          continue;
+        }
+        item = std::move(queue_.front());
+        queue_.pop_front();
+      }
+
+      if (!file_) {
+        continue;
+      }
+
+      file_.write(reinterpret_cast<const char *>(&item.timestamp_us), sizeof(item.timestamp_us));
+      uint32_t len = static_cast<uint32_t>(item.buffer.size());
+      file_.write(reinterpret_cast<const char *>(&len), sizeof(len));
+      file_.write(reinterpret_cast<const char *>(item.buffer.data()), len);
+      recorded_frames_++;
+    }
+  }
+
+  struct FrameItem
+  {
+    std::vector<uint8_t> buffer;
+    uint64_t timestamp_us = 0;
+  };
+
+  static constexpr size_t kMaxQueueSize = 256;
+  mutable std::mutex mutex_;
+  std::condition_variable cond_;
+  std::deque<FrameItem> queue_;
+  std::thread worker_thread_;
+  std::ofstream file_;
+  bool running_ = false;
+  bool stop_requested_ = false;
+  size_t recorded_frames_ = 0;
+};
+
+}  // namespace
 
 namespace mindvision_camera
 {
@@ -144,6 +283,9 @@ public:
       while (rclcpp::ok()) {
         int status = CameraGetImageBuffer(h_camera_, &s_frame_info_, &pby_buffer_, 1000);
         if (status == CAMERA_STATUS_SUCCESS) {
+          // Record raw frame before processing
+          recordRawFrame(s_frame_info_, pby_buffer_);
+          
           CameraImageProcess(h_camera_, pby_buffer_, image_msg_.data.data(), &s_frame_info_);
           if (flip_image_) {
             CameraFlipFrameBuffer(image_msg_.data.data(), &s_frame_info_, 3);
@@ -181,6 +323,9 @@ public:
     if (capture_thread_.joinable()) {
       capture_thread_.join();
     }
+    
+    stopRawStreamRecorder();
+    
     CameraUnInit(h_camera_);
 
     RCLCPP_INFO(this->get_logger(), "Camera node destroyed!");
@@ -339,6 +484,19 @@ public:
     // Frame id for published image/camera_info
     frame_id_ = this->declare_parameter("frame_id", std::string("camera_optical_frame"));
     RCLCPP_INFO(this->get_logger(), "frame_id = %s", frame_id_.c_str());
+
+    // Raw stream parameters
+    rcl_interfaces::msg::ParameterDescriptor raw_desc;
+    raw_desc.integer_range.resize(1);
+    raw_desc.integer_range[0].step = 1;
+    raw_desc.integer_range[0].from_value = 1;
+    raw_desc.integer_range[0].to_value = 1000;
+    raw_stream_enabled_ = this->declare_parameter<bool>("raw_stream.enabled", false);
+    raw_stream_path_ = this->declare_parameter<std::string>("raw_stream.path", "/tmp/mv_camera.yaw");
+    raw_stream_interval_ = this->declare_parameter("raw_stream.interval", 1, raw_desc);
+    if (raw_stream_interval_ < 1) {
+      raw_stream_interval_ = 1;
+    }
   }
 
   rcl_interfaces::msg::SetParametersResult parametersCallback(
@@ -466,6 +624,22 @@ public:
           camera_info_msg_.header.frame_id = frame_id_;
         } else if (param.get_name() == "flip_image") {
           flip_image_ = param.as_bool();
+        } else if (param.get_name() == "raw_stream.enabled") {
+          raw_stream_enabled_ = param.as_bool();
+          if (!raw_stream_enabled_) {
+            stopRawStreamRecorder();
+          }
+        } else if (param.get_name() == "raw_stream.path") {
+          raw_stream_path_ = param.as_string();
+          if (raw_stream_recorder_) {
+            stopRawStreamRecorder();
+          }
+        } else if (param.get_name() == "raw_stream.interval") {
+          int interval = param.as_int();
+          if (interval < 1) {
+            interval = 1;
+          }
+          raw_stream_interval_ = interval;
       } else {
         result.successful = false;
         result.reason = "Unknown parameter: " + param.get_name();
@@ -501,6 +675,60 @@ public:
   int fail_conut_ = 0;
   std::thread capture_thread_;
   std::string frame_id_;
+
+  // Raw stream recording
+  bool raw_stream_enabled_ = false;
+  std::string raw_stream_path_;
+  int raw_stream_interval_ = 1;
+  int64_t raw_frame_counter_ = 0;
+  std::unique_ptr<RawStreamRecorder> raw_stream_recorder_;
+
+  void recordRawFrame(const tSdkFrameHead & frame_info, const uint8_t * frame_buffer)
+  {
+    if (!raw_stream_enabled_ || frame_buffer == nullptr || frame_info.uBytes == 0) {
+      return;
+    }
+
+    if (!raw_stream_recorder_) {
+      raw_stream_recorder_ = std::make_unique<RawStreamRecorder>();
+    }
+
+    if (!raw_stream_recorder_->isRunning()) {
+      if (raw_stream_path_.empty()) {
+        RCLCPP_WARN(this->get_logger(), "raw_stream.path is empty, skipping raw recording");
+        return;
+      }
+      // Estimate FPS from frame rate parameter or use default
+      double fps = 30.0;  // Default, actual FPS controlled by camera parameters
+      if (!raw_stream_recorder_->start(raw_stream_path_, frame_info.iWidth, frame_info.iHeight,
+                                       frame_info.uiMediaType, fps, raw_stream_interval_)) {
+        RCLCPP_ERROR(this->get_logger(), "Failed to start raw stream recorder for %s", raw_stream_path_.c_str());
+        raw_stream_recorder_.reset();
+        return;
+      }
+      raw_frame_counter_ = 0;
+    }
+
+    if (raw_stream_recorder_->isRunning()) {
+      if ((raw_frame_counter_ % raw_stream_interval_) == 0) {
+        if (!raw_stream_recorder_->enqueue(frame_buffer, frame_info.uBytes)) {
+          if ((raw_frame_counter_ % 60) == 0) {
+            RCLCPP_WARN(this->get_logger(), "Raw stream queue full, dropping frames for %s", raw_stream_path_.c_str());
+          }
+        }
+      }
+      raw_frame_counter_++;
+    }
+  }
+
+  void stopRawStreamRecorder()
+  {
+    if (raw_stream_recorder_) {
+      raw_stream_recorder_->stop();
+      raw_stream_recorder_.reset();
+    }
+    raw_frame_counter_ = 0;
+  }
 
   OnSetParametersCallbackHandle::SharedPtr params_callback_handle_;
 };
