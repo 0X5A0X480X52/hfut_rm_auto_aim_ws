@@ -3,8 +3,143 @@
 
 #include "ros2_hik_camera/hik_camera_node.hpp"
 
+#include <chrono>
+#include <condition_variable>
+#include <cstring>
+#include <deque>
+#include <fstream>
+#include <mutex>
+
 namespace ros2_hik_camera
 {
+
+class RawStreamRecorder
+{
+public:
+  RawStreamRecorder() = default;
+  ~RawStreamRecorder()
+  {
+    stop();
+  }
+
+  bool start(const std::string & path, int width, int height, uint64_t pixel_type, double fps, int interval)
+  {
+    stop();
+    file_.open(path, std::ios::binary);
+    if (!file_) {
+      return false;
+    }
+
+    file_ << "YAWFMT\n";
+    file_ << "WIDTH " << width << "\n";
+    file_ << "HEIGHT " << height << "\n";
+    file_ << "PIXELTYPE " << pixel_type << "\n";
+    file_ << "FPS " << fps << "\n";
+    file_ << "INTERVAL " << interval << "\n";
+    file_ << "===DATA===\n";
+    file_.flush();
+
+    running_ = true;
+    stop_requested_ = false;
+    recorded_frames_ = 0;
+    worker_thread_ = std::thread(&RawStreamRecorder::worker, this);
+    return true;
+  }
+
+  void stop()
+  {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!running_) {
+        return;
+      }
+      stop_requested_ = true;
+    }
+    cond_.notify_one();
+    if (worker_thread_.joinable()) {
+      worker_thread_.join();
+    }
+
+    if (file_) {
+      file_ << "===META===\nFRAMES " << recorded_frames_ << "\n";
+      file_.flush();
+      file_.close();
+    }
+    running_ = false;
+    stop_requested_ = false;
+    queue_.clear();
+  }
+
+  bool isRunning() const
+  {
+    return running_;
+  }
+
+  bool enqueue(const void * data, size_t length)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!running_ || stop_requested_ || queue_.size() >= kMaxQueueSize) {
+      return false;
+    }
+
+    FrameItem item;
+    item.buffer.resize(length);
+    std::memcpy(item.buffer.data(), data, length);
+    item.timestamp_us = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::system_clock::now().time_since_epoch())
+        .count());
+    queue_.push_back(std::move(item));
+    cond_.notify_one();
+    return true;
+  }
+
+private:
+  void worker()
+  {
+    while (true) {
+      FrameItem item;
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        cond_.wait(lock, [this]() { return stop_requested_ || !queue_.empty(); });
+        if (queue_.empty()) {
+          if (stop_requested_) {
+            break;
+          }
+          continue;
+        }
+        item = std::move(queue_.front());
+        queue_.pop_front();
+      }
+
+      if (!file_) {
+        continue;
+      }
+
+      file_.write(reinterpret_cast<const char *>(&item.timestamp_us), sizeof(item.timestamp_us));
+      uint32_t len = static_cast<uint32_t>(item.buffer.size());
+      file_.write(reinterpret_cast<const char *>(&len), sizeof(len));
+      file_.write(reinterpret_cast<const char *>(item.buffer.data()), len);
+      recorded_frames_++;
+    }
+  }
+
+  struct FrameItem
+  {
+    std::vector<uint8_t> buffer;
+    uint64_t timestamp_us = 0;
+  };
+
+  static constexpr size_t kMaxQueueSize = 256;
+  mutable std::mutex mutex_;
+  std::condition_variable cond_;
+  std::deque<FrameItem> queue_;
+  std::thread worker_thread_;
+  std::ofstream file_;
+  bool running_ = false;
+  bool stop_requested_ = false;
+  size_t recorded_frames_ = 0;
+};
 
 HikCameraNode::HikCameraNode(const rclcpp::NodeOptions & options)
 : Node("hik_camera", options), capturing_(false)
@@ -104,6 +239,7 @@ HikCameraNode::HikCameraNode(const rclcpp::NodeOptions & options)
       if (status == MV_OK) {
         fail_count_ = 0;  // Reset fail count on success
         if (frame_buffer_ != nullptr && frame_info.nFrameLen > 0) {
+          recordRawFrame(frame_info);
           // Log pixel type on first frame for debugging
           static bool logged_pixel_type = false;
           if (!logged_pixel_type) {
@@ -262,6 +398,8 @@ HikCameraNode::~HikCameraNode()
 
   // Stop grabbing
   stopGrabbing();
+
+  stopRawStreamRecorder();
 
   // Close camera
   if (camera_handle_ != nullptr) {
@@ -432,6 +570,51 @@ void HikCameraNode::stopGrabbing()
   }
 }
 
+void HikCameraNode::recordRawFrame(const MV_FRAME_OUT_INFO_EX & frame_info)
+{
+  if (!raw_stream_enabled_ || frame_buffer_ == nullptr || frame_info.nFrameLen == 0) {
+    return;
+  }
+
+  if (!raw_stream_recorder_) {
+    raw_stream_recorder_ = std::make_unique<RawStreamRecorder>();
+  }
+
+  if (!raw_stream_recorder_->isRunning()) {
+    if (raw_stream_path_.empty()) {
+      RCLCPP_WARN(this->get_logger(), "raw_stream.path is empty, skipping raw recording");
+      return;
+    }
+    if (!raw_stream_recorder_->start(raw_stream_path_, frame_info.nWidth, frame_info.nHeight,
+                                     frame_info.enPixelType, frame_rate_, raw_stream_interval_)) {
+      RCLCPP_ERROR(this->get_logger(), "Failed to start raw stream recorder for %s", raw_stream_path_.c_str());
+      raw_stream_recorder_.reset();
+      return;
+    }
+    raw_frame_counter_ = 0;
+  }
+
+  if (raw_stream_recorder_->isRunning()) {
+    if ((raw_frame_counter_ % raw_stream_interval_) == 0) {
+      if (!raw_stream_recorder_->enqueue(frame_buffer_, frame_info.nFrameLen)) {
+        if ((raw_frame_counter_ % 60) == 0) {
+          RCLCPP_WARN(this->get_logger(), "Raw stream queue full, dropping frames for %s", raw_stream_path_.c_str());
+        }
+      }
+    }
+    raw_frame_counter_++;
+  }
+}
+
+void HikCameraNode::stopRawStreamRecorder()
+{
+  if (raw_stream_recorder_) {
+    raw_stream_recorder_->stop();
+    raw_stream_recorder_.reset();
+  }
+  raw_frame_counter_ = 0;
+}
+
 void HikCameraNode::declareParameters()
 {
   rcl_interfaces::msg::ParameterDescriptor param_desc;
@@ -459,14 +642,14 @@ void HikCameraNode::declareParameters()
 
   // Frame rate
   param_desc.description = "Frame rate (fps)";
-  double frame_rate = this->declare_parameter("frame_rate", 30.0, param_desc);
+  frame_rate_ = this->declare_parameter("frame_rate", 30.0, param_desc);
   status = MV_CC_SetBoolValue(camera_handle_, "AcquisitionFrameRateEnable", true);
   if (status != MV_OK) {
     RCLCPP_WARN(this->get_logger(), "Failed to enable frame rate, status = 0x%x", status);
   }
-  status = MV_CC_SetFloatValue(camera_handle_, "AcquisitionFrameRate", frame_rate);
+  status = MV_CC_SetFloatValue(camera_handle_, "AcquisitionFrameRate", frame_rate_);
   if (status == MV_OK) {
-    RCLCPP_INFO(this->get_logger(), "Frame rate = %f fps", frame_rate);
+    RCLCPP_INFO(this->get_logger(), "Frame rate = %f fps", frame_rate_);
   } else {
     RCLCPP_WARN(this->get_logger(), "Failed to set frame rate, status = 0x%x", status);
   }
@@ -478,6 +661,18 @@ void HikCameraNode::declareParameters()
   // Frame id for published image/camera_info
   frame_id_ = this->declare_parameter("frame_id", std::string("camera_optical_frame"));
   RCLCPP_INFO(this->get_logger(), "frame_id = %s", frame_id_.c_str());
+
+  rcl_interfaces::msg::ParameterDescriptor raw_desc;
+  raw_desc.integer_range.resize(1);
+  raw_desc.integer_range[0].step = 1;
+  raw_desc.integer_range[0].from_value = 1;
+  raw_desc.integer_range[0].to_value = 1000;
+  raw_stream_enabled_ = this->declare_parameter<bool>("raw_stream.enabled", false);
+  raw_stream_path_ = this->declare_parameter<std::string>("raw_stream.path", "/tmp/hik_camera.yaw");
+  raw_stream_interval_ = this->declare_parameter("raw_stream.interval", 1, raw_desc);
+  if (raw_stream_interval_ < 1) {
+    raw_stream_interval_ = 1;
+  }
 
   // Image resolution
   param_desc.description = "Image width (0 for camera default)";
@@ -546,11 +741,30 @@ rcl_interfaces::msg::SetParametersResult HikCameraNode::parametersCallback(
         result.reason = "Failed to set gain, status = " + std::to_string(status);
       }
     } else if (param.get_name() == "frame_rate") {
-      int status = MV_CC_SetFloatValue(camera_handle_, "AcquisitionFrameRate", param.as_double());
+      double desired_rate = param.as_double();
+      int status = MV_CC_SetFloatValue(camera_handle_, "AcquisitionFrameRate", desired_rate);
       if (status != MV_OK) {
         result.successful = false;
         result.reason = "Failed to set frame rate, status = " + std::to_string(status);
+      } else {
+        frame_rate_ = desired_rate;
       }
+    } else if (param.get_name() == "raw_stream.enabled") {
+      raw_stream_enabled_ = param.as_bool();
+      if (!raw_stream_enabled_) {
+        stopRawStreamRecorder();
+      }
+    } else if (param.get_name() == "raw_stream.path") {
+      raw_stream_path_ = param.as_string();
+      if (raw_stream_recorder_) {
+        stopRawStreamRecorder();
+      }
+    } else if (param.get_name() == "raw_stream.interval") {
+      int interval = param.as_int();
+      if (interval < 1) {
+        interval = 1;
+      }
+      raw_stream_interval_ = interval;
     } else if (param.get_name() == "flip_image") {
       flip_image_ = param.as_bool();
     } else if (param.get_name() == "image_width") {
