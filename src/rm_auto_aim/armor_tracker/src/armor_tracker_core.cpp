@@ -176,8 +176,16 @@ void ArmorTrackerCore::update(const std::vector<ArmorObservation>& observations)
         observations[best_obs_idx].armor_type
       };
       source_type_map_[track_id] = observations[best_obs_idx].source;
-      FYT_DEBUG("armor_tracker", "  Track[{}] updated -> Obs[{}] (id='{}', dist={:.4f})",
-               track_id, best_obs_idx, observations[best_obs_idx].armor_id, min_dist);
+      
+      // 保存观测的yaw值（用于预测时使用，因为卡尔曼状态不包含yaw）
+      yaw_info_map_[track_id] = {
+        observations[best_obs_idx].yaw,
+        0.0  // yaw_velocity 暂时设为0，后续可通过差分估计
+      };
+      
+      FYT_DEBUG("armor_tracker", "  Track[{}] updated -> Obs[{}] (id='{}', yaw={:.3f}, dist={:.4f})",
+               track_id, best_obs_idx, observations[best_obs_idx].armor_id, 
+               observations[best_obs_idx].yaw, min_dist);
     } else {
       auto [old_id, old_type] = findArmorInfo(track_id);
       FYT_DEBUG("armor_tracker", "  Track[{}] no match (dist={:.4f}), keep id='{}'",
@@ -256,6 +264,7 @@ void ArmorTrackerCore::reset() {
     tracker_->reset();
   }
   armor_info_map_.clear();
+  yaw_info_map_.clear();
   source_type_map_.clear();
   last_source_type_ = ArmorSourceType::PREDICT;
 }
@@ -322,8 +331,6 @@ TrackedArmorState ArmorTrackerCore::trackResultToState(
     // 位置索引: 0,3,6  速度索引: 1,4,7
     state.position = Eigen::Vector3d(s(0), s(3), s(6));
     state.velocity = Eigen::Vector3d(s(1), s(4), s(7));
-    state.yaw = 0.0;
-    state.yaw_velocity = 0.0;
 
   } else if (s.size() >= 6) {
     // 3D CV_KF: [x, vx, y, vy, z, vz]
@@ -331,14 +338,27 @@ TrackedArmorState ArmorTrackerCore::trackResultToState(
     state.position = Eigen::Vector3d(s(0), s(2), s(4));
     state.velocity = Eigen::Vector3d(s(1), s(3), s(5));
 
-    // 如果状态向量包含 yaw（非常规情况），保守处理
-    state.yaw = 0.0;
-    state.yaw_velocity = 0.0;
   } else if (s.size() >= 4) {
     // 2D 模式
     state.position = Eigen::Vector3d(s(0), s(2), 0.0);
     state.velocity = Eigen::Vector3d(s(1), s(3), 0.0);
-    state.yaw = 0.0;
+  }
+  
+  // 从yaw_info_map_获取观测的yaw值（卡尔曼状态不包含yaw）
+  auto yaw_it = yaw_info_map_.find(result.track_id);
+  if (yaw_it != yaw_info_map_.end()) {
+    state.yaw = yaw_it->second.first;
+    state.yaw_velocity = yaw_it->second.second;
+  } else {
+    // 如果没有保存的yaw，使用装甲板正对相机的假设作为fallback
+    // 装甲板的yaw定义：装甲板法向量方向（从PnP/BA得到）
+    // 当装甲板正对相机时，其法向量指向相机（即相反于视角方向）
+    // 视角方向 = atan2(y, x)，装甲板正对相机时 yaw = 视角方向 + π
+    double view_angle = std::atan2(state.position.y(), state.position.x());
+    state.yaw = view_angle + M_PI;
+    // 归一化到 [-π, π]
+    while (state.yaw > M_PI) state.yaw -= 2 * M_PI;
+    while (state.yaw < -M_PI) state.yaw += 2 * M_PI;
     state.yaw_velocity = 0.0;
   }
 

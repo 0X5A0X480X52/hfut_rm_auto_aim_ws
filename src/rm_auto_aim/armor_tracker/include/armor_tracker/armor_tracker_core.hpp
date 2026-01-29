@@ -165,6 +165,10 @@ private:
   // 装甲板信息映射: track_id -> (armor_id, armor_type)
   std::map<int, std::pair<std::string, std::string>> armor_info_map_;
   
+  // yaw信息映射: track_id -> (yaw, yaw_velocity)
+  // 用于保存观测的yaw值，因为卡尔曼滤波状态向量不包含yaw
+  std::map<int, std::pair<double, double>> yaw_info_map_;
+  
   // 来源类型映射: track_id -> ArmorSourceType
   std::map<int, ArmorSourceType> source_type_map_;
   
