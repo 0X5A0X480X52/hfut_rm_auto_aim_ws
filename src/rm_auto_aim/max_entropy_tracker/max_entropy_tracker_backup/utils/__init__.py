@@ -10,7 +10,6 @@ from .angle_utils import (
     decompose_yaw,
     compose_yaw,
     select_best_k,
-    select_best_k_from_center_yaw,
 )
 from .sigma_points import SigmaPointGenerator
 from .constraints import apply_state_constraints, apply_radius_constraints
@@ -21,7 +20,6 @@ __all__ = [
     'decompose_yaw',
     'compose_yaw',
     'select_best_k',
-    'select_best_k_from_center_yaw',
     'SigmaPointGenerator',
     'apply_state_constraints',
     'apply_radius_constraints',

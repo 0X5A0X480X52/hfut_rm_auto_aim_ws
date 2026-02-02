@@ -60,9 +60,6 @@ class BaseUKF(ABC):
         # 初始化标志
         self._initialized: bool = False
         
-        # 调试历史（用于记录每次更新的K, innovation, delta等）
-        self._debug_update_history: List[Dict[str, Any]] = []
-
         logger.debug(f"BaseUKF created with dt={dt}")
     
     # ==================== 抽象属性 ====================
@@ -165,9 +162,6 @@ class BaseUKF(ABC):
     
     @x.setter
     def x(self, value: np.ndarray):
-        # Log if the state vector length unexpectedly changes to help debug shape issues
-        if self._x is not None and value is not None and len(value) != len(self._x):
-            logger.warning(f"UKF.x length changed from {len(self._x)} to {len(value)}")
         self._x = value
     
     @property
@@ -225,9 +219,7 @@ class BaseUKF(ABC):
         """
         if self._sigma_generator is None:
             self._init_sigma_generator()
-        # 在生成Sigma点前确保协方差矩阵为正定，避免数值失败
-        P_safe = ensure_positive_definite(P, eps=1e-6)
-        return self._sigma_generator.generate(x, P_safe)
+        return self._sigma_generator.generate(x, P)
     
     def get_sigma_weights(self):
         """获取Sigma点权重"""
@@ -275,31 +267,9 @@ class BaseUKF(ABC):
             innovation: 观测残差
             Pzz: 观测协方差
         """
-        # 记录诊断信息（在真正更新之前）
-        try:
-            delta = K @ innovation
-        except Exception:
-            delta = None
-
-        try:
-            pzz_diag = np.diag(Pzz).copy()
-        except Exception:
-            pzz_diag = None
-
-        self._debug_update_history.append({
-            'K': K.copy(),
-            'innovation': innovation.copy(),
-            'delta': None if delta is None else delta.copy(),
-            'pzz_diag': pzz_diag,
-            'delta_norm': None if delta is None else float(np.linalg.norm(delta))
-        })
-
-        # 实际应用更新
-        self._x = self._x + (delta if delta is not None else K @ innovation)
+        self._x = self._x + K @ innovation
         self._P = self._P - K @ Pzz @ K.T
         self.ensure_covariance_valid()
-
-        logger.debug(f"Applied Kalman update: delta_norm={self._debug_update_history[-1]['delta_norm']}")
     
     # ==================== 状态获取接口 ====================
     

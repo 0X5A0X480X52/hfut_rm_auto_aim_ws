@@ -2,12 +2,6 @@
 装甲板Panel关联器
 
 将观测到的装甲板yaw角关联到具体的panel_id (0,1,2,3)
-
-坐标系说明：
-- 使用相机坐标系
-- armor_yaw定义为径向方向（中心指向装甲板）
-- center_yaw是旋转中心的朝向
-- armor_yaw = center_yaw + panel_angle
 """
 
 import numpy as np
@@ -49,10 +43,10 @@ class PanelAssociator:
         center_z: Optional[float] = None
     ) -> Tuple[int, float, float]:
         """
-        将观测armor_yaw关联到panel_id
+        将观测yaw关联到panel_id
         
         Args:
-            armor_yaw: 观测到的装甲板yaw角（径向方向：中心指向装甲板）
+            armor_yaw: 观测到的装甲板yaw角
             center_yaw_pred: 预测的中心yaw（如果为None则为首帧）
             z_obs: 可选，装甲板z坐标（用于辅助判断）
             center_z: 可选，预测的中心z坐标
@@ -62,19 +56,10 @@ class PanelAssociator:
         """
         if center_yaw_pred is None:
             # 首帧：根据armor_yaw找最接近的90°倍数
-            # 为了避免180°歧义，先归一化到[-π, π]，然后映射到4个区间
-            armor_yaw_normalized = np.arctan2(np.sin(armor_yaw), np.cos(armor_yaw))  # [-π, π]
-            
-            # 映射到[0, 2π)以便计算panel_id
-            armor_yaw_positive = (armor_yaw_normalized + 2 * np.pi) % (2 * np.pi)
-            
-            # 找最接近的90°倍数
-            panel_id = int(np.round(armor_yaw_positive / self.PANEL_ANGLE_STEP)) % 4
-            
-            # 计算center_yaw（armor_yaw减去panel偏移）
-            center_yaw = armor_yaw_normalized - panel_id * self.PANEL_ANGLE_STEP
-            center_yaw = np.arctan2(np.sin(center_yaw), np.cos(center_yaw))  # 归一化到[-π, π]
-            
+            armor_yaw_normalized = armor_yaw % (2 * np.pi)
+            panel_id = int(np.round(armor_yaw_normalized / self.PANEL_ANGLE_STEP)) % 4
+            center_yaw = armor_yaw - panel_id * self.PANEL_ANGLE_STEP
+            center_yaw = np.arctan2(np.sin(center_yaw), np.cos(center_yaw))
             return panel_id, center_yaw, 0.0
         
         # 计算各panel的匹配误差

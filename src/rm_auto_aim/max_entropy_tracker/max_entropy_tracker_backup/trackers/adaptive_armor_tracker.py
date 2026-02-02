@@ -112,14 +112,20 @@ class AdaptiveArmorTracker(BaseTracker):
         self._reference_center_yaw = center_yaw
         
         # 从装甲板位置反推中心位置
-        # armor_pos = center + r * unit(armor_yaw)  (armor_yaw为径向方向：中心指向装甲板)
-        # => center = armor - r * unit(armor_yaw)
         r = r1 if panel_id % 2 == 0 else r2
-        center_x = obs.x - r * np.cos(obs.yaw)
-        center_y = obs.y - r * np.sin(obs.yaw)
+        center_x = obs.x + r * np.cos(obs.yaw)
+        center_y = obs.y + r * np.sin(obs.yaw)
         
-        # 初始化UKF：传入原始装甲板观测以及panel_id，由UKF在内部反推中心
-        self.ukf.initialize([obs], r1=r1, r2=r2, dza=dza, panel_id=panel_id)
+        # 创建转换后的观测用于UKF初始化
+        center_obs = ObservationData(
+            x=center_x,
+            y=center_y,
+            z=obs.z,
+            yaw=center_yaw
+        )
+        
+        # 初始化UKF
+        self.ukf.initialize([center_obs], r1=r1, r2=r2, dza=dza)
         
         self._transition_to(TrackerState.TRACKING)  # 修复：初始化后应该是TRACKING状态
         self._increment_frame()
@@ -191,10 +197,8 @@ class AdaptiveArmorTracker(BaseTracker):
         """
         单观测更新
         
-        说明：obs.yaw为装甲板yaw（径向方向：中心指向装甲板）
-        
         流程:
-        1. Panel关联（armor_yaw→panel_id→center_yaw）
+        1. Panel关联（yaw→panel_id→center_yaw）
         2. 高度层级识别
         3. 计算置信度
         4. 调用UKF更新
@@ -203,9 +207,9 @@ class AdaptiveArmorTracker(BaseTracker):
             obs: 观测数据
             override_position_confidence: 如果提供，将覆盖自动计算的position_confidence
         """
-        # Panel关联（根据armor_yaw确定panel_id，并转换为center_yaw）
+        # Panel关联
         panel_id, center_yaw, matching_error = self.panel_associator.associate_panel(
-            armor_yaw=obs.yaw,  # 输入：装甲板yaw（径向方向）
+            armor_yaw=obs.yaw,
             center_yaw_pred=self._reference_center_yaw,
             z_obs=obs.z,
             center_z=self.ukf.x[StateIndex.Z]

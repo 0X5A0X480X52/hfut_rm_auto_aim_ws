@@ -78,41 +78,13 @@ class SigmaPointGenerator:
         sigma_points[0] = x
         
         # Cholesky分解
-        # 在尝试 Cholesky 前打印 P 的基本信息以便调试数值问题
-        # try:
-        #     logger.warning(f"SigmaPoints: P diag min={np.min(np.diag(P)):.6e}, max={np.max(np.diag(P)):.6e}, any_nan={np.isnan(P).any()}")
-        #     eigs = np.linalg.eigvals(P)
-        #     logger.warning(f"SigmaPoints: P eig min={np.min(eigs):.6e}, max={np.max(eigs):.6e}")
-        # except Exception:
-        #     logger.warning("SigmaPoints: failed to compute P diagnostics")
-
         try:
             L = np.linalg.cholesky((n + self.lambda_) * P)
         except np.linalg.LinAlgError:
-            # 如果分解失败，尝试逐步增加正则化项以稳定计算
-            logger.warning("Cholesky decomposition failed, trying progressive regularization")
-            P_reg = P.copy()
-            reg_vals = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2]
-            L = None
-            for reg in reg_vals:
-                try:
-                    P_reg = P + np.eye(n) * reg
-                    # 打印更详细信息
-                    try:
-                        eigs_reg = np.linalg.eigvals(P_reg)
-                        logger.debug(f"Trying reg={reg}, P_reg eig min={np.min(eigs_reg):.6e}")
-                    except Exception:
-                        pass
-                    L = np.linalg.cholesky((n + self.lambda_) * P_reg)
-                    logger.info(f"Cholesky succeeded with reg={reg}")
-                    break
-                except np.linalg.LinAlgError:
-                    continue
-            if L is None:
-                # 最后仍失败，抛出异常以便上层捕获
-                logger.error("Cholesky failed even after progressive regularization")
-                raise
-
+            # 如果分解失败，添加小扰动
+            logger.warning("Cholesky decomposition failed, adding regularization")
+            P_reg = P + np.eye(n) * 1e-6
+            L = np.linalg.cholesky((n + self.lambda_) * P_reg)
         
         # 生成对称点
         for i in range(n):

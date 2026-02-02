@@ -20,27 +20,11 @@ from typing import List, Optional, Dict, Any, Tuple
 import logging
 
 from .base_ukf import BaseUKF
-from .process_models import (
-    CompositeProcessModel,
-    TranslationModelType,
-    RotationModelType,
-    TranslationConfig,
-    RotationConfig,
-    StructuralConfig,
-    CVTranslation,
-    CATranslation,
-    SingerTranslation,
-    CVRotation,
-    CARotation,
-    StructuralModel,
-    create_default_process_model,
-    StateLayout
-)
-from ..core.config import UnifiedConfig, TranslationModel
+from ..core.config import UnifiedConfig
 from ..core.observation import ObservationData
 from ..utils.angle_utils import (
     normalize_angle, decompose_yaw, compose_yaw, 
-    select_best_k, select_best_k_from_center_yaw, delta_angle_diff
+    select_best_k, delta_angle_diff
 )
 from ..utils.constraints import apply_state_constraints
 
@@ -49,11 +33,9 @@ logger = logging.getLogger(__name__)
 
 class StateIndex(IntEnum):
     """
-    状态索引枚举 (用于向后兼容)
+    状态索引枚举
     
-    11维状态向量布局 (CV平移模型)
-    注意: 实际索引由 process_model.layout 动态决定
-    此枚举仅作为默认CV模型的参考
+    11维状态向量布局
     """
     X = 0           # X位置
     VX = 1          # X速度
@@ -66,26 +48,6 @@ class StateIndex(IntEnum):
     R1 = 8          # 半径1（偶数panel）
     R2 = 9          # 半径2（奇数panel）
     DZA = 10        # 装甲板高度差
-
-
-class DynamicStateIndex:
-    """
-    动态状态索引访问器
-    
-    基于 StateLayout 提供与 StateIndex IntEnum 相同的访问接口
-    支持不同过程模型的动态状态布局
-    """
-    
-    def __init__(self, layout: StateLayout):
-        self._layout = layout
-    
-    def __getattr__(self, name: str) -> int:
-        if name.startswith('_'):
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-        return self._layout.get(name)
-    
-    def __repr__(self) -> str:
-        return f"DynamicStateIndex({self._layout})"
 
 
 class DualRadiusSpinUKF(BaseUKF):
@@ -104,26 +66,14 @@ class DualRadiusSpinUKF(BaseUKF):
     N_PANELS = 4
     PANEL_ANGLE_STEP = np.pi / 2  # 90°
     
-    def __init__(
-        self, 
-        config: UnifiedConfig, 
-        dt: float = 0.1,
-        process_model: Optional[CompositeProcessModel] = None
-    ):
+    def __init__(self, config: UnifiedConfig, dt: float = 0.1):
         """
         初始化双半径自旋UKF
         
         Args:
             config: 统一配置对象
             dt: 默认时间步长
-            process_model: 可选的自定义过程模型。如果为None，则根据config自动创建
         """
-        # 先创建过程模型（state_dim依赖它）
-        self._motion_model = process_model or self._create_process_model(config, dt)
-        
-        # 动态状态索引访问器（兼容原有代码）
-        self._state_idx = DynamicStateIndex(self._motion_model.layout)
-        
         super().__init__(config, dt)
         
         # 离散模态 k
@@ -131,84 +81,23 @@ class DualRadiusSpinUKF(BaseUKF):
         self.last_k: Optional[int] = None
         self.mode_switches: int = 0
         
-        # 初始化状态和协方差（使用过程模型的维度）
+        # 初始化状态和协方差
         self._x = np.zeros(self.state_dim)
         self._P = np.eye(self.state_dim) * 100.0
         
-        # 构建过程噪声（委托给过程模型）
+        # 构建过程噪声
         self._Q = self._build_process_noise()
         
         # 初始化Sigma点生成器
         self._init_sigma_generator()
         
-        logger.info(
-            f"DualRadiusSpinUKF initialized with {type(self._process_model).__name__}, "
-            f"state_dim={self.state_dim}"
-        )
-    
-    def _create_process_model(self, config: UnifiedConfig, dt: float) -> CompositeProcessModel:
-        """
-        根据配置创建过程模型
-        
-        Args:
-            config: 统一配置
-            dt: 时间步长
-            
-        Returns:
-            组合过程模型
-        """
-        # 从config.motion中获取平移模型类型
-        trans_type_map = {
-            TranslationModel.CV: TranslationModelType.CV,
-            TranslationModel.CA: TranslationModelType.CA,
-            TranslationModel.Singer: TranslationModelType.SINGER,
-        }
-        trans_type = trans_type_map.get(config.motion.translation_model, TranslationModelType.CV)
-        
-        # 创建配置
-        trans_config = TranslationConfig(
-            cv_process_noise_vel=config.motion.cv_process_noise_vel,
-            ca_process_noise_acc=config.motion.ca_process_noise_acc,
-            singer_alpha=config.motion.singer_alpha,
-            singer_sigma=config.motion.singer_sigma,
-        )
-        
-        rot_config = RotationConfig(
-            cv_process_noise_rate=config.spin.spin_process_noise_delta_rate,
-            ca_process_noise_acc=config.spin.spin_process_noise_delta_acc,
-        )
-        
-        struct_config = StructuralConfig(
-            process_noise_r=config.motion.process_noise_r,
-            process_noise_dz=config.motion.process_noise_dz,
-        )
-        
-        # 创建组合模型（旋转模型默认使用CV）
-        return create_default_process_model(
-            translation_type=trans_type,
-            rotation_type=RotationModelType.CV,
-            translation_config=trans_config,
-            rotation_config=rot_config,
-            structural_config=struct_config,
-            n_dims=3
-        )
+        logger.info("DualRadiusSpinUKF initialized")
     
     # ==================== 属性实现 ====================
     
     @property
-    def process_model(self) -> CompositeProcessModel:
-        """获取过程模型"""
-        return self._motion_model
-    
-    @property
-    def state_idx(self) -> DynamicStateIndex:
-        """获取动态状态索引访问器"""
-        return self._state_idx
-    
-    @property
     def state_dim(self) -> int:
-        """状态维度（由过程模型决定）"""
-        return self._motion_model.state_dim
+        return 11
     
     @property
     def obs_dim(self) -> int:
@@ -236,48 +125,39 @@ class DualRadiusSpinUKF(BaseUKF):
         if len(observations) == 0:
             raise ValueError("At least one observation required for initialization")
         
-        # 接口说明：接受 armor 观测（装甲板位置与yaw，yaw为中心->装甲板的径向方向）
-        # trackers 传入 panel_id 以指示使用 r1 或 r2 进行反推中心位置
         obs = observations[0]
-
-        # 通过panel_id选择半径以反推中心位置
-        panel_id = kwargs.get('panel_id', None)
-        if panel_id is None:
-            # 如果未提供panel_id，默认使用r1（与早期实现兼容）
-            use_r = r1
-            panel_angle = 0.0
-        else:
-            use_r = r1 if (panel_id % 2 == 0) else r2
-            panel_angle = panel_id * (np.pi / 2)
-
-        # armor_yaw定义为径向外法向（中心指向装甲板）
-        # center = armor - r * unit(armor_yaw)
-        center_x = obs.x - use_r * np.cos(obs.yaw)
-        center_y = obs.y - use_r * np.sin(obs.yaw)
+        
+        # 从装甲板位置反推中心位置
+        # armor_yaw指向中心，因此：center = armor + r * [cos(armor_yaw), sin(armor_yaw)]
+        # 初始化时假设使用r1
+        center_x = obs.x + r1 * np.cos(obs.yaw)
+        center_y = obs.y + r1 * np.sin(obs.yaw)
         center_z = obs.z
-        # 由装甲板yaw减去panel_angle得到center_yaw
-        center_yaw = normalize_angle(obs.yaw - panel_angle)
+        center_yaw = obs.yaw  # 首帧假设panel_idx=0
         
         # 分解yaw
         self.k, delta = decompose_yaw(center_yaw)
         self.last_k = self.k
         
-        # 设置状态（使用动态索引）
-        idx = self._state_idx
-        self._x[idx.X] = center_x
-        self._x[idx.VX] = 0.0
-        self._x[idx.Y] = center_y
-        self._x[idx.VY] = 0.0
-        self._x[idx.Z] = center_z
-        self._x[idx.VZ] = 0.0
-        self._x[idx.DELTA] = delta
-        self._x[idx.DELTA_RATE] = 0.0
-        self._x[idx.R1] = r1
-        self._x[idx.R2] = r2
-        self._x[idx.DZA] = dza
+        # 设置状态
+        self._x[StateIndex.X] = center_x
+        self._x[StateIndex.VX] = 0.0
+        self._x[StateIndex.Y] = center_y
+        self._x[StateIndex.VY] = 0.0
+        self._x[StateIndex.Z] = center_z
+        self._x[StateIndex.VZ] = 0.0
+        self._x[StateIndex.DELTA] = delta
+        self._x[StateIndex.DELTA_RATE] = 0.0
+        self._x[StateIndex.R1] = r1
+        self._x[StateIndex.R2] = r2
+        self._x[StateIndex.DZA] = dza
         
-        # 初始化协方差（使用过程模型提供的初始协方差）
-        self._P = self._motion_model.get_initial_covariance()
+        # 初始化协方差
+        self._P = np.eye(self.state_dim)
+        self._P[:6, :6] *= 0.1      # 位置和速度
+        self._P[6:8, 6:8] *= 0.3    # delta和delta_rate
+        self._P[8:10, 8:10] *= 0.01 # r1, r2
+        self._P[10, 10] *= 0.05     # dza
         
         self._initialized = True
         
@@ -289,27 +169,55 @@ class DualRadiusSpinUKF(BaseUKF):
     # ==================== 过程模型 ====================
     
     def _build_process_noise(self) -> np.ndarray:
-        """
-        构建过程噪声矩阵
+        """构建过程噪声矩阵 (11x11)"""
+        Q = np.zeros((self.state_dim, self.state_dim))
         
-        委托给组合过程模型
-        """
-        return self._motion_model.build_Q(self.dt)
+        # 位置-速度噪声块 (简化的CA模型)
+        q_pos = self.config.motion.ca_process_noise_acc
+        dt = self.dt
+        for i in range(3):
+            idx = i * 2
+            # [pos, vel] 块的噪声
+            Q[idx, idx] = (dt**4 / 4) * q_pos**2
+            Q[idx, idx+1] = (dt**3 / 2) * q_pos**2
+            Q[idx+1, idx] = (dt**3 / 2) * q_pos**2
+            Q[idx+1, idx+1] = (dt**2) * q_pos**2
+        
+        # Delta和delta_rate噪声
+        q_spin = self.config.spin.spin_process_noise_delta_rate
+        Q[StateIndex.DELTA, StateIndex.DELTA] = (dt**2) * q_spin**2
+        Q[StateIndex.DELTA, StateIndex.DELTA_RATE] = dt * q_spin**2
+        Q[StateIndex.DELTA_RATE, StateIndex.DELTA] = dt * q_spin**2
+        Q[StateIndex.DELTA_RATE, StateIndex.DELTA_RATE] = q_spin**2
+        
+        # 结构参数噪声
+        Q[StateIndex.R1, StateIndex.R1] = self.config.motion.process_noise_r**2
+        Q[StateIndex.R2, StateIndex.R2] = self.config.motion.process_noise_r**2
+        Q[StateIndex.DZA, StateIndex.DZA] = (self.config.motion.process_noise_dz * 0.1)**2
+        
+        return Q
     
     def _process_model(self, x: np.ndarray, dt: float) -> np.ndarray:
         """
-        状态转移方程 (抽象方法实现)
+        过程模型
         
-        委托给组合过程模型
-        
-        Args:
-            x: 状态向量
-            dt: 时间步长
-            
-        Returns:
-            预测状态向量
+        运动方程:
+        - 平移: pos += vel * dt
+        - 自旋: delta += delta_rate * dt
+        - 结构参数: 保持不变（随机游走在噪声中体现）
         """
-        return self._motion_model.predict(x, dt)
+        x_next = x.copy()
+        
+        # 平移更新
+        for i in range(3):
+            pos_idx = i * 2
+            vel_idx = i * 2 + 1
+            x_next[pos_idx] = x[pos_idx] + x[vel_idx] * dt
+        
+        # Delta更新（不做归一化，保持连续性）
+        x_next[StateIndex.DELTA] = x[StateIndex.DELTA] + x[StateIndex.DELTA_RATE] * dt
+        
+        return x_next
     
     # ==================== 观测模型 ====================
     
@@ -322,13 +230,7 @@ class DualRadiusSpinUKF(BaseUKF):
         **kwargs
     ) -> np.ndarray:
         """
-        观测模型: 从中心状态预测装甲板位置和yaw
-        
-        坐标系说明：
-        - 使用相机坐标系
-        - armor_yaw定义为径向方向（中心指向装甲板）
-        - center_yaw是旋转中心的朝向
-        - armor_yaw = center_yaw + panel_angle
+        观测模型: 从中心状态预测装甲板位置
         
         Args:
             x: 状态向量
@@ -337,33 +239,29 @@ class DualRadiusSpinUKF(BaseUKF):
             panel_angle: Panel相对中心的角度（0, π/2, π, 3π/2）
             
         Returns:
-            预测观测 [x_armor, y_armor, z_armor, center_yaw]
-            注意：返回center_yaw而非armor_yaw，因为更新时会将obs.yaw转换为center_yaw
+            预测观测 [x_obs, y_obs, z_obs, center_yaw]  # 注意：返回center_yaw
         """
-        # 使用动态状态索引
-        idx = self._state_idx
-        
-        x_c = x[idx.X]
-        y_c = x[idx.Y]
-        z_mean = x[idx.Z]
-        delta = x[idx.DELTA]
-        dza = x[idx.DZA]
+        x_c = x[StateIndex.X]
+        y_c = x[StateIndex.Y]
+        z_mean = x[StateIndex.Z]
+        delta = x[StateIndex.DELTA]
+        dza = x[StateIndex.DZA]
         
         # 获取半径
         if r_type == 'r1':
-            radius = x[idx.R1]
+            radius = x[StateIndex.R1]
         else:
-            radius = x[idx.R2]
+            radius = x[StateIndex.R2]
         
         # 完整yaw = k*π + delta
         center_yaw = compose_yaw(self.k, delta)
         
-        # 装甲板yaw（径向方向：中心指向装甲板）
-        armor_yaw = normalize_angle(center_yaw + panel_angle)
+        # 装甲板朝向（outward）= center_yaw + panel_angle
+        armor_yaw_outward = normalize_angle(center_yaw + panel_angle)
         
-        # 装甲板位置 = 中心 + 半径 * 径向单位向量
-        x_obs = x_c + radius * np.cos(armor_yaw)
-        y_obs = y_c + radius * np.sin(armor_yaw)
+        # 装甲板位置 = 中心 + R(outward) * [r, 0]
+        x_obs = x_c + radius * np.cos(armor_yaw_outward)
+        y_obs = y_c + radius * np.sin(armor_yaw_outward)
         
         # 层级高度偏移
         if armor_layer == 'upper':
@@ -372,7 +270,7 @@ class DualRadiusSpinUKF(BaseUKF):
             layer_offset = -dza
         z_obs = z_mean + layer_offset
         
-        # 返回center_yaw供更新使用（更新时会将obs.yaw转换为center_yaw）
+        # 返回center_yaw供更新使用
         return np.array([x_obs, y_obs, z_obs, center_yaw])
     
     def _observation_model_geometry(self, x: np.ndarray) -> np.ndarray:
@@ -382,14 +280,13 @@ class DualRadiusSpinUKF(BaseUKF):
         Returns:
             [x_center, y_center, z, r1, r2, dza]
         """
-        idx = self._state_idx
         return np.array([
-            x[idx.X],
-            x[idx.Y],
-            x[idx.Z],
-            x[idx.R1],
-            x[idx.R2],
-            x[idx.DZA]
+            x[StateIndex.X],
+            x[StateIndex.Y],
+            x[StateIndex.Z],
+            x[StateIndex.R1],
+            x[StateIndex.R2],
+            x[StateIndex.DZA]
         ])
     
     # ==================== 预测步骤 ====================
@@ -402,15 +299,12 @@ class DualRadiusSpinUKF(BaseUKF):
         
         dt = dt if dt is not None else self.dt
         
-        # 更新过程噪声（如果dt变化了）
-        self._Q = self._motion_model.build_Q(dt)
-        
         # 生成Sigma点
         sigma_points = self.generate_sigma_points(self._x, self._P)
         
-        # 传播Sigma点（使用过程模型）
+        # 传播Sigma点
         sigma_points_pred = np.array([
-            self._motion_model.predict(sp, dt) for sp in sigma_points
+            self._process_model(sp, dt) for sp in sigma_points
         ])
         
         # 获取权重
@@ -420,14 +314,13 @@ class DualRadiusSpinUKF(BaseUKF):
         self._x = np.sum(Wm[:, np.newaxis] * sigma_points_pred, axis=0)
         
         # 计算预测协方差（delta使用特殊角度差）
-        idx = self._state_idx
         P_pred = np.zeros((self.state_dim, self.state_dim))
         for i in range(len(sigma_points_pred)):
             diff = sigma_points_pred[i] - self._x
             # delta差使用特殊处理
-            diff[idx.DELTA] = delta_angle_diff(
-                sigma_points_pred[i, idx.DELTA],
-                self._x[idx.DELTA]
+            diff[StateIndex.DELTA] = delta_angle_diff(
+                sigma_points_pred[i, StateIndex.DELTA],
+                self._x[StateIndex.DELTA]
             )
             P_pred += Wc[i] * np.outer(diff, diff)
         
@@ -520,20 +413,15 @@ class DualRadiusSpinUKF(BaseUKF):
         Args:
             panel_angle: Panel相对中心的角度（0, π/2, π, 3π/2）
         """
-        idx = self._state_idx  # 动态状态索引
-        
         # 模态选择
         # 注意：obs.yaw是装甲板yaw，需要减去panel_angle得到center_yaw
         obs_yaw = obs.yaw
         center_yaw_obs = normalize_angle(obs_yaw - panel_angle)
-        current_delta = self._x[idx.DELTA]
-        
-        # 修复: 使用select_best_k_from_center_yaw，正确处理center_yaw作为观测
-        best_k = select_best_k_from_center_yaw(current_delta, center_yaw_obs, self.k)
+        current_delta = self._x[StateIndex.DELTA]
+        best_k = select_best_k(current_delta, center_yaw_obs, self.k)
         
         if self.last_k is not None and best_k != self.last_k:
             self.mode_switches += 1
-            logger.debug(f"Mode switch: k={self.last_k} → k={best_k}, delta={current_delta:.3f}, center_yaw_obs={center_yaw_obs:.3f}")
         self.k = best_k
         self.last_k = self.k
         
@@ -604,18 +492,18 @@ class DualRadiusSpinUKF(BaseUKF):
         if K is None:
             return False
         
-        # 关键：强制冻结参数（使用动态索引）
-        K[idx.R1, :] = 0.0
-        K[idx.R2, :] = 0.0
-        K[idx.DZA, :] = 0.0
+        # 关键：强制冻结参数
+        K[StateIndex.R1, :] = 0.0
+        K[StateIndex.R2, :] = 0.0
+        K[StateIndex.DZA, :] = 0.0
         
         # 低置信度时降低位置更新权重（仅位置，不影响Yaw）
         # R矩阵放大已在447-451行完成，这里额外降低K矩阵作为双重保护
         if position_confidence < 0.9:
             weight = self.config.ukf.single_obs_update_weight_pos
-            for state_idx in [idx.X, idx.Y, idx.VX, 
-                              idx.VY, idx.Z, idx.VZ]:
-                K[state_idx, :] *= weight
+            for idx in [StateIndex.X, StateIndex.Y, StateIndex.VX, 
+                       StateIndex.VY, StateIndex.Z, StateIndex.VZ]:
+                K[idx, :] *= weight
         
         # 应用更新
         self.apply_kalman_update(K, innov, Pzz)
@@ -652,13 +540,8 @@ class DualRadiusSpinUKF(BaseUKF):
                 layer_1, layer_2 = 'lower', 'upper'
         
         # 计算机器人中心（射线交点）
-        # 注意：obs.yaw为armor_yaw（径向方向：中心→装甲板）
-        # 需要反向：装甲板→中心，即加π
-        yaw1_to_center = normalize_angle(obs1.yaw + np.pi)
-        yaw2_to_center = normalize_angle(obs2.yaw + np.pi)
-        
-        cos_yaw1, sin_yaw1 = np.cos(yaw1_to_center), np.sin(yaw1_to_center)
-        cos_yaw2, sin_yaw2 = np.cos(yaw2_to_center), np.sin(yaw2_to_center)
+        cos_yaw1, sin_yaw1 = np.cos(obs1.yaw), np.sin(obs1.yaw)
+        cos_yaw2, sin_yaw2 = np.cos(obs2.yaw), np.sin(obs2.yaw)
         
         A = np.array([
             [cos_yaw1, -cos_yaw2],
@@ -685,13 +568,12 @@ class DualRadiusSpinUKF(BaseUKF):
         r_to_2 = np.sqrt((obs2.x - x_center)**2 + (obs2.y - y_center)**2)
         
         # 根据r_type分配半径
-        idx = self._state_idx
         if r_type_1 == 'r1':
             r1_est = r_to_1
-            r2_est = r_to_2 if r_type_2 == 'r2' else self._x[idx.R2]
+            r2_est = r_to_2 if r_type_2 == 'r2' else self._x[StateIndex.R2]
         else:
             r2_est = r_to_1
-            r1_est = r_to_2 if r_type_2 == 'r1' else self._x[idx.R1]
+            r1_est = r_to_2 if r_type_2 == 'r1' else self._x[StateIndex.R1]
         
         # 计算高度参数
         is_different_layers = (layer_1 != layer_2)
@@ -701,7 +583,7 @@ class DualRadiusSpinUKF(BaseUKF):
             dza_noise_factor = 1.5
             z_noise_factor = 1.0
         else:
-            dza_est = self._x[idx.DZA]
+            dza_est = self._x[StateIndex.DZA]
             z_mean_obs = (obs1.z + obs2.z) / 2.0
             if layer_1 == 'upper':
                 z_est = z_mean_obs - dza_est
@@ -757,15 +639,15 @@ class DualRadiusSpinUKF(BaseUKF):
         
         # 低置信度时冻结dza
         if height_confidence < 0.3:
-            K[idx.DZA, :] = 0.0
+            K[StateIndex.DZA, :] = 0.0
         
         self.apply_kalman_update(K, innov, Pzz)
         self._apply_constraints()
         
         logger.info(
-            f"Dual observation update: center=({self._x[idx.X]:.3f}, "
-            f"{self._x[idx.Y]:.3f}), r1={self._x[idx.R1]:.3f}, "
-            f"r2={self._x[idx.R2]:.3f}"
+            f"Dual observation update: center=({self._x[StateIndex.X]:.3f}, "
+            f"{self._x[StateIndex.Y]:.3f}), r1={self._x[StateIndex.R1]:.3f}, "
+            f"r2={self._x[StateIndex.R2]:.3f}"
         )
         
         return True
@@ -777,9 +659,8 @@ class DualRadiusSpinUKF(BaseUKF):
         if not self.is_dza_converged():
             return 'lower'  # 默认
         
-        idx = self._state_idx
-        z_mean = self._x[idx.Z]
-        dza = self._x[idx.DZA]
+        z_mean = self._x[StateIndex.Z]
+        dza = self._x[StateIndex.DZA]
         
         z_upper = z_mean + dza
         z_lower = z_mean - dza
@@ -798,25 +679,23 @@ class DualRadiusSpinUKF(BaseUKF):
         if not self._initialized:
             return False
         
-        idx = self._state_idx
-        dza_variance = self._P[idx.DZA, idx.DZA]
-        dza_value = abs(self._x[idx.DZA])
+        dza_variance = self._P[StateIndex.DZA, StateIndex.DZA]
+        dza_value = abs(self._x[StateIndex.DZA])
         
         return (dza_variance < variance_threshold) and (dza_value > min_value_threshold)
     
     def _handle_mode_switch(self):
         """处理delta越界导致的模态切换"""
-        idx = self._state_idx
-        delta = self._x[idx.DELTA]
+        delta = self._x[StateIndex.DELTA]
         
         if delta > np.pi / 2:
-            self._x[idx.DELTA] = delta - np.pi
+            self._x[StateIndex.DELTA] = delta - np.pi
             self.k = 1 - self.k
             if self.last_k is not None and self.k != self.last_k:
                 self.mode_switches += 1
             self.last_k = self.k
         elif delta < -np.pi / 2:
-            self._x[idx.DELTA] = delta + np.pi
+            self._x[StateIndex.DELTA] = delta + np.pi
             self.k = 1 - self.k
             if self.last_k is not None and self.k != self.last_k:
                 self.mode_switches += 1
@@ -824,12 +703,11 @@ class DualRadiusSpinUKF(BaseUKF):
     
     def _apply_constraints(self):
         """应用状态约束"""
-        idx = self._state_idx
         self._x = apply_state_constraints(
             self._x,
-            r1_idx=idx.R1,
-            r2_idx=idx.R2,
-            dza_idx=idx.DZA,
+            r1_idx=StateIndex.R1,
+            r2_idx=StateIndex.R2,
+            dza_idx=StateIndex.DZA,
             min_radius=self.config.constraints.min_radius,
             max_radius=self.config.constraints.max_radius,
             min_dz=0.0,  # dza必须非负
@@ -900,13 +778,11 @@ class DualRadiusSpinUKF(BaseUKF):
     
     def get_yaw(self) -> float:
         """获取完整yaw角"""
-        idx = self._state_idx
-        return compose_yaw(self.k, self._x[idx.DELTA])
+        return compose_yaw(self.k, self._x[StateIndex.DELTA])
     
     def get_delta(self) -> float:
         """获取delta角"""
-        idx = self._state_idx
-        return self._x[idx.DELTA]
+        return self._x[StateIndex.DELTA]
     
     def get_k(self) -> int:
         """获取离散模态k"""
@@ -914,39 +790,35 @@ class DualRadiusSpinUKF(BaseUKF):
     
     def get_center_position(self) -> np.ndarray:
         """获取中心位置 [x, y, z]"""
-        idx = self._state_idx
         return np.array([
-            self._x[idx.X],
-            self._x[idx.Y],
-            self._x[idx.Z]
+            self._x[StateIndex.X],
+            self._x[StateIndex.Y],
+            self._x[StateIndex.Z]
         ])
     
     def get_radii(self) -> Tuple[float, float]:
         """获取半径 (r1, r2)"""
-        idx = self._state_idx
-        return self._x[idx.R1], self._x[idx.R2]
+        return self._x[StateIndex.R1], self._x[StateIndex.R2]
     
     def get_dza(self) -> float:
         """获取装甲板高度差"""
-        idx = self._state_idx
-        return self._x[idx.DZA]
+        return self._x[StateIndex.DZA]
     
     def get_state_dict(self) -> Dict[str, Any]:
         """获取状态字典"""
-        idx = self._state_idx
         return {
-            'x': self._x[idx.X],
-            'y': self._x[idx.Y],
-            'z': self._x[idx.Z],
-            'vx': self._x[idx.VX],
-            'vy': self._x[idx.VY],
-            'vz': self._x[idx.VZ],
+            'x': self._x[StateIndex.X],
+            'y': self._x[StateIndex.Y],
+            'z': self._x[StateIndex.Z],
+            'vx': self._x[StateIndex.VX],
+            'vy': self._x[StateIndex.VY],
+            'vz': self._x[StateIndex.VZ],
             'yaw': self.get_yaw(),
-            'delta': self._x[idx.DELTA],
-            'delta_rate': self._x[idx.DELTA_RATE],
+            'delta': self._x[StateIndex.DELTA],
+            'delta_rate': self._x[StateIndex.DELTA_RATE],
             'k': self.k,
-            'r1': self._x[idx.R1],
-            'r2': self._x[idx.R2],
-            'dza': self._x[idx.DZA],
+            'r1': self._x[StateIndex.R1],
+            'r2': self._x[StateIndex.R2],
+            'dza': self._x[StateIndex.DZA],
             'mode_switches': self.mode_switches,
         }

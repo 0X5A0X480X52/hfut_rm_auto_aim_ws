@@ -1,13 +1,21 @@
 # Max Entropy Tracker 参数配置
+#
+# 坐标系说明：
+#   - UKF 计算统一在**相机坐标系**下进行
+#   - 相机坐标系：X轴右，Y轴下，Z轴前（光轴方向）
+#   - Yaw角定义：装甲板朝向为旋转中心指向装甲板的径向方向（外法向）
+#   - 详见 docs/坐标系定义.md
 
 max_entropy_tracker_node:
   ros__parameters:
-    # 坐标系配置
-    target_frame: "odom"                    # 目标坐标系（世界坐标系）
-    source_frame: "camera_optical_frame"    # 源坐标系（相机坐标系）
+    # ========== 坐标系配置 ==========
+    # 注意：UKF 内部计算在相机坐标系下，target_frame 仅用于 TF 变换输出
+    target_frame: "odom"                    # 目标坐标系（世界坐标系，用于输出）
+    source_frame: "camera_optical_frame"    # 源坐标系（相机坐标系，UKF计算坐标系）
     
+    # ========== 基本配置 ==========
     # 预测频率（Hz）- 定时器频率
-    predict_rate: 100.0
+    predict_rate: 20.0
     
     # 跟踪器默认参数
     default_r1: 0.15                        # 默认半径1（米）
@@ -27,49 +35,51 @@ max_entropy_tracker_node:
     # 震荡检测
     enable_oscillation_detection: false
 
-    # UKF 参数（部分）
+    # ========== UKF 参数 ==========
     ukf.alpha: 0.001
     ukf.beta: 2.0
     ukf.kappa: 0.0
-    ukf.obs_noise_pos: 1.0
-    ukf.obs_noise_yaw: 1.0
-    ukf.dual_obs_noise_pos: 0.1
-    ukf.dual_obs_noise_yaw: 0.3
-    ukf.dual_obs_geometry_noise_scale: 0.5
+    ukf.obs_noise_pos: 0.05
+    ukf.obs_noise_yaw: 0.05
+    ukf.dual_obs_noise_pos: 0.01
+    ukf.dual_obs_noise_yaw: 0.03
+    ukf.dual_obs_geometry_noise_scale: 0.2
     ukf.single_obs_update_weight_pos: 0.05
     ukf.enable_innovation_gating: false
     ukf.innovation_gate_chi2_threshold: 9.49
 
-    # Motion model 参数
+    # ========== Motion model 参数（平移模型）==========
+    # 可选值: "CV"（恒速）, "CA"（恒加速）, "Singer"（Singer模型）
     motion.translation_model: "CA"
-    motion.cv_process_noise_vel: 1.0
-    motion.ca_process_noise_acc: 1.0
-    motion.singer_alpha: 0.5
-    motion.singer_sigma: 2.0
-    motion.process_noise_r: 0.2
-    motion.process_noise_dz: 0.05
+    motion.cv_process_noise_vel: 0.5        # CV模型速度过程噪声
+    motion.ca_process_noise_acc: 1.0       # CA模型加速度过程噪声
+    motion.singer_alpha: 0.5                # Singer模型机动时间常数倒数
+    motion.singer_sigma: 2.0                # Singer模型加速度标准差
+    motion.process_noise_r: 0.02             # 半径过程噪声
+    motion.process_noise_dz: 0.05           # 高度差过程噪声
 
-    # Spin model 参数
-    spin.spin_process_noise_yaw_rate: 0.3
-    spin.spin_process_noise_yaw_acc: 1.0
-    spin.spin_process_noise_delta_rate: 0.3
-    spin.spin_process_noise_delta_acc: 3.0
+    # ========== Spin model 参数（旋转模型）==========
+    # 旋转模型固定使用 CA（恒角加速度）
+    spin.spin_process_noise_yaw_rate: 0.3       # yaw角速度过程噪声
+    spin.spin_process_noise_yaw_acc: 1.0        # yaw角加速度过程噪声
+    spin.spin_process_noise_delta_rate: 0.3     # delta角速度过程噪声
+    spin.spin_process_noise_delta_acc: 3.0      # delta角加速度过程噪声
 
-    # Entropy 参数
+    # ========== Entropy 参数 ==========
     entropy.temperature: 2.0
     entropy.use_adaptive: true
     entropy.k_prior_weight: 0.7
 
-    # Tracker 参数
+    # ========== Tracker 参数 ==========
     tracker.tracking_thres: 2
     tracker.lost_thres: 8
     tracker.temp_lost_thres: 3
-    tracker.max_match_distance: 0.05
-    tracker.max_match_yaw_diff: 0.05
+    tracker.max_match_distance: 2.0
+    tracker.max_match_yaw_diff: 1.0
     tracker.n_panels: 4
     tracker.panel_angle_step: 1.5707963267948966
 
-    # Constraint 参数
+    # ========== Constraint 参数 ==========
     constraints.min_radius: 0.12
     constraints.max_radius: 0.5
     constraints.min_dz: -1.0

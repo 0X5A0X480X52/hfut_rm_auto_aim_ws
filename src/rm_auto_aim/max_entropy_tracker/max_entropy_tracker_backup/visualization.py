@@ -120,22 +120,16 @@ def build_tracker_markers(
         marker_array.markers.append(text_marker)
         
         # 3. 预测的装甲板位置 CUBE（4面）
-        # 注意：装甲板编号遵循UKF中的panel_angle定义
-        # panel_angle相对center_yaw: 0, π/2, π, 3π/2
-        # armor_yaw = center_yaw + panel_angle（径向方向：中心指向装甲板）
         for panel_idx in range(4):
             # 计算装甲板位置
             panel_angle = yaw + panel_idx * (np.pi / 2)  # 0, 90, 180, 270 度
             r = r1 if panel_idx % 2 == 0 else r2  # 交替使用 r1, r2
             
             # 装甲板中心高度偏移（upper/lower层）
-            # panel_idx: 0->lower(r1), 1->upper(r2), 2->lower(r1), 3->upper(r2)
-            armor_layer = 'upper' if panel_idx % 2 == 1 else 'lower'
-            z_offset = dza if armor_layer == 'upper' else -dza
+            z_offset = dza / 2 if panel_idx % 2 == 1 else -dza / 2
             
-            # 装甲板位置 = 中心 + 半径 * 径向单位向量（center指向armor）
-            armor_x = pos[0] + r * np.cos(panel_angle)
-            armor_y = pos[1] + r * np.sin(panel_angle)
+            armor_x = pos[0] - r * np.cos(panel_angle)  # 装甲板朝外
+            armor_y = pos[1] - r * np.sin(panel_angle)
             armor_z = pos[2] + z_offset
             
             armor_marker = Marker()

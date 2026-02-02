@@ -116,9 +116,9 @@ class MaxEntropyTrackerNode(Node):
             10
         )
         
-        # Predict is performed only when observations arrive (triggered updates).
-        # Do not create periodic predict timer to avoid publishing stale/erroneous targets.
-        self.predict_timer = None
+        # 创建定时器用于 predict
+        predict_period = 1.0 / self.predict_rate if self.predict_rate > 0 else 0.01
+        self.predict_timer = self.create_timer(predict_period, self.predict_callback)
         
         # 上次消息时间，用于计算 dt
         self._last_msg_time: Optional[float] = None
@@ -129,7 +129,7 @@ class MaxEntropyTrackerNode(Node):
         self.get_logger().info(
             f"MaxEntropyTrackerNode initialized: "
             f"target_frame={self.target_frame}, "
-            f"update_mode=triggered_on_observation"
+            f"predict_rate={self.predict_rate}Hz"
         )
 
     def _log_all_parameters(self):
@@ -285,12 +285,6 @@ class MaxEntropyTrackerNode(Node):
         
         current_time = time.time()
         msg_time = Time.from_msg(msg.header.stamp)
-
-        # Trigger-based prediction: predict all trackers up to current time before processing new observations
-        self.tracker_manager.predict_all(current_time)
-        removed = self.tracker_manager.remove_stale_trackers(current_time)
-        if removed and self.debug_mode:
-            self.get_logger().info(f"Removed stale trackers: {removed}")
         
         # 按机器人ID分组装甲板
         observations_by_robot: Dict[str, List[ObservationData]] = defaultdict(list)

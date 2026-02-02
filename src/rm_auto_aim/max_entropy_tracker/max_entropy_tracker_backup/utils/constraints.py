@@ -90,31 +90,21 @@ def apply_state_constraints(
     return x_constrained
 
 
-def ensure_positive_definite(P: np.ndarray, eps: float = 1e-6) -> np.ndarray:
+def ensure_positive_definite(P: np.ndarray, eps: float = 1e-9) -> np.ndarray:
     """
     确保协方差矩阵正定
     
     Args:
         P: 协方差矩阵
-        eps: 最小特征值阈值（默认为 1e-6）
+        eps: 最小特征值
         
     Returns:
         正定的协方差矩阵
     """
-    # 对称化
+    # 确保对称
     P = (P + P.T) / 2
-
-    # 特征值分解并裁剪负特征值（更稳健）
-    try:
-        eigvals, eigvecs = np.linalg.eigh(P)
-        min_allowed = eps
-        eigvals_clipped = np.clip(eigvals, min_allowed, None)
-        P_pd = (eigvecs * eigvals_clipped) @ eigvecs.T
-        # 对称化并添加微小扰动以避免精度问题
-        P_pd = (P_pd + P_pd.T) / 2
-        P_pd += np.eye(P_pd.shape[0]) * 1e-12
-        return P_pd
-    except Exception:
-        # 如果分解失败，退回到简单的对角扰动方法
-        P += np.eye(P.shape[0]) * eps
-        return P
+    
+    # 添加小扰动确保正定
+    P += np.eye(P.shape[0]) * eps
+    
+    return P
