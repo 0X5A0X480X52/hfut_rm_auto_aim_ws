@@ -61,12 +61,13 @@ class MaxEntropyTrackerNode(Node):
         self.enable_csv_logging = self.get_parameter('enable_csv_logging').value
         self.csv_log_path = self.get_parameter('csv_log_path').value
         self.debug_mode = self.get_parameter('debug_mode').value
+        self.visualization_frame = self.get_parameter('visualization_frame').value
         
         # 创建配置并应用参数
         self.config = UnifiedConfig.create_default()
         self._apply_parameters_to_config()
 
-        # 创建 TF 处理器
+        # 创建 TF 处理器（直接使用 odom 世界坐标系）
         self.tf_handler = TFHandler(self, self.target_frame)
         
         # 创建跟踪管理器
@@ -165,6 +166,9 @@ class MaxEntropyTrackerNode(Node):
         d('csv_log_path', '/tmp/max_entropy_tracker_log.csv')
         d('debug_mode', False)
         d('enable_oscillation_detection', False)
+        
+        # 可视化参数
+        d('visualization_frame', 'odom')  # 可视化发布的坐标系
 
         # UKF 参数
         d('ukf.alpha', 0.001)
@@ -305,25 +309,19 @@ class MaxEntropyTrackerNode(Node):
                 timestamp=msg_time.nanoseconds / 1e9
             )
             
-            # TF 变换到世界坐标系
-            transformed_pose = self.tf_handler.transform_armor(
+            # 变换到 odom 世界坐标系
+            obs = self.tf_handler.transform_armor_to_observation(
                 armor,
                 source_frame,
                 msg_time
             )
             
-            if transformed_pose is None:
+            if obs is None:
                 if self.debug_mode:
                     self.get_logger().warn(
                         f"TF transform failed for armor {armor.number}"
                     )
                 continue
-            
-            # 转换为 ObservationData
-            obs = pose_to_observation(
-                transformed_pose.pose,
-                timestamp=msg_time.nanoseconds / 1e9
-            )
             
             # 按机器人ID分组
             robot_id = armor.number
@@ -385,9 +383,9 @@ class MaxEntropyTrackerNode(Node):
             target_msg = self._build_target_message(header, robot_id, tracker)
             self.target_pub.publish(target_msg)
         
-        # 发布可视化 Marker
+        # 发布可视化 Marker（直接在odom坐标系中）
         marker_array = build_tracker_markers(
-            self.target_frame,
+            self.visualization_frame,
             self.tracker_manager.get_all_trackers(),
             header.stamp
         )
@@ -396,6 +394,8 @@ class MaxEntropyTrackerNode(Node):
     def _build_target_message(self, header: Header, robot_id: str, tracker) -> Target:
         """
         构建 Target 消息
+        
+        注意：tracker 内部使用虚拟坐标系，发布时需要变换到 odom 坐标系
         
         Args:
             header: 消息头
@@ -413,28 +413,34 @@ class MaxEntropyTrackerNode(Node):
         target.id = robot_id
         target.armors_num = 4  # 4面装甲板
         
-        # 位置
-        pos = tracker.get_center_position()
-        target.position = Point(x=float(pos[0]), y=float(pos[1]), z=float(pos[2]))
+        # 获取位置和 yaw（已经在 odom 坐标系中）
+        pos_odom = tracker.get_center_position()
+        yaw_odom = tracker.get_yaw()
+        target.position = Point(x=float(pos_odom[0]), y=float(pos_odom[1]), z=float(pos_odom[2]))
         
-        # 速度（从状态中获取）
+        # 获取速度（已经在 odom 坐标系中）
         state = tracker.get_state()
+        vel_odom = np.array([
+            state.get('vx', 0.0),
+            state.get('vy', 0.0),
+            state.get('vz', 0.0)
+        ])
         target.velocity = Vector3(
-            x=float(state.get('vx', 0.0)),
-            y=float(state.get('vy', 0.0)),
-            z=float(state.get('vz', 0.0))
+            x=float(vel_odom[0]),
+            y=float(vel_odom[1]),
+            z=float(vel_odom[2])
         )
         
-        # yaw 和 yaw 速度
-        target.yaw = float(tracker.get_yaw())
+        # yaw 和 yaw 速度（已经在 odom 坐标系中）
+        target.yaw = float(yaw_odom)
         target.v_yaw = float(state.get('delta_rate', 0.0))
         
-        # 半径
+        # 半径（结构参数，坐标系无关）
         r1, r2 = tracker.get_radii()
         target.radius_1 = float(r1)
         target.radius_2 = float(r2)
         
-        # 高度差
+        # 高度差（结构参数，坐标系无关）
         target.d_za = float(tracker.get_dza())
         target.d_zc = 0.0  # 暂不支持
         

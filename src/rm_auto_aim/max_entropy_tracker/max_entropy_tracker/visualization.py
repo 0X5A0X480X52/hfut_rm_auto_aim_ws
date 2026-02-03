@@ -5,16 +5,23 @@
 - 机器人中心位置（SPHERE）
 - 预测的装甲板位置（CUBE）
 - 速度方向（ARROW）
+
+支持发布到不同坐标系：
+- virtual_camera_frame: 直接使用 tracker 内部状态（虚拟坐标系）
+- odom: 将 tracker 状态变换到世界坐标系后发布
 """
 
 import numpy as np
-from typing import Dict
+from typing import Dict, Optional, TYPE_CHECKING
 from builtin_interfaces.msg import Time as RosTime
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point, Quaternion
 from std_msgs.msg import ColorRGBA
 
 from .trackers.adaptive_armor_tracker import AdaptiveArmorTracker
+
+if TYPE_CHECKING:
+    from .tf_handler import TFHandler
 
 
 # 颜色定义
@@ -46,15 +53,17 @@ def yaw_to_quaternion(yaw: float) -> Quaternion:
 def build_tracker_markers(
     target_frame: str,
     trackers: Dict[str, AdaptiveArmorTracker],
-    timestamp: RosTime
+    timestamp: RosTime,
+    tf_handler: Optional['TFHandler'] = None
 ) -> MarkerArray:
     """
     为所有跟踪器构建可视化 Marker
     
     Args:
-        target_frame: 目标坐标系
+        target_frame: 目标坐标系（通常是 'odom'）
         trackers: robot_id -> tracker 字典
         timestamp: ROS 时间戳
+        tf_handler: TF 处理器（已废弃，现在tracker直接在odom坐标系中工作）
         
     Returns:
         MarkerArray 消息
@@ -66,12 +75,17 @@ def build_tracker_markers(
         if not tracker.is_initialized:
             continue
         
-        # 获取跟踪器状态
+        # 获取跟踪器状态（已经在odom坐标系中）
         pos = tracker.get_center_position()
         yaw = tracker.get_yaw()
         r1, r2 = tracker.get_radii()
         dza = tracker.get_dza()
         state = tracker.get_state()
+        
+        # 获取速度（已经在odom坐标系中）
+        vx = state.get('vx', 0.0)
+        vy = state.get('vy', 0.0)
+        vz = state.get('vz', 0.0)
         
         # 确定颜色
         if tracker.is_tracking:
@@ -159,9 +173,6 @@ def build_tracker_markers(
             marker_array.markers.append(armor_marker)
         
         # 4. 速度方向 ARROW
-        vx = state.get('vx', 0.0)
-        vy = state.get('vy', 0.0)
-        vz = state.get('vz', 0.0)
         speed = np.sqrt(vx**2 + vy**2 + vz**2)
         
         if speed > 0.1:  # 只有速度足够大才显示

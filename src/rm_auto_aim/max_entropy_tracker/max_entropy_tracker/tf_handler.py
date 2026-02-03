@@ -2,6 +2,11 @@
 TF 坐标变换处理模块
 
 提供 TF2 坐标变换功能，将装甲板从相机坐标系变换到世界坐标系
+
+新增：虚拟坐标系支持
+- 虚拟坐标系与相机坐标系原点重合
+- 相对于 odom 只保留 yaw 旋转，消除 roll 和 pitch
+- 确保 UKF 几何模型中 Z 轴平行假设成立
 """
 
 import rclpy
@@ -14,6 +19,10 @@ import tf2_ros
 import tf2_geometry_msgs
 from typing import Optional, Tuple
 import logging
+import numpy as np
+
+from .core.observation import ObservationData
+from .msg_converter import pose_to_observation
 
 logger = logging.getLogger(__name__)
 
@@ -23,15 +32,20 @@ class TFHandler:
     TF 变换处理器
     
     管理 TF2 Buffer 和 Listener，提供坐标变换功能
+    直接在 odom 世界坐标系中工作
     """
     
-    def __init__(self, node: Node, target_frame: str = 'odom'):
+    def __init__(
+        self, 
+        node: Node, 
+        target_frame: str = 'odom'
+    ):
         """
         初始化 TF 处理器
         
         Args:
             node: ROS2 节点实例
-            target_frame: 目标坐标系（世界坐标系）
+            target_frame: 目标坐标系（世界坐标系，通常是 odom）
         """
         self.node = node
         self.target_frame = target_frame
@@ -43,7 +57,7 @@ class TFHandler:
         # 变换查找超时时间
         self.lookup_timeout = Duration(seconds=0.1)
         
-        logger.info(f"TFHandler initialized with target_frame: {target_frame}")
+        logger.info(f"TFHandler initialized: target_frame={target_frame}")
     
     def transform_armor(
         self,
@@ -107,6 +121,34 @@ class TFHandler:
         except Exception as e:
             logger.error(f"Transform execution failed: {e}")
             return None
+    
+    def transform_armor_to_observation(
+        self,
+        armor: Armor,
+        source_frame: str,
+        timestamp: Time
+    ) -> Optional[ObservationData]:
+        """
+        将装甲板位姿变换到 odom 世界坐标系，并转换为 ObservationData
+        
+        Args:
+            armor: Armor 消息（相机坐标系）
+            source_frame: 源坐标系（相机坐标系）
+            timestamp: 消息时间戳
+            
+        Returns:
+            odom 坐标系下的 ObservationData，失败返回 None
+        """
+        # 变换到 odom 坐标系
+        transformed_pose = self.transform_armor(armor, source_frame, timestamp)
+        if transformed_pose is None:
+            return None
+        
+        # 转换为 ObservationData（会自动将法向yaw转换为径向yaw）
+        return pose_to_observation(
+            transformed_pose.pose,
+            timestamp=timestamp.nanoseconds / 1e9
+        )
     
     def _try_latest_transform(
         self,
@@ -181,3 +223,4 @@ class TFHandler:
         except Exception as e:
             logger.debug(f"Get transform failed: {e}")
             return None
+

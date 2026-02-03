@@ -67,25 +67,33 @@ def armor_to_observation(
     将 Armor 消息转换为 ObservationData
     
     Args:
-        armor: ROS2 Armor 消息
+        armor: ROS2 Armor 消息（相机坐标系）
         timestamp: 可选时间戳（秒）
         
     Returns:
         ObservationData 观测数据
+        
+    Note:
+        装甲板检测器输出的 orientation 表示装甲板法向（Z轴指向观察者）
+        但 tracker 期望的 yaw 是径向方向（中心指向装甲板）
+        因此需要加 π 进行转换
     """
     # 提取位置
     x = armor.pose.position.x
     y = armor.pose.position.y
     z = armor.pose.position.z
     
-    # 提取 yaw
-    yaw = quaternion_to_yaw(armor.pose.orientation)
+    # 提取 yaw（装甲板法向）
+    yaw_normal = quaternion_to_yaw(armor.pose.orientation)
+    
+    # 转换为径向方向（中心指向装甲板）：法向 + π = 径向
+    yaw_radial = yaw_normal + math.pi
     
     return ObservationData(
         x=x,
         y=y,
         z=z,
-        yaw=yaw,
+        yaw=yaw_radial,
         timestamp=timestamp
     )
 
@@ -98,22 +106,32 @@ def pose_to_observation(
     将 geometry_msgs/Pose 转换为 ObservationData
     
     Args:
-        pose: ROS2 Pose 消息
+        pose: ROS2 Pose 消息（来自装甲板检测）
         timestamp: 可选时间戳（秒）
         
     Returns:
         ObservationData 观测数据
+        
+    Note:
+        装甲板检测器输出的 orientation 表示装甲板法向（Z轴指向观察者）
+        但 tracker 期望的 yaw 是径向方向（中心指向装甲板）
+        因此需要加 π 进行转换
     """
     x = pose.position.x
     y = pose.position.y
     z = pose.position.z
-    yaw = quaternion_to_yaw(pose.orientation)
+    
+    # 提取 yaw（装甲板法向）
+    yaw_normal = quaternion_to_yaw(pose.orientation)
+    
+    # 转换为径向方向（中心指向装甲板）：法向 + π = 径向
+    yaw_radial = yaw_normal + math.pi
     
     return ObservationData(
         x=x,
         y=y,
         z=z,
-        yaw=yaw,
+        yaw=yaw_radial,
         timestamp=timestamp
     )
 
