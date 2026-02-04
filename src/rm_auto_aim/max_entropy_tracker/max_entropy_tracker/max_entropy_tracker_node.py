@@ -121,9 +121,6 @@ class MaxEntropyTrackerNode(Node):
         # Do not create periodic predict timer to avoid publishing stale/erroneous targets.
         self.predict_timer = None
         
-        # 上次消息时间，用于计算 dt
-        self._last_msg_time: Optional[float] = None
-        
         # 打印所有参数以便排查配置文件加载情况
         self._log_all_parameters()
 
@@ -287,8 +284,9 @@ class MaxEntropyTrackerNode(Node):
         if len(msg.armors) == 0:
             return
         
-        current_time = time.time()
+        # 使用消息时间戳而非系统时间
         msg_time = Time.from_msg(msg.header.stamp)
+        current_time = msg_time.nanoseconds / 1e9  # 转换为秒
 
         # Trigger-based prediction: predict all trackers up to current time before processing new observations
         self.tracker_manager.predict_all(current_time)
@@ -350,7 +348,8 @@ class MaxEntropyTrackerNode(Node):
         self._publish_results(msg.header)
     
     def predict_callback(self):
-        """定时预测回调"""
+        """定时预测回调（如果启用）"""
+        # 注意：定时器回调没有消息时间戳，使用系统时间
         current_time = time.time()
         
         # 对所有跟踪器执行预测

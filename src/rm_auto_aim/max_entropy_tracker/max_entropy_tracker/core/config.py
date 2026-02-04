@@ -135,6 +135,9 @@ class UnifiedConfig:
     
     # 滤波器类型
     filter_type: FilterType = FilterType.DECOMPOSED
+
+    # 基础时间步长 (当未在 Tracker/UKF 初始化时传入 dt，将使用此值)
+    dt: float = 0.05
     
     # 各模块参数
     ukf: UKFParameters = field(default_factory=UKFParameters)

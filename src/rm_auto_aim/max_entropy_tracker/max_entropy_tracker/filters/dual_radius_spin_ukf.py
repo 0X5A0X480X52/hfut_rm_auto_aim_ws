@@ -107,7 +107,7 @@ class DualRadiusSpinUKF(BaseUKF):
     def __init__(
         self, 
         config: UnifiedConfig, 
-        dt: float = 0.1,
+        dt: float | None = None,
         process_model: Optional[CompositeProcessModel] = None
     ):
         """
@@ -115,16 +115,18 @@ class DualRadiusSpinUKF(BaseUKF):
         
         Args:
             config: 统一配置对象
-            dt: 默认时间步长
+            dt: 默认时间步长。如果为None，将使用 `config.dt`。
             process_model: 可选的自定义过程模型。如果为None，则根据config自动创建
         """
+        # 决定使用的 dt
+        eff_dt = dt if dt is not None else getattr(config, 'dt', 0.05)
         # 先创建过程模型（state_dim依赖它）
-        self._motion_model = process_model or self._create_process_model(config, dt)
+        self._motion_model = process_model or self._create_process_model(config, eff_dt)
         
         # 动态状态索引访问器（兼容原有代码）
         self._state_idx = DynamicStateIndex(self._motion_model.layout)
         
-        super().__init__(config, dt)
+        super().__init__(config, eff_dt)
         
         # 离散模态 k
         self.k: int = 0  # k ∈ {0, 1}
@@ -140,6 +142,20 @@ class DualRadiusSpinUKF(BaseUKF):
         
         # 初始化Sigma点生成器
         self._init_sigma_generator()
+        
+        # 诊断数据记录器（用于分析单观测问题）
+        self.diagnostics = {
+            'enabled': False,
+            'predict_displacement': [],
+            'update_displacement': [],
+            'innovation': [],
+            'kalman_gain_pos': [],
+            'position_confidence': [],
+            'dt_actual': [],
+            'state_before_predict': [],
+            'state_after_predict': [],
+            'state_after_update': []
+        }
         
         logger.info(
             f"DualRadiusSpinUKF initialized with {type(self._process_model).__name__}, "
@@ -402,6 +418,11 @@ class DualRadiusSpinUKF(BaseUKF):
         
         dt = dt if dt is not None else self.dt
         
+        # 诊断: 记录预测前状态
+        if self.diagnostics['enabled']:
+            self.diagnostics['state_before_predict'].append(self._x.copy())
+            self.diagnostics['dt_actual'].append(dt)
+        
         # 更新过程噪声（如果dt变化了）
         self._Q = self._motion_model.build_Q(dt)
         
@@ -441,6 +462,15 @@ class DualRadiusSpinUKF(BaseUKF):
         
         # 确保协方差正定
         self.ensure_covariance_valid()
+        
+        # 诊断: 记录预测后状态和位移
+        if self.diagnostics['enabled']:
+            idx = self._state_idx
+            self.diagnostics['state_after_predict'].append(self._x.copy())
+            pos_before = self.diagnostics['state_before_predict'][-1][[idx.X, idx.Y]]
+            pos_after = self._x[[idx.X, idx.Y]]
+            pred_disp = np.linalg.norm(pos_after - pos_before)
+            self.diagnostics['predict_displacement'].append(pred_disp)
     
     # ==================== 更新步骤 ====================
     
@@ -604,18 +634,22 @@ class DualRadiusSpinUKF(BaseUKF):
         if K is None:
             return False
         
+        # 诊断: 记录原始卡尔曼增益（位置部分）
+        if self.diagnostics['enabled']:
+            K_pos_avg = (np.linalg.norm(K[idx.X, :]) + np.linalg.norm(K[idx.Y, :])) / 2.0
+            self.diagnostics['kalman_gain_pos'].append(K_pos_avg)
+            self.diagnostics['innovation'].append(innov.copy())
+            self.diagnostics['position_confidence'].append(position_confidence)
+        
         # 关键：强制冻结参数（使用动态索引）
         K[idx.R1, :] = 0.0
         K[idx.R2, :] = 0.0
         K[idx.DZA, :] = 0.0
         
-        # 低置信度时降低位置更新权重（仅位置，不影响Yaw）
-        # R矩阵放大已在447-451行完成，这里额外降低K矩阵作为双重保护
-        if position_confidence < 0.9:
-            weight = self.config.ukf.single_obs_update_weight_pos
-            for state_idx in [idx.X, idx.Y, idx.VX, 
-                              idx.VY, idx.Z, idx.VZ]:
-                K[state_idx, :] *= weight
+        # 注意：已移除K矩阵二次降权机制
+        # 原因：R矩阵动态调整（基于position_confidence）已经足够控制观测权重
+        # 二次降权会导致过度不信任单观测，造成位置飘移
+        # 详见诊断报告：单观测飘移诊断报告.md
         
         # 应用更新
         self.apply_kalman_update(K, innov, Pzz)
@@ -625,6 +659,14 @@ class DualRadiusSpinUKF(BaseUKF):
         
         # 应用约束
         self._apply_constraints()
+        
+        # 诊断: 记录更新后状态和位移
+        if self.diagnostics['enabled']:
+            self.diagnostics['state_after_update'].append(self._x.copy())
+            pos_pred = self.diagnostics['state_after_predict'][-1][[idx.X, idx.Y]]
+            pos_update = self._x[[idx.X, idx.Y]]
+            update_disp = np.linalg.norm(pos_update - pos_pred)
+            self.diagnostics['update_displacement'].append(update_disp)
         
         return True
     
@@ -950,3 +992,21 @@ class DualRadiusSpinUKF(BaseUKF):
             'dza': self._x[idx.DZA],
             'mode_switches': self.mode_switches,
         }
+    
+    # ==================== 诊断接口 ====================
+    
+    def enable_diagnostics(self, enabled: bool = True):
+        """启用/禁用诊断模式"""
+        self.diagnostics['enabled'] = enabled
+        if enabled:
+            # 清空历史数据
+            for key in self.diagnostics:
+                if isinstance(self.diagnostics[key], list):
+                    self.diagnostics[key].clear()
+            logger.info("Diagnostics enabled")
+        else:
+            logger.info("Diagnostics disabled")
+    
+    def get_diagnostics(self) -> Dict[str, Any]:
+        """获取诊断数据"""
+        return self.diagnostics.copy()

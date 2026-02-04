@@ -38,16 +38,18 @@ class BaseUKF(ABC):
     - update(): 更新步骤（接受观测列表）
     """
     
-    def __init__(self, config: UnifiedConfig, dt: float = 0.1):
+    def __init__(self, config: UnifiedConfig, dt: float | None = None):
         """
         初始化UKF基类
         
         Args:
             config: 统一配置对象
-            dt: 默认时间步长
+            dt: 默认时间步长。如果为None，将使用 `config.dt`。
         """
         self.config = config
-        self.dt = dt
+        # 优先使用显式传入的 dt，否则使用配置中的基础 dt
+        self.dt = dt if dt is not None else getattr(config, 'dt', 0.05)
+        logger.debug(f"BaseUKF created with dt={self.dt}")
         
         # 状态和协方差（由子类初始化具体维度）
         self._x: Optional[np.ndarray] = None

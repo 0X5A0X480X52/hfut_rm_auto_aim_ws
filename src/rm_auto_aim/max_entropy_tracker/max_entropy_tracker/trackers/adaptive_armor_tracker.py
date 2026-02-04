@@ -40,7 +40,7 @@ class AdaptiveArmorTracker(BaseTracker):
     def __init__(
         self,
         config: UnifiedConfig,
-        dt: float = 0.05,
+        dt: float | None = None,
         enable_oscillation_detection: bool = False
     ):
         """
@@ -48,15 +48,17 @@ class AdaptiveArmorTracker(BaseTracker):
         
         Args:
             config: 统一配置
-            dt: 时间步长
+            dt: 时间步长。如果为None，将使用 config.dt
             enable_oscillation_detection: 是否启用震荡检测
         """
-        super().__init__(dt)
+        # 使用配置中的基础 dt 作为默认
+        eff_dt = dt if dt is not None else getattr(config, 'dt', 0.05)
+        super().__init__(eff_dt)
         
         self.config = config
         
         # 创建UKF滤波器
-        self.ukf = DualRadiusSpinUKF(config=config, dt=dt)
+        self.ukf = DualRadiusSpinUKF(config=config, dt=eff_dt)
         
         # 创建数据关联模块
         self.panel_associator = PanelAssociator()
@@ -121,6 +123,12 @@ class AdaptiveArmorTracker(BaseTracker):
         # 初始化UKF：传入原始装甲板观测以及panel_id，由UKF在内部反推中心
         self.ukf.initialize([obs], r1=r1, r2=r2, dza=dza, panel_id=panel_id)
         
+        # 初始化时间（如果观测带有时间戳）
+        if obs.timestamp is not None:
+            self._current_time = obs.timestamp
+            self._last_update_time = obs.timestamp
+            logger.info(f"Time initialized to {obs.timestamp:.3f}s")
+        
         self._transition_to(TrackerState.TRACKING)  # 修复：初始化后应该是TRACKING状态
         self._increment_frame()
         
@@ -128,12 +136,31 @@ class AdaptiveArmorTracker(BaseTracker):
     
     # ==================== 预测步骤 ====================
     
-    def predict(self) -> None:
-        """预测步骤"""
+    def predict(self, target_time: Optional[float] = None) -> None:
+        """
+        预测步骤
+        
+        Args:
+            target_time: 目标时间戳。如果为None，使用默认dt
+        """
         if not self.is_initialized:
             return
         
-        self.ukf.predict(self.dt)
+        # 计算实际dt
+        dt = self._compute_dt(target_time)
+        
+        # 记录dt（诊断用）
+        self._dt_history.append(dt)
+        
+        # 使用实际dt预测
+        self.ukf.predict(dt)
+        
+        # 更新内部时间
+        if target_time is not None:
+            self._current_time = target_time
+        elif self._current_time is not None:
+            self._current_time += dt
+        # 如果两者都为None，则不更新时间（使用fallback dt）
         
         # 震荡检测
         r1, r2 = self.ukf.get_radii()
@@ -154,6 +181,7 @@ class AdaptiveArmorTracker(BaseTracker):
         更新步骤
         
         根据观测数量自动选择单观测或双观测更新
+        自动使用观测的timestamp计算dt并先进行predict
         
         Args:
             observations: 观测列表
@@ -168,12 +196,35 @@ class AdaptiveArmorTracker(BaseTracker):
             )
             return False
         
+        # === 新增：基于观测时间戳自动predict ===
+        # 使用所有观测的最大时间戳作为目标预测时间（以处理双观测时间略有不同的情况）
+        timestamps = [o.timestamp for o in observations if o.timestamp is not None]
+        obs_time = max(timestamps) if timestamps else None
+        if len(timestamps) > 1 and max(timestamps) - min(timestamps) > 0.01:
+            # 如果同帧观测的时间差超过10ms，记录警告
+            logger.debug(f"Observation timestamps differ: min={min(timestamps):.3f}, max={max(timestamps):.3f}")
+        if obs_time is not None and self._current_time is not None:
+            # 计算到观测时间的dt
+            dt = obs_time - self._current_time
+            # 允许微小负偏差以容忍时间同步误差
+            if dt > self._min_dt:
+                # 先预测到观测时间点
+                logger.debug(f"Auto-predict to observation time: dt={dt:.4f}s")
+                self.predict(obs_time)
+            elif dt < -1e-3:
+                # 仅在显著倒退时报警
+                logger.warning(f"Observation time {obs_time:.3f}s < current time {self._current_time:.3f}s")
+        
         self._handle_observation_received(self.config.tracker.tracking_thres)
         
         if len(observations) == 1:
             success = self._update_single(observations[0])
         else:
             success = self._update_dual(observations[0], observations[1])
+        
+        # 更新时间（使用选定的最大时间戳）
+        if obs_time is not None:
+            self._update_time(obs_time)
         
         self._increment_frame()
         
@@ -319,6 +370,21 @@ class AdaptiveArmorTracker(BaseTracker):
         )
         
         self._height_confidence = height_confidence
+        
+        # 数据问题提示：如果面板不是相邻面（panel id不相邻），仅记录warning并继续双观测以便诊断
+        diff = abs(panel_id_1 - panel_id_2)
+        if diff not in (1, 3):  # 非相邻（例如0-2或1-3）
+            logger.warning(
+                f"Dual observation: non-adjacent panels detected (panel1={panel_id_1}, panel2={panel_id_2}). "
+                "This likely indicates a data-generation or association issue."
+            )
+            self._debug_dual_obs_history.append((
+                self._frame_count, obs1.z, obs2.z, layer_1, layer_2, height_confidence, 'non-adjacent-warning'
+            ))
+        
+        # 不再回退为单观测更新；如果是对角板将由UKF或下游诊断捕获错误信息
+        # 这里仅记录额外信息以便之后分析
+        # (已在上方根据panel id记录non-adjacent-warning)
         
         # 调用UKF双观测更新（仅更新位置和参数，不更新Yaw）
         success = self.ukf.update(

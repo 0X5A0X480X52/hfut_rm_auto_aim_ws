@@ -122,26 +122,22 @@ class TrackerManager:
             logger.error(f"Failed to create tracker for {robot_id}: {e}")
             return None
     
-    def predict_all(self, current_time: Optional[float] = None) -> None:
+    def predict_all(self, target_time: Optional[float] = None) -> None:
         """
-        对所有跟踪器执行预测
+        对所有跟踪器执行预测到目标时间
         
         Args:
-            current_time: 当前时间（秒），None则使用系统时间
+            target_time: 目标时间戳（秒），None则使用系统时间
         """
-        if current_time is None:
-            current_time = time.time()
+        if target_time is None:
+            target_time = time.time()
         
         for robot_id, state in list(self._trackers.items()):
             try:
                 if state.tracker.is_initialized:
-                    # 计算自上次预测以来的时间
-                    dt = current_time - state.last_predict_time
-                    if dt > 0:
-                        # 更新跟踪器的 dt
-                        state.tracker.dt = dt
-                        state.tracker.predict()
-                        state.last_predict_time = current_time
+                    # 使用基于时间戳的预测方法
+                    state.tracker.predict(target_time)
+                    state.last_predict_time = target_time
             except Exception as e:
                 logger.error(f"Predict failed for {robot_id}: {e}")
     
@@ -156,11 +152,15 @@ class TrackerManager:
         
         Args:
             robot_id: 机器人ID
-            observations: 观测列表
-            current_time: 当前时间（秒）
+            observations: 观测列表（应包含时间戳）
+            current_time: 当前时间（秒），用于更新last_update_time
             
         Returns:
             是否更新成功
+        
+        Note:
+            tracker.update() 会自动使用观测中的时间戳进行预测和更新
+            current_time 仅用于记录上次更新时间以判断超时
         """
         if current_time is None:
             current_time = time.time()
@@ -176,6 +176,7 @@ class TrackerManager:
         state = self._trackers[robot_id]
         
         try:
+            # tracker.update() 内部会自动使用观测的timestamp进行预测
             success = state.tracker.update(observations)
             if success:
                 state.last_update_time = current_time
