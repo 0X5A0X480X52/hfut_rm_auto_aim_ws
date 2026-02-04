@@ -1,10 +1,10 @@
 odom2camera:
-  xyz: "\"0.0 0.0785  0.05553\""
+  xyz: "\"0.174275 0.000 0.086463 \""
   # xyz: "\"0.2337 0.064 0.0545\""
   # rpy: "\"0.0  0.157  0.035\""
   # rpy: "\"0.0  0.157  -0.035\""
   # rpy: "\"0.0  0.157  -0.035\""
-  rpy: "\"0.0  0.0  0.0\""
+  rpy: "\"0.0  0.1396  0.0\""
   # rpy: "\"0.0  0.137  0\""
 
 # 设置启动参数
@@ -13,7 +13,7 @@ namespace: ''
 # true: 读取视频 false: 读取相机
 video_play: false
 # true: 虚拟下位机 false: 实车 
-virtual_serial: true
+virtual_serial: false
 # true: 英雄解算 false: 传统解算
 hero_solver: false
 # true: 开启打符 false：关闭打符

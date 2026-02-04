@@ -9,3 +9,4 @@
     offsetY: 0
     camera_name: "daheng"
     recording: true    #是否录制
+    flip_image: false

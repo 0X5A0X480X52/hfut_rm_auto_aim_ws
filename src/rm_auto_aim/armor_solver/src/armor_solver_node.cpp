@@ -184,8 +184,8 @@ void ArmorSolverNode::timerCallback() {
 
   if (armor_target_.tracking) {
     try {
-      // control_msg = solver_->solve(armor_target_, this->now(), tf2_buffer_);
-      control_msg = solver_->solve_withArmorFliter(armor_target_, this->now(), tf2_buffer_);
+      control_msg = solver_->solve(armor_target_, this->now(), tf2_buffer_);
+      // control_msg = solver_->solve_withArmorFliter(armor_target_, this->now(), tf2_buffer_);
     } catch (const std::exception &e) {
       FYT_ERROR("armor_solver", "Something went wrong in solver!");
       FYT_ERROR("armor_solver", "{}", e.what());
