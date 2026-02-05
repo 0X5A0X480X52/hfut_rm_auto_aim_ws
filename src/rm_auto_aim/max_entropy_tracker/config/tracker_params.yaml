@@ -39,12 +39,12 @@ max_entropy_tracker_node:
     ukf.alpha: 0.001
     ukf.beta: 2.0
     ukf.kappa: 0.0
-    ukf.obs_noise_pos: 0.05
-    ukf.obs_noise_yaw: 0.05
-    ukf.dual_obs_noise_pos: 0.01
-    ukf.dual_obs_noise_yaw: 0.03
-    ukf.dual_obs_geometry_noise_scale: 0.2
-    ukf.single_obs_update_weight_pos: 0.05
+    ukf.obs_noise_pos: 0.008
+    ukf.obs_noise_yaw: 0.005
+    ukf.dual_obs_noise_pos: 0.001
+    ukf.dual_obs_noise_yaw: 0.003
+    ukf.dual_obs_geometry_noise_scale: 0.002
+    ukf.single_obs_update_weight_pos: 5.0
     ukf.enable_innovation_gating: false
     ukf.innovation_gate_chi2_threshold: 9.49
 
@@ -52,11 +52,11 @@ max_entropy_tracker_node:
     # 可选值: "CV"（恒速）, "CA"（恒加速）, "Singer"（Singer模型）
     motion.translation_model: "CA"
     motion.cv_process_noise_vel: 0.5        # CV模型速度过程噪声
-    motion.ca_process_noise_acc: 1.0       # CA模型加速度过程噪声
+    motion.ca_process_noise_acc: 0.001       # CA模型加速度过程噪声
     motion.singer_alpha: 0.5                # Singer模型机动时间常数倒数
     motion.singer_sigma: 2.0                # Singer模型加速度标准差
-    motion.process_noise_r: 0.02             # 半径过程噪声
-    motion.process_noise_dz: 0.05           # 高度差过程噪声
+    motion.process_noise_r: 0.0002             # 半径过程噪声
+    motion.process_noise_dz: 0.0005           # 高度差过程噪声
 
     # ========== Spin model 参数（旋转模型）==========
     # 旋转模型固定使用 CA（恒角加速度）

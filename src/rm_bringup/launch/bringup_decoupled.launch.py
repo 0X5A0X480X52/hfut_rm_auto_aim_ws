@@ -35,7 +35,7 @@ def generate_launch_description():
 
     # 加载启动参数配置
     launch_params = yaml.safe_load(open(os.path.join(
-        get_package_share_directory('rm_bringup'), 'config', 'launch_params.yaml')))
+        get_package_share_directory('rm_bringup'), 'config', 'launch_params_decoupled.yaml')))
 
     # 声明启动参数
     declare_image_source = DeclareLaunchArgument(

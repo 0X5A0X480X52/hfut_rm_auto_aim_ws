@@ -17,8 +17,8 @@
       r_yaw: 5e-3
 
     tracker:
-      max_match_distance: 1.0
-      max_match_yaw_diff: 1.0
+      max_match_distance: 0.5
+      max_match_yaw_diff: 0.35
 
       tracking_thres: 3
       lost_time_thres: 1.0
@@ -26,7 +26,7 @@
     solver:
       # prediction_delay: 0.025
       prediction_delay: 0.0
-      controller_delay: 0.0
+      controller_delay: 0.065
       max_tracking_v_yaw: 60.0 #转速(rad/s)大于这个值时瞄准机器人中心 
       side_angle: 25.0 
       bullet_speed: 20.0

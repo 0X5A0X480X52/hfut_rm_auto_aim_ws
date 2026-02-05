@@ -7,17 +7,17 @@
 namespace: ''
 
 # image_source: (video | mindvision | hik)
-image_source: 'video'
+image_source: 'hik'
 
 # true: 虚拟下位机 false: 实车
-virtual_serial: true
+virtual_serial: false
 
 # true: 开启调试模式 (发布可视化markers)
 debug: true
 
 # --------- 相机/URDF参数 ---------
 odom2camera:
-  xyz: "\"0.0 0.0785  0.05553\""
+  xyz: "\"0.141 0.00  0.040\""
   rpy: "\"0.0  0.0  0.0\""
 
 # --------- 节点启动延迟 (秒) ---------

@@ -57,7 +57,7 @@ trajectory_planner:
     # ==================== MPC配置 ====================
     mpc:
       # 预测时域步数
-      prediction_horizon: 10
+      prediction_horizon: 5
       
       # 跟踪误差权重
       q_theta: 100.0     # 角度误差权重
@@ -82,11 +82,12 @@ trajectory_planner:
       selection_strategy: "nearest_yaw"
       
       # 启用遮挡检查（基于装甲板朝向）
-      enable_occlusion_check: true
+      enable_occlusion_check: false
       
       # 装甲板朝向最大偏差角（弧度）
       # 装甲板法向与云台视线方向必须接近相反（±π），表示装甲板正面朝向云台
       # 1.57 (π/2) 表示允许±90度范围内的装甲板可见
+      # max_facing_angle_deviation: 1.05
       max_facing_angle_deviation: 1.05
 
     # ==================== 目标管理器配置 ====================
