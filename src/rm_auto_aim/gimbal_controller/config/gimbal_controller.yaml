@@ -1,0 +1,40 @@
+# gimbal_controller 参数配置
+
+gimbal_controller:
+  ros__parameters:
+    # 基础参数
+    target_frame: "odom"
+    bullet_speed: 20.0
+    control_rate: 250.0
+    
+    # 策略选择: "current", "predicted", "mpc"
+    strategy: "current"
+    
+    # 弹道解算模式: "service" (使用ballistic_solver服务), "local" (本地计算)
+    ballistic_mode: "service"
+    
+    # Solver 参数
+    solver:
+      # 射击范围 (米)
+      shooting_range_width: 0.135
+      shooting_range_height: 0.135
+      
+      # 选板参数
+      side_angle: 15.0
+      min_switching_v_yaw: 1.0
+      
+      # 预测参数
+      prediction_delay: 0.0
+      
+      # 高转速跟踪中心参数
+      max_tracking_v_yaw: 6.0
+      transfer_thresh: 5
+      
+      # 弹道参数
+      gravity: 9.8
+      resistance: 0.001
+      iteration_times: 20
+      
+      # 手动补偿 (度)
+      pitch_offset: 0.0
+      yaw_offset: 0.0
