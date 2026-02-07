@@ -1,0 +1,32 @@
+# ROS2 Bag 重放配置文件
+# 此配置文件用于 replay_bag.sh 脚本，提供默认重放参数
+
+# 默认 bag 文件路径（如果命令行未指定）
+# 示例: "~/ros2_bags/ros2_bag_20260207_133033"
+bag_path: "~/ros2_bags/ros2_bag_20260207_145110"
+
+# 默认 bag 搜索目录（用于 -L 列出功能）
+bag_dir: "~/ros2_bags"
+
+# 播放速率（1.0 为正常速度，0.5 为半速，2.0 为双速）
+rate: 1.0
+
+# 是否循环播放（true/false）
+loop: true
+
+# 起始偏移（秒），从 bag 的第几秒开始播放
+start_offset: 0
+
+# 播放时长（秒），0 表示播放到结束
+duration: 0
+
+# 需要重放的话题列表（留空则重放所有话题）
+# 仅重放这些话题，其他话题将被忽略
+topics:
+  # - /camera/image_raw
+  # - /detector/armors
+
+# 其他说明：
+# - 命令行参数会覆盖此配置文件的设置
+# - 话题列表为空时，重放 bag 中的所有话题
+# - bag_path 留空时，必须通过命令行提供 bag 路径

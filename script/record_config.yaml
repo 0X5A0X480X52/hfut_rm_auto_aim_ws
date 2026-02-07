@@ -1,0 +1,30 @@
+# ROS2 Bag 录制配置文件
+# 此配置文件用于 record_topics.sh 脚本，提供默认录制参数
+
+# 输出目录（录制的 bag 文件将保存在此目录）
+output_dir: "~/ros2_bags"
+
+# bag 文件名（可选，留空则自动生成时间戳）
+# 示例: "my_test_bag" 或留空使用默认时间戳
+bag_name: ""
+
+# 是否启用压缩（true/false）
+compression: false
+
+# 录制时长（秒），0 表示不限制，需手动停止
+duration: 0
+
+# 是否录制所有话题（true/false）
+# 如果为 true，下面的 topics 列表将被忽略
+record_all: false
+
+# 需要录制的话题列表
+# 如果 record_all 为 false，则录制此列表中的话题
+topics:
+  - /image_raw
+  - /camera_info
+  - /serial/receive
+
+# 其他说明：
+# - 命令行参数会覆盖此配置文件的设置
+# - 如果话题不存在，录制时会等待话题出现
