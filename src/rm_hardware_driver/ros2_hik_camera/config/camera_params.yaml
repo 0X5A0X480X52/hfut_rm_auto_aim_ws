@@ -23,6 +23,6 @@
     frame_id: camera_optical_frame
     # Raw stream dumping
     raw_stream:
-      enabled: false  # Enable writing yaw-format raw frames
+      enabled: true  # Enable writing yaw-format raw frames
       path: /tmp/hik_camera.yaw  # Output yaw file
       interval: 1  # Frame sampling interval: 1=every frame, 2=every second frame

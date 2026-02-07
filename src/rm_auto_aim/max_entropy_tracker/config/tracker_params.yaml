@@ -6,7 +6,7 @@
 #   - Yaw角定义：装甲板朝向为旋转中心指向装甲板的径向方向（外法向）
 #   - 详见 docs/坐标系定义.md
 
-max_entropy_tracker_node:
+/**:
   ros__parameters:
     # ========== 坐标系配置 ==========
     # 注意：UKF 内部计算在相机坐标系下，target_frame 仅用于 TF 变换输出
@@ -23,7 +23,7 @@ max_entropy_tracker_node:
     default_dza: 0.0                        # 默认装甲板高度差（米）
     
     # 跟踪器超时时间（秒）
-    tracker_timeout: 3.0
+    tracker_timeout: 5.0
     
     # CSV 日志配置
     enable_csv_logging: true               # 是否启用 CSV 日志
@@ -39,10 +39,10 @@ max_entropy_tracker_node:
     ukf.alpha: 0.001
     ukf.beta: 2.0
     ukf.kappa: 0.0
-    ukf.obs_noise_pos: 0.008
-    ukf.obs_noise_yaw: 0.005
-    ukf.dual_obs_noise_pos: 0.001
-    ukf.dual_obs_noise_yaw: 0.003
+    ukf.obs_noise_pos: 0.0008
+    ukf.obs_noise_yaw: 0.05
+    ukf.dual_obs_noise_pos: 0.0001
+    ukf.dual_obs_noise_yaw: 0.03
     ukf.dual_obs_geometry_noise_scale: 0.002
     ukf.single_obs_update_weight_pos: 5.0
     ukf.enable_innovation_gating: false
@@ -50,20 +50,20 @@ max_entropy_tracker_node:
 
     # ========== Motion model 参数（平移模型）==========
     # 可选值: "CV"（恒速）, "CA"（恒加速）, "Singer"（Singer模型）
-    motion.translation_model: "CA"
-    motion.cv_process_noise_vel: 0.5        # CV模型速度过程噪声
-    motion.ca_process_noise_acc: 0.001       # CA模型加速度过程噪声
+    motion.translation_model: "Singer"
+    motion.cv_process_noise_vel: 0.001        # CV模型速度过程噪声
+    motion.ca_process_noise_acc: 0.01       # CA模型加速度过程噪声
     motion.singer_alpha: 0.5                # Singer模型机动时间常数倒数
-    motion.singer_sigma: 2.0                # Singer模型加速度标准差
-    motion.process_noise_r: 0.0002             # 半径过程噪声
-    motion.process_noise_dz: 0.0005           # 高度差过程噪声
+    motion.singer_sigma: 0.10                # Singer模型加速度标准差
+    motion.process_noise_r: 0.00002             # 半径过程噪声
+    motion.process_noise_dz: 0.00005           # 高度差过程噪声
 
     # ========== Spin model 参数（旋转模型）==========
     # 旋转模型固定使用 CA（恒角加速度）
-    spin.spin_process_noise_yaw_rate: 0.3       # yaw角速度过程噪声
-    spin.spin_process_noise_yaw_acc: 1.0        # yaw角加速度过程噪声
-    spin.spin_process_noise_delta_rate: 0.3     # delta角速度过程噪声
-    spin.spin_process_noise_delta_acc: 3.0      # delta角加速度过程噪声
+    spin.spin_process_noise_yaw_rate: 1.0       # yaw角速度过程噪声
+    spin.spin_process_noise_yaw_acc: 10.0        # yaw角加速度过程噪声
+    spin.spin_process_noise_delta_rate: 1.0     # delta角速度过程噪声
+    spin.spin_process_noise_delta_acc: 30.0      # delta角加速度过程噪声
 
     # ========== Entropy 参数 ==========
     entropy.temperature: 2.0
@@ -81,6 +81,6 @@ max_entropy_tracker_node:
 
     # ========== Constraint 参数 ==========
     constraints.min_radius: 0.12
-    constraints.max_radius: 0.5
+    constraints.max_radius: 0.3
     constraints.min_dz: -1.0
     constraints.max_dz: 1.0

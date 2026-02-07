@@ -110,7 +110,7 @@ def generate_launch_description():
         output='screen',
         emulate_tty=True,
         parameters=[
-            get_pkg_params('max_entropy_tracker', 'max_entropy_tracker.yaml'),
+            get_pkg_params('max_entropy_tracker', 'tracker_params.yaml'),
             {'debug_mode': LaunchConfiguration('debug')}
         ],
         remappings=[
@@ -169,7 +169,7 @@ def generate_launch_description():
         remappings=[
             ('tracked_robots', '/max_entropy_tracker/tracked_robots'),
             ('selected_target', '/target_selector/selected_target'),
-            ('cmd_gimbal', '/trajectory_planner/gimbal_cmd'),
+            ('cmd_gimbal', '/armor_solver/cmd_gimbal'),
         ],
     )
 
