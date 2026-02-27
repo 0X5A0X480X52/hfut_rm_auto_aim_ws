@@ -15,6 +15,11 @@ virtual_serial: false
 # true: 开启调试模式 (发布可视化markers)
 debug: true
 
+# tracker_impl: (cpp | python)
+# cpp:    使用 C++ 组件节点 (rclcpp_components)
+# python: 使用 Python 独立节点
+tracker_impl: 'cpp'
+
 # --------- 相机/URDF参数 ---------
 odom2camera:
   xyz: "\"0.141 0.00  0.040\""

@@ -13,6 +13,10 @@ Max Entropy Tracker 测试启动文件
 
 带参数启动:
     ros2 launch rm_bringup bringup_max_entropy_test.launch.py image_source:=video virtual_serial:=true debug:=true
+
+切换 Python/C++ 版本:
+    在 launch_params_decoupled.yaml 中设置 tracker_impl: 'cpp' 或 tracker_impl: 'python'
+    或命令行: ros2 launch rm_bringup bringup_max_entropy_test.launch.py tracker_impl:=python
 """
 
 import os
@@ -73,6 +77,12 @@ def generate_launch_description():
         description='Namespace for all nodes'
     )
 
+    declare_tracker_impl = DeclareLaunchArgument(
+        'tracker_impl',
+        default_value=str(launch_params.get('tracker_impl', 'cpp')).lower(),
+        description='Tracker implementation: cpp | python'
+    )
+
     # URDF 机器人描述
     robot_gimbal_description = Command(['xacro ', os.path.join(
         get_package_share_directory('rm_robot_description'), 'urdf', 'rm_gimbal.urdf.xacro'),
@@ -103,21 +113,37 @@ def generate_launch_description():
     )
 
     # ==================== Max Entropy Tracker 节点 ====================
-    max_entropy_tracker_node = Node(
-        package='max_entropy_tracker',
-        executable='max_entropy_tracker_node',
-        name='max_entropy_tracker',
-        output='screen',
-        emulate_tty=True,
-        parameters=[
-            get_pkg_params('max_entropy_tracker', 'tracker_params.yaml'),
-            {'debug_mode': LaunchConfiguration('debug')}
-        ],
-        remappings=[
-            # 订阅装甲板检测结果
-            ('/armor_detector/armors', '/armor_detector/armors'),
-        ]
-    )
+    # 根据 tracker_impl 参数选择 Python 或 C++ 版本，使用 OpaqueFunction 在后面动态创建
+
+    def create_max_entropy_tracker_node(context):
+        """根据 tracker_impl 参数动态选择 Python 或 C++ 版本的 tracker 节点"""
+        tracker_impl = LaunchConfiguration('tracker_impl').perform(context).lower()
+
+        if tracker_impl == 'python':
+            # Python 版本 — 独立节点 (ament_python 包: max_entropy_tracker_python)
+            pkg_name = 'max_entropy_tracker_python'
+        else:
+            # C++ 版本 — 组件节点 (ament_cmake 包: max_entropy_tracker)
+            pkg_name = 'max_entropy_tracker'
+
+        tracker_params_file = get_pkg_params(pkg_name, 'tracker_params.yaml')
+
+        node = Node(
+            package=pkg_name,
+            executable='max_entropy_tracker_node',
+            name='max_entropy_tracker',
+            output='screen',
+            emulate_tty=True,
+            parameters=[
+                tracker_params_file,
+                {'debug_mode': LaunchConfiguration('debug')}
+            ],
+            remappings=[
+                ('/armor_detector/armors', '/armor_detector/armors'),
+            ],
+        )
+
+        return [node]
 
     # ==================== 目标选择器 (target_selector) ====================
     target_selector_node = Node(
@@ -268,7 +294,7 @@ def generate_launch_description():
     # Max Entropy Tracker 延迟 2.5 秒启动 (等待检测器准备好)
     delay_max_entropy_tracker = TimerAction(
         period=2.5,
-        actions=[max_entropy_tracker_node],
+        actions=[OpaqueFunction(function=create_max_entropy_tracker_node)],
     )
 
     # 目标选择器延迟 3.0 秒启动 (等待跟踪器准备好)
@@ -293,6 +319,7 @@ def generate_launch_description():
         declare_virtual_serial,
         declare_debug,
         declare_namespace,
+        declare_tracker_impl,
 
         # 机器人描述发布
         robot_gimbal_publisher,

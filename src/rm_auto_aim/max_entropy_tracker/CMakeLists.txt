@@ -1,48 +1,32 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.10)
 project(max_entropy_tracker)
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  add_compile_options(-Wall -Wextra -Wpedantic)
+  add_compile_options(-Wall -Wextra -Wpedantic -O3)
 endif()
 
-# Find dependencies
-find_package(ament_cmake REQUIRED)
-find_package(ament_cmake_python REQUIRED)
-find_package(rclpy REQUIRED)
-find_package(rm_interfaces REQUIRED)
-find_package(geometry_msgs REQUIRED)
-find_package(visualization_msgs REQUIRED)
-find_package(std_msgs REQUIRED)
-find_package(tf2_ros REQUIRED)
-find_package(tf2_geometry_msgs REQUIRED)
+find_package(ament_cmake_auto REQUIRED)
+ament_auto_find_build_dependencies()
 
-# Install Python package
-ament_python_install_package(${PROJECT_NAME})
-
-# Install Python executables
-install(PROGRAMS
-  max_entropy_tracker/max_entropy_tracker_node.py
-  DESTINATION lib/${PROJECT_NAME}
+# Collect all .cpp files from src/ tree
+file(GLOB_RECURSE ALL_SRCS
+  "src/*.cpp"
 )
 
-# 也安装到 libexec 以兼容 launch 可执行文件查找
-install(PROGRAMS
-  max_entropy_tracker/max_entropy_tracker_node.py
-  DESTINATION libexec/${PROJECT_NAME}
+ament_auto_add_library(${PROJECT_NAME} SHARED
+  ${ALL_SRCS}
 )
 
-# Install a small wrapper without .py suffix so launch finds the executable
-install(PROGRAMS
-  scripts/max_entropy_tracker_node
-  DESTINATION lib/${PROJECT_NAME}
+rclcpp_components_register_node(${PROJECT_NAME}
+  PLUGIN "fyt::auto_aim::MaxEntropyTrackerNode"
+  EXECUTABLE ${PROJECT_NAME}_node
 )
 
-install(PROGRAMS
-  scripts/max_entropy_tracker_node
-  DESTINATION libexec/${PROJECT_NAME}
-)
-
-# Install launch files
+# Install launch and config
 install(DIRECTORY
   launch
   config
@@ -51,7 +35,12 @@ install(DIRECTORY
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
+  list(APPEND AMENT_LINT_AUTO_EXCLUDE
+    ament_cmake_copyright
+    ament_cmake_uncrustify
+    ament_cmake_cpplint
+  )
   ament_lint_auto_find_test_dependencies()
 endif()
 
-ament_package()
+ament_auto_package()
