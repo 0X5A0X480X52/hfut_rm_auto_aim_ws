@@ -144,7 +144,10 @@ bool AdaptiveArmorTracker::update_dual(const ObservationData &obs1,
                                        const ObservationData &obs2) {
   // First: single update on obs1 with full position confidence
   bool single_ok = update_single(obs1, 1.0);
-  if (!single_ok) return false;
+  if (!single_ok) {
+    fprintf(stderr, "[adaptive_tracker::update_dual] update_single(obs1) failed\n");
+    return false;
+  }
 
   auto idx = ukf_.state_idx();
 
@@ -159,7 +162,13 @@ bool AdaptiveArmorTracker::update_dual(const ObservationData &obs1,
   auto [l1, l2, h_conf] = height_identifier_.identify_dual(obs1.z, obs2.z);
   height_confidence_ = h_conf;
 
-  return ukf_.update({obs1, obs2}, {rt1, rt2}, {l1, l2}, h_conf);
+  bool dual_ok = ukf_.update({obs1, obs2}, {rt1, rt2}, {l1, l2}, h_conf);
+  if (!dual_ok) {
+    fprintf(stderr, "[adaptive_tracker::update_dual] ukf_.update(dual) failed "  \
+      "rt1=%s rt2=%s l1=%s l2=%s h_conf=%.3f\n",
+      rt1.c_str(), rt2.c_str(), l1.c_str(), l2.c_str(), h_conf);
+  }
+  return dual_ok;
 }
 
 /* ================================================================ */

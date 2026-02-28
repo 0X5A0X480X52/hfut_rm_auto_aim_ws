@@ -2,6 +2,7 @@
 #include "max_entropy_tracker/filters/dual_radius_spin_ukf.hpp"
 
 #include <cmath>
+#include <cstdio>
 #include <stdexcept>
 
 #include "max_entropy_tracker/utils/angle_utils.hpp"
@@ -344,10 +345,21 @@ bool DualRadiusSpinUKF::update_dual(
   b << obs2.x - obs1.x, obs2.y - obs1.y;
 
   double det = A.determinant();
-  if (std::abs(det) < 1e-10) return false;  // parallel rays
+  if (std::abs(det) < 1e-10) {
+    fprintf(stderr, "[update_dual] parallel rays (det=%.6f)\n", det);
+    return false;
+  }
 
   Eigen::Vector2d t_params = A.inverse() * b;
-  if (t_params(0) < 0 || t_params(1) < 0) return false;
+  if (t_params(0) < 0 || t_params(1) < 0) {
+    fprintf(stderr, "[update_dual] invalid intersection t1=%.4f t2=%.4f "  \
+      "yaw1=%.4f yaw2=%.4f "  \
+      "obs1=(%.3f,%.3f) obs2=(%.3f,%.3f)\n",
+      t_params(0), t_params(1),
+      obs1.yaw, obs2.yaw,
+      obs1.x, obs1.y, obs2.x, obs2.y);
+    return false;
+  }
 
   double x_center = obs1.x + t_params(0) * c1;
   double y_center = obs1.y + t_params(0) * s1;
@@ -385,6 +397,12 @@ bool DualRadiusSpinUKF::update_dual(
   // Geometry observation vector [xc, yc, z, r1, r2, dza]
   Eigen::VectorXd z_geometry(6);
   z_geometry << x_center, y_center, z_est, r1_est, r2_est, dza_est;
+
+  fprintf(stderr, "[update_dual] center=(%.3f,%.3f) r1_est=%.4f r2_est=%.4f dza_est=%.4f "
+    "x_r1=%.4f x_r2=%.4f x_dza=%.4f layers=(%s,%s) h_conf=%.3f\n",
+    x_center, y_center, r1_est, r2_est, dza_est,
+    x_(idx.R1()), x_(idx.R2()), x_(idx.DZA()),
+    layer_1.c_str(), layer_2.c_str(), height_confidence);
 
   // Geometry noise
   double pn = config_.ukf.dual_obs_noise_pos;

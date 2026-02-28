@@ -234,17 +234,18 @@ void MaxEntropyTrackerNode::armors_callback(
 
   for (auto &[rid, obs_list] : obs_by_robot) {
     last_obs_counts_[rid] = static_cast<int>(obs_list.size());
-    tracker_manager_->update(rid, obs_list, current_time);
+    bool is_ok = tracker_manager_->update(rid, obs_list, current_time);
 
     if (debug_mode_) {
       auto *t = tracker_manager_->get(rid);
       if (t && t->is_initialized()) {
         auto [r1, r2] = t->get_radii();
         double dza = t->get_dza();
-        RCLCPP_DEBUG(get_logger(),
-          "[%s] obs_count=%zu, r1=%.4f, r2=%.4f, dza=%.4f, state=%s",
+        RCLCPP_INFO(get_logger(),
+          "[%s] obs_count=%zu, r1=%.4f, r2=%.4f, dza=%.4f, state=%s, is_ok=%s",
           rid.c_str(), obs_list.size(), r1, r2, dza,
-          t->is_tracking() ? "TRACKING" : "OTHER");
+          t->is_tracking() ? "TRACKING" : "OTHER",
+          is_ok ? "true" : "false");
       }
     }
   }
