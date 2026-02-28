@@ -5,6 +5,7 @@
 #include <sstream>
 
 #include "max_entropy_tracker/msg_converter.hpp"
+#include "max_entropy_tracker/visualization.hpp"
 
 namespace fyt::auto_aim {
 
@@ -265,6 +266,14 @@ void MaxEntropyTrackerNode::publish_results(
 
   if (!tracked_msg.robots.empty())
     tracked_robots_pub_->publish(tracked_msg);
+
+  // Publish visualization markers
+  if (marker_pub_) {
+    rclcpp::Time stamp(header.stamp);
+    auto marker_array = build_tracker_markers(
+        visualization_frame_, tracker_manager_->trackers(), stamp);
+    marker_pub_->publish(marker_array);
+  }
 }
 
 /* ================================================================ */
@@ -299,6 +308,10 @@ rm_interfaces::msg::Target MaxEntropyTrackerNode::build_target_message(
   target.radius_1 = r1;
   target.radius_2 = r2;
   target.d_za = tracker.get_dza();
+  target.d_zc = 0.0;
+
+  target.yaw_diff = 0.0;
+  target.position_diff = 0.0;
 
   return target;
 }
@@ -313,6 +326,16 @@ MaxEntropyTrackerNode::build_tracked_robot_message(
   msg.robot_id = robot_id;
   msg.robot_type = static_cast<uint8_t>(infer_robot_type(robot_id));
 
+  // Track state
+  if (tracker.is_tracking()) {
+    msg.track_state = rm_interfaces::msg::TrackedRobot::TRACKING;
+  } else if (tracker.is_temp_lost()) {
+    msg.track_state = rm_interfaces::msg::TrackedRobot::TEMP_LOST;
+  } else {
+    msg.track_state = rm_interfaces::msg::TrackedRobot::DETECTING;
+  }
+
+  // Center position
   auto pos = tracker.get_center_position();
   msg.center_position.x = pos.x();
   msg.center_position.y = pos.y();
@@ -320,19 +343,77 @@ MaxEntropyTrackerNode::build_tracked_robot_message(
 
   auto idx = tracker.ukf().state_idx();
   const auto &x = tracker.ukf().x();
+
+  // Center velocity
   msg.center_velocity.x = x(idx.VX());
   msg.center_velocity.y = x(idx.VY());
   msg.center_velocity.z = x(idx.VZ());
 
+  // Center acceleration (only when model supports it)
+  if (idx.has("AX")) {
+    msg.center_acceleration.x = x(idx.AX());
+    msg.center_acceleration.y = x(idx.AY());
+    msg.center_acceleration.z = x(idx.AZ());
+  } else {
+    msg.center_acceleration.x = 0.0;
+    msg.center_acceleration.y = 0.0;
+    msg.center_acceleration.z = 0.0;
+  }
+
+  // Yaw, yaw velocity, yaw acceleration
   msg.yaw = tracker.get_yaw();
   msg.yaw_velocity = x(idx.DELTA_RATE());
+  if (idx.has("DELTA_ACC")) {
+    msg.yaw_acceleration = x(idx.get("DELTA_ACC"));
+  } else {
+    msg.yaw_acceleration = 0.0;
+  }
 
+  // Radii
   auto [r1, r2] = tracker.get_radii();
   msg.radius = r1;
+  msg.radius_2 = r2;
 
+  // Height difference
+  msg.d_za = tracker.get_dza();
+  msg.d_zc = 0.0;
+
+  // Number of armors (must be set before generating armors_offset)
   msg.num_armors = infer_num_armors(robot_id, msg.robot_type);
+
+  // Armor geometric offsets (in robot frame)
+  msg.armors_offset = generate_armors_offset(msg.num_armors, r1, r2, msg.d_za, msg.d_zc);
+
+  // State covariance from UKF
+  try {
+    const auto &P = tracker.ukf().P();
+    int dim = static_cast<int>(P.rows());
+    msg.covariance_dim = dim;
+    msg.state_covariance.resize(dim * dim);
+    for (int r = 0; r < dim; ++r)
+      for (int c = 0; c < dim; ++c)
+        msg.state_covariance[r * dim + c] = P(r, c);
+  } catch (...) {
+    msg.state_covariance.clear();
+    msg.covariance_dim = 0;
+  }
+
+  // Bound armor IDs
   msg.bound_armor_ids = {robot_id};
-  msg.confidence = tracker.is_tracking() ? 1.0 : 0.3;
+
+  // Confidence based on tracking state
+  if (tracker.is_tracking()) {
+    msg.confidence = 1.0;
+  } else if (tracker.is_temp_lost()) {
+    msg.confidence = 0.7;
+  } else {
+    msg.confidence = 0.3;
+  }
+
+  // Visibility information
+  msg.is_visible = tracker.is_tracking() || tracker.is_temp_lost();
+  auto it = last_obs_counts_.find(robot_id);
+  msg.visible_armor_count = (msg.is_visible && it != last_obs_counts_.end()) ? it->second : 0;
 
   return msg;
 }
@@ -363,6 +444,41 @@ int MaxEntropyTrackerNode::infer_num_armors(const std::string & /*robot_id*/,
   if (robot_type == T::OUTPOST_3 || robot_type == T::BASE) return 3;
   if (robot_type == T::BALANCE_2) return 2;
   return 4;
+}
+
+std::vector<geometry_msgs::msg::Pose>
+MaxEntropyTrackerNode::generate_armors_offset(
+    int num_armors, double r1, double r2, double d_za, double d_zc) const {
+  std::vector<geometry_msgs::msg::Pose> offsets;
+  bool is_current_pair = true;
+
+  for (int i = 0; i < num_armors; ++i) {
+    double angle = i * (2.0 * M_PI / num_armors);
+
+    double r, dz;
+    if (num_armors == 4) {
+      r = is_current_pair ? r1 : r2;
+      dz = d_zc + (is_current_pair ? 0.0 : d_za);
+      is_current_pair = !is_current_pair;
+    } else {
+      r = r1;
+      dz = d_zc;
+    }
+
+    geometry_msgs::msg::Pose pose;
+    pose.position.x = -r * std::cos(angle);
+    pose.position.y = -r * std::sin(angle);
+    pose.position.z = dz;
+
+    pose.orientation.x = 0.0;
+    pose.orientation.y = 0.0;
+    pose.orientation.z = 0.0;
+    pose.orientation.w = 1.0;
+
+    offsets.push_back(pose);
+  }
+
+  return offsets;
 }
 
 }  // namespace fyt::auto_aim

@@ -9,6 +9,8 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/point.hpp>
+#include <geometry_msgs/msg/pose.hpp>
+#include <geometry_msgs/msg/quaternion.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
 #include <rm_interfaces/msg/armor.hpp>
 #include <rm_interfaces/msg/armors.hpp>
@@ -44,6 +46,8 @@ class MaxEntropyTrackerNode : public rclcpp::Node {
 
   uint8_t infer_robot_type(const std::string &robot_id) const;
   int infer_num_armors(const std::string &robot_id, int robot_type) const;
+  std::vector<geometry_msgs::msg::Pose> generate_armors_offset(
+      int num_armors, double r1, double r2, double d_za, double d_zc) const;
 
   // Config
   UnifiedConfig config_;

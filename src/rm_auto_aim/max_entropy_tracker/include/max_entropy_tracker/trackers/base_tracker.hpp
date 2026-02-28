@@ -48,6 +48,7 @@ class BaseTracker {
   TrackerState state() const { return state_; }
   bool is_initialized() const { return state_ != TrackerState::INITIALIZING; }
   bool is_tracking() const { return state_ == TrackerState::TRACKING; }
+  bool is_temp_lost() const { return state_ == TrackerState::TEMP_LOST; }
   bool is_lost() const { return state_ == TrackerState::LOST; }
   int frame_count() const { return frame_count_; }
 
