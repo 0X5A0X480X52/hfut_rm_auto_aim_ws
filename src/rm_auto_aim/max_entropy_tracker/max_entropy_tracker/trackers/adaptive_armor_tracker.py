@@ -16,6 +16,7 @@ from ..core.observation import ObservationData
 from ..association.panel_associator import PanelAssociator
 from ..association.height_identifier import HeightIdentifier, HeightLabel
 from ..association.oscillation_detector import OscillationDetector
+from ..utils.output_smoother import OutputSmoother, SmoothedOutput
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,11 @@ class AdaptiveArmorTracker(BaseTracker):
         self._debug_height_history: List[Tuple] = []
         self._debug_dual_obs_history: List[Tuple] = []
         
+        # 输出平滑器（非侵入式后处理）
+        self._output_smoother = OutputSmoother(config.smoother)
+        self._last_smoothed: Optional[SmoothedOutput] = None
+        self._last_is_dual_obs: bool = False
+        
         logger.info("AdaptiveArmorTracker initialized")
     
     # ==================== 初始化 ====================
@@ -132,6 +138,10 @@ class AdaptiveArmorTracker(BaseTracker):
         self._transition_to(TrackerState.TRACKING)  # 修复：初始化后应该是TRACKING状态
         self._increment_frame()
         
+        # 初始化输出平滑器
+        self._output_smoother.initialize(r1=r1, r2=r2, dza=dza)
+        self._last_is_dual_obs = False
+        
         logger.info(f"Tracker initialized at panel {panel_id}, center_yaw={np.degrees(center_yaw):.1f}°")
     
     # ==================== 预测步骤 ====================
@@ -169,6 +179,9 @@ class AdaptiveArmorTracker(BaseTracker):
         
         # 更新参考yaw
         self._reference_center_yaw = self.ukf.get_yaw()
+        
+        # 通知平滑器predict（无观测时保持时间同步）
+        self._output_smoother.predict_only(target_time)
     
     # ==================== 更新步骤 ====================
     
@@ -219,8 +232,10 @@ class AdaptiveArmorTracker(BaseTracker):
         
         if len(observations) == 1:
             success = self._update_single(observations[0])
+            self._last_is_dual_obs = False
         else:
             success = self._update_dual(observations[0], observations[1])
+            self._last_is_dual_obs = True
         
         # 更新时间（使用选定的最大时间戳）
         if obs_time is not None:
@@ -231,6 +246,9 @@ class AdaptiveArmorTracker(BaseTracker):
         # 更新参考yaw
         if success:
             self._reference_center_yaw = self.ukf.get_yaw()
+            
+            # 更新输出平滑器
+            self._update_smoother(obs_time)
         
         return success
     
@@ -447,6 +465,41 @@ class AdaptiveArmorTracker(BaseTracker):
         
         logger.info(f"Parameters reset: r1={r1_reset:.3f}, r2={r2_reset:.3f}")
     
+    def _update_smoother(self, timestamp: Optional[float] = None):
+        """
+        在 tracker update 成功后，更新输出平滑器
+        
+        Args:
+            timestamp: 当前时间戳
+        """
+        # 获取 UKF 原始输出
+        center_pos = self.ukf.get_center_position()
+        yaw = self.ukf.get_yaw()
+        r1, r2 = self.ukf.get_radii()
+        dza = self.ukf.get_dza()
+        
+        # 速度
+        idx = StateIndex
+        velocity = np.array([
+            self.ukf.x[idx.VX],
+            self.ukf.x[idx.VY],
+            self.ukf.x[idx.VZ],
+        ])
+        yaw_velocity = self.ukf.x[idx.DELTA_RATE]
+        
+        # 调用平滑器
+        self._last_smoothed = self._output_smoother.smooth(
+            center_pos=center_pos,
+            yaw=yaw,
+            velocity=velocity,
+            yaw_velocity=yaw_velocity,
+            r1=r1, r2=r2, dza=dza,
+            P=self.ukf.P,
+            r1_idx=idx.R1, r2_idx=idx.R2, dza_idx=idx.DZA,
+            is_dual_obs=self._last_is_dual_obs,
+            timestamp=timestamp,
+        )
+    
     # ==================== 状态获取接口 ====================
     
     def get_center_position(self) -> np.ndarray:
@@ -489,7 +542,7 @@ class AdaptiveArmorTracker(BaseTracker):
         """获取完整状态"""
         ukf_state = self.ukf.get_state_dict()
         
-        return {
+        state = {
             **ukf_state,
             'tracker_state': self._state.name,
             'frame_count': self._frame_count,
@@ -498,6 +551,64 @@ class AdaptiveArmorTracker(BaseTracker):
             'height_confidence': self._height_confidence,
             'reference_center_yaw': self._reference_center_yaw,
         }
+        
+        # 添加平滑后的输出到状态中
+        if self._last_smoothed is not None:
+            state['smoothed_center_position'] = self._last_smoothed.center_position.tolist()
+            state['smoothed_yaw'] = self._last_smoothed.yaw
+            state['smoothed_r1'] = self._last_smoothed.r1
+            state['smoothed_r2'] = self._last_smoothed.r2
+            state['smoothed_dza'] = self._last_smoothed.dza
+            state['structural_converged'] = self._last_smoothed.structural_converged
+        
+        return state
+    
+    # ==================== 平滑输出接口 ====================
+    
+    def get_smoothed_output(self) -> Optional[SmoothedOutput]:
+        """
+        获取平滑后的完整输出
+        
+        Returns:
+            SmoothedOutput 对象，若未初始化则返回 None
+        """
+        return self._last_smoothed
+    
+    def get_smoothed_center_position(self) -> np.ndarray:
+        """获取平滑后的中心位置 [x, y, z]"""
+        if self._last_smoothed is not None:
+            return self._last_smoothed.center_position
+        return self.ukf.get_center_position()
+    
+    def get_smoothed_yaw(self) -> float:
+        """获取平滑后的yaw角"""
+        if self._last_smoothed is not None:
+            return self._last_smoothed.yaw
+        return self.ukf.get_yaw()
+    
+    def get_smoothed_radii(self) -> Tuple[float, float]:
+        """获取收敛后的半径估计 (r1, r2)"""
+        if self._last_smoothed is not None:
+            return (self._last_smoothed.r1, self._last_smoothed.r2)
+        return self.ukf.get_radii()
+    
+    def get_smoothed_dza(self) -> float:
+        """获取收敛后的装甲板高度差"""
+        if self._last_smoothed is not None:
+            return self._last_smoothed.dza
+        return self.ukf.get_dza()
+    
+    def get_smoothed_velocity(self) -> np.ndarray:
+        """获取平滑后的速度 [vx, vy, vz]"""
+        if self._last_smoothed is not None:
+            return self._last_smoothed.velocity
+        idx = StateIndex
+        return np.array([self.ukf.x[idx.VX], self.ukf.x[idx.VY], self.ukf.x[idx.VZ]])
+    
+    @property
+    def output_smoother(self) -> OutputSmoother:
+        """获取输出平滑器实例（用于诊断和参数调整）"""
+        return self._output_smoother
     
     # ==================== 调试接口 ====================
     

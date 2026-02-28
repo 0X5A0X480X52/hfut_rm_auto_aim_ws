@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
+from ..utils.output_smoother import SmootherConfig
+
 
 class TranslationModel(Enum):
     """平移运动模型类型"""
@@ -146,6 +148,7 @@ class UnifiedConfig:
     entropy: MaxEntropyParameters = field(default_factory=MaxEntropyParameters)
     tracker: TrackerParameters = field(default_factory=TrackerParameters)
     constraints: ConstraintParameters = field(default_factory=ConstraintParameters)
+    smoother: SmootherConfig = field(default_factory=SmootherConfig)
     
     @classmethod
     def create_default(cls) -> 'UnifiedConfig':
