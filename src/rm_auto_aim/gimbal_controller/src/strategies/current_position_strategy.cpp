@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "gimbal_controller/current_position_strategy.hpp"
+#include "gimbal_controller/strategies/current_position_strategy.hpp"
 #include "gimbal_controller/armor_position_calculator.hpp"
 #include "gimbal_controller/armor_selector.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
@@ -26,7 +26,9 @@ rm_interfaces::msg::GimbalCmd CurrentPositionStrategy::solve(
 {
   // 检查是否在跟踪状态
   if (!context.is_tracking) {
-    // RCLCPP_DEBUG 不可用，策略类没有 logger
+    if (armor_selector_) {
+      armor_selector_->resetState();
+    }
     return createIdleCmd();
   }
 
@@ -42,18 +44,23 @@ rm_interfaces::msg::GimbalCmd CurrentPositionStrategy::solve(
     return createIdleCmd();
   }
 
-  // 选择最佳装甲板 (基于云台移动最小)
-  auto selection = armor_selector_->selectByMinMovement(
+  // 构建目标中心位置
+  Eigen::Vector3d target_center(
+    context.target_robot.center_position.x,
+    context.target_robot.center_position.y,
+    context.target_robot.center_position.z);
+
+  // 选择最佳装甲板 (带 Facing 过滤 + Hysteresis)
+  auto selection = armor_selector_->selectByMinMovementWithFacing(
     armor_positions,
+    target_center,
+    context.target_robot.yaw,
+    context.target_robot.num_armors,
     context.current_yaw,
     context.current_pitch);
 
-  if (selection.selected_index < 0) {
-    return createIdleCmd();
-  }
-
+  // center fallback 时 selected_index == -1 但仍有有效 position
   Eigen::Vector3d target_position = selection.position;
-  // 注意：策略类中无法直接使用 RCLCPP_DEBUG，需要通过其他方式传递日志
   Eigen::Vector3d target_velocity(
     context.target_robot.center_velocity.x,
     context.target_robot.center_velocity.y,

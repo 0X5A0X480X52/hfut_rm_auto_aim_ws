@@ -13,9 +13,10 @@
 // limitations under the License.
 
 #include "gimbal_controller/gimbal_controller_node.hpp"
-#include "gimbal_controller/current_position_strategy.hpp"
-#include "gimbal_controller/predicted_position_strategy.hpp"
-#include "gimbal_controller/mpc_control_strategy.hpp"
+#include "gimbal_controller/strategies/current_position_strategy.hpp"
+#include "gimbal_controller/strategies/predicted_position_strategy.hpp"
+#include "gimbal_controller/strategies/mpc_control_strategy.hpp"
+#include "gimbal_controller/strategies/state_machine_strategy.hpp"
 
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/LinearMath/Quaternion.h>
@@ -54,6 +55,21 @@ GimbalControllerNode::GimbalControllerNode(const rclcpp::NodeOptions & options)
   double pitch_offset = declare_parameter("solver.pitch_offset", 0.0);
   double yaw_offset = declare_parameter("solver.yaw_offset", 0.0);
 
+  // Facing 过滤参数 (方案一)
+  double facing_enter_angle = declare_parameter("solver.facing_enter_angle", 40.0);
+  double facing_exit_angle = declare_parameter("solver.facing_exit_angle", 55.0);
+
+  // 状态机策略参数 (方案二)
+  double sm_facing_enter = declare_parameter("state_machine.facing_enter_angle", 40.0);
+  double sm_facing_exit = declare_parameter("state_machine.facing_exit_angle", 55.0);
+  double sm_spin_thresh = declare_parameter("state_machine.spin_v_yaw_thresh", 4.0);
+  double sm_calm_thresh = declare_parameter("state_machine.calm_v_yaw_thresh", 2.0);
+  int sm_spin_enter = declare_parameter("state_machine.spin_enter_count", 5);
+  int sm_spin_exit = declare_parameter("state_machine.spin_exit_count", 5);
+  double sm_side_angle = declare_parameter("state_machine.side_angle", 15.0);
+  double sm_prediction_delay = declare_parameter("state_machine.prediction_delay", 0.0);
+  double sm_max_prediction = declare_parameter("state_machine.max_prediction_time", 0.5);
+
   // 初始化 TF2
   tf2_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
   tf2_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
@@ -63,6 +79,7 @@ GimbalControllerNode::GimbalControllerNode(const rclcpp::NodeOptions & options)
 
   // 配置组件参数
   armor_selector_->setParameters(side_angle, min_switching_v_yaw);
+  armor_selector_->setFacingParameters(facing_enter_angle, facing_exit_angle);
   fire_advisor_->setParameters(shooting_range_w, shooting_range_h);
   local_compensator_->setParameters(bullet_speed_, gravity, resistance, iteration_times);
 
@@ -82,6 +99,17 @@ GimbalControllerNode::GimbalControllerNode(const rclcpp::NodeOptions & options)
     strategies_["current"]);
   if (current_strategy) {
     current_strategy->setManualOffset(pitch_offset, yaw_offset);
+  }
+
+  // 配置状态机策略参数
+  auto sm_strategy_ptr = std::dynamic_pointer_cast<StateMachineStrategy>(
+    strategies_["state_machine"]);
+  if (sm_strategy_ptr) {
+    sm_strategy_ptr->setFacingParameters(sm_facing_enter, sm_facing_exit);
+    sm_strategy_ptr->setSpinParameters(
+      sm_spin_thresh, sm_calm_thresh, sm_spin_enter, sm_spin_exit, sm_side_angle);
+    sm_strategy_ptr->setPredictionParameters(sm_prediction_delay, sm_max_prediction);
+    sm_strategy_ptr->setManualOffset(pitch_offset, yaw_offset);
   }
 
   // 创建订阅者
@@ -165,6 +193,13 @@ void GimbalControllerNode::initializeStrategies()
     position_calculator_, armor_selector_, ballistic_client_,
     local_compensator_, fire_advisor_);
   strategies_["mpc"] = mpc_strategy;
+
+  // 创建状态机策略
+  auto sm_strategy = std::make_shared<StateMachineStrategy>();
+  sm_strategy->setComponents(
+    position_calculator_, armor_selector_, ballistic_client_,
+    local_compensator_, fire_advisor_);
+  strategies_["state_machine"] = sm_strategy;
 }
 
 void GimbalControllerNode::trackedRobotsCallback(

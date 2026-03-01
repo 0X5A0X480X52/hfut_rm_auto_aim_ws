@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef GIMBAL_CONTROLLER__MPC_CONTROL_STRATEGY_HPP_
-#define GIMBAL_CONTROLLER__MPC_CONTROL_STRATEGY_HPP_
+#ifndef GIMBAL_CONTROLLER__STRATEGIES__CURRENT_POSITION_STRATEGY_HPP_
+#define GIMBAL_CONTROLLER__STRATEGIES__CURRENT_POSITION_STRATEGY_HPP_
 
 #include "gimbal_controller/gimbal_control_strategy.hpp"
 
@@ -21,16 +21,16 @@ namespace gimbal_controller
 {
 
 /**
- * @brief MPC 控制策略 (预留接口)
+ * @brief 当前位置选板策略
  * 
- * 基于模型预测控制的云台控制策略。
- * 当前为预留接口，暂不实现具体逻辑。
+ * 使用装甲板的当前位置进行选板和云台控制。
+ * 适用于开火判断和低延迟场景。
  */
-class MpcControlStrategy : public GimbalControlStrategy
+class CurrentPositionStrategy : public GimbalControlStrategy
 {
 public:
-  MpcControlStrategy() = default;
-  ~MpcControlStrategy() override = default;
+  CurrentPositionStrategy() = default;
+  ~CurrentPositionStrategy() override = default;
 
   /**
    * @brief 执行策略
@@ -42,22 +42,20 @@ public:
   /**
    * @brief 获取策略名称
    */
-  std::string getName() const override { return "MpcControlStrategy"; }
+  std::string getName() const override { return "CurrentPositionStrategy"; }
 
   /**
-   * @brief 设置 MPC 参数 (预留)
-   * @param prediction_horizon 预测时域
-   * @param control_horizon 控制时域
-   * @param dt 时间步长
+   * @brief 设置手动补偿参数
+   * @param pitch_offset pitch补偿 (度)
+   * @param yaw_offset yaw补偿 (度)
    */
-  void setMpcParameters(int prediction_horizon, int control_horizon, double dt);
+  void setManualOffset(double pitch_offset, double yaw_offset);
 
 private:
-  int prediction_horizon_{18};    // 预测时域
-  int control_horizon_{10};       // 控制时域
-  double dt_{0.01};               // 时间步长
+  double pitch_offset_{0.0};  // pitch手动补偿 (度)
+  double yaw_offset_{0.0};    // yaw手动补偿 (度)
 };
 
 }  // namespace gimbal_controller
 
-#endif  // GIMBAL_CONTROLLER__MPC_CONTROL_STRATEGY_HPP_
+#endif  // GIMBAL_CONTROLLER__STRATEGIES__CURRENT_POSITION_STRATEGY_HPP_

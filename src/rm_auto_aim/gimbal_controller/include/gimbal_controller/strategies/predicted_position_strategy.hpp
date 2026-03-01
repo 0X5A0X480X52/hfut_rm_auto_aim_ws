@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef GIMBAL_CONTROLLER__PREDICTED_POSITION_STRATEGY_HPP_
-#define GIMBAL_CONTROLLER__PREDICTED_POSITION_STRATEGY_HPP_
+#ifndef GIMBAL_CONTROLLER__STRATEGIES__PREDICTED_POSITION_STRATEGY_HPP_
+#define GIMBAL_CONTROLLER__STRATEGIES__PREDICTED_POSITION_STRATEGY_HPP_
 
 #include "gimbal_controller/gimbal_control_strategy.hpp"
 
@@ -80,4 +80,4 @@ private:
 
 }  // namespace gimbal_controller
 
-#endif  // GIMBAL_CONTROLLER__PREDICTED_POSITION_STRATEGY_HPP_
+#endif  // GIMBAL_CONTROLLER__STRATEGIES__PREDICTED_POSITION_STRATEGY_HPP_

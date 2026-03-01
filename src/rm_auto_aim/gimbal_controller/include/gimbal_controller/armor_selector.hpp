@@ -28,16 +28,22 @@ namespace gimbal_controller
  */
 struct ArmorSelectionResult
 {
-  int selected_index;           // 选中的装甲板索引
+  int selected_index{-1};       // 选中的装甲板索引
   Eigen::Vector3d position;     // 选中装甲板的位置
-  double gimbal_movement;       // 云台移动量 (yaw^2 + pitch^2)
-  double distance;              // 目标距离
+  double gimbal_movement{0.0};  // 云台移动量 (yaw^2 + pitch^2)
+  double distance{0.0};         // 目标距离
+  double facing_angle{0.0};     // 选中装甲板的朝向角 (弧度, 0=正面)
+  bool is_center_fallback{false}; // 是否因全部过滤而 fallback 到车体中心
 };
 
 /**
  * @brief 装甲板选择器
  * 
- * 根据当前云台姿态和装甲板位置，选择最优的打击目标
+ * 根据当前云台姿态和装甲板位置，选择最优的打击目标。
+ * 支持:
+ *  - 基础最小运动选板 (selectByMinMovement)
+ *  - 带正面朝向过滤+hysteresis 的选板 (selectByMinMovementWithFacing)
+ *  - 基于决策角的选板 (selectByDecisionAngle)
  */
 class ArmorSelector
 {
@@ -46,14 +52,26 @@ public:
   ~ArmorSelector() = default;
 
   /**
-   * @brief 设置选择参数
+   * @brief 设置基础选择参数
    * @param side_angle 侧向角度阈值 (度)
    * @param min_switching_v_yaw 最小切换角速度阈值
    */
   void setParameters(double side_angle, double min_switching_v_yaw);
 
   /**
-   * @brief 选择最佳装甲板 (基于云台移动最小)
+   * @brief 设置 Facing 过滤参数 (hysteresis 双阈值)
+   * @param enter_angle 进入阈值 (度): 未锁定时，facing angle ≤ enter 才允许选中
+   * @param exit_angle 退出阈值 (度): 已锁定时，facing angle > exit 才释放
+   */
+  void setFacingParameters(double enter_angle, double exit_angle);
+
+  /**
+   * @brief 重置内部记忆状态 (目标丢失时调用)
+   */
+  void resetState();
+
+  /**
+   * @brief 选择最佳装甲板 (基于云台移动最小, 无 facing 过滤)
    * @param armor_positions 各装甲板的世界坐标位置
    * @param current_yaw 当前云台yaw角 (弧度)
    * @param current_pitch 当前云台pitch角 (弧度)
@@ -63,6 +81,30 @@ public:
     const std::vector<Eigen::Vector3d> & armor_positions,
     double current_yaw,
     double current_pitch) const;
+
+  /**
+   * @brief 选择最佳装甲板 (基于云台移动最小 + Facing 过滤 + Hysteresis)
+   * 
+   * 对每个装甲板计算其法向量与云台视线方向的夹角 (facing angle),
+   * 使用双阈值 (enter/exit) 进行 hysteresis 过滤,
+   * 然后在通过过滤的装甲板中选择云台移动最小的目标。
+   * 如果所有装甲板都被过滤掉, 则 fallback 到目标中心。
+   * 
+   * @param armor_positions 各装甲板的世界坐标位置
+   * @param target_center 目标机器人中心位置
+   * @param target_yaw 目标机器人 yaw 角 (弧度)
+   * @param num_armors 装甲板总数
+   * @param current_yaw 当前云台 yaw 角 (弧度)
+   * @param current_pitch 当前云台 pitch 角 (弧度)
+   * @return 选择结果 (注意检查 is_center_fallback)
+   */
+  ArmorSelectionResult selectByMinMovementWithFacing(
+    const std::vector<Eigen::Vector3d> & armor_positions,
+    const Eigen::Vector3d & target_center,
+    double target_yaw,
+    int num_armors,
+    double current_yaw,
+    double current_pitch);
 
   /**
    * @brief 选择最佳装甲板 (基于传统决策角)
@@ -99,9 +141,28 @@ public:
     double & yaw,
     double & pitch);
 
+  /**
+   * @brief 计算每个装甲板的 facing angle (法向量与视线夹角)
+   * @param armor_positions 各装甲板位置
+   * @param target_yaw 目标 yaw 角 (弧度)
+   * @param num_armors 装甲板总数
+   * @return 每个装甲板的 facing angle (弧度, 0=正面, π/2=侧面)
+   */
+  static std::vector<double> computeFacingAngles(
+    const std::vector<Eigen::Vector3d> & armor_positions,
+    double target_yaw,
+    int num_armors);
+
 private:
   double side_angle_{15.0};           // 侧向角度阈值 (度)
   double min_switching_v_yaw_{1.0};   // 最小切换角速度阈值
+
+  // Facing hysteresis 参数
+  double facing_enter_angle_{40.0};   // 进入阈值 (度)
+  double facing_exit_angle_{55.0};    // 退出阈值 (度)
+
+  // 记忆上次选择 (用于 hysteresis)
+  mutable int last_selected_index_{-1};
 };
 
 }  // namespace gimbal_controller

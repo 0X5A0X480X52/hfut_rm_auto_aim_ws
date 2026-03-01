@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "gimbal_controller/mpc_control_strategy.hpp"
+#include "gimbal_controller/strategies/mpc_control_strategy.hpp"
 
 namespace gimbal_controller
 {

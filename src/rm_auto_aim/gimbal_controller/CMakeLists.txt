@@ -37,9 +37,10 @@ set(SOURCES
   src/local_trajectory_compensator.cpp
   src/fire_advisor.cpp
   src/gimbal_control_strategy.cpp
-  src/current_position_strategy.cpp
-  src/predicted_position_strategy.cpp
-  src/mpc_control_strategy.cpp
+  src/strategies/current_position_strategy.cpp
+  src/strategies/predicted_position_strategy.cpp
+  src/strategies/mpc_control_strategy.cpp
+  src/strategies/state_machine_strategy.cpp
   src/gimbal_controller_node.cpp
 )
 

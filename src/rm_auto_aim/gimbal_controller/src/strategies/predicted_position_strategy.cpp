@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "gimbal_controller/predicted_position_strategy.hpp"
+#include "gimbal_controller/strategies/predicted_position_strategy.hpp"
 #include "gimbal_controller/armor_position_calculator.hpp"
 #include "gimbal_controller/armor_selector.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
@@ -29,6 +29,9 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   if (!context.is_tracking) {
     state_ = TRACKING_ARMOR;
     overflow_count_ = 0;
+    if (armor_selector_) {
+      armor_selector_->resetState();
+    }
     return createIdleCmd();
   }
 
@@ -69,19 +72,31 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
     return createIdleCmd();
   }
 
-  // 选择最佳装甲板 (基于预测位置)
-  auto predicted_selection = armor_selector_->selectByMinMovement(
+  // 预测中心位置
+  Eigen::Vector3d predicted_center(
+    robot.center_position.x + total_prediction_time * robot.center_velocity.x,
+    robot.center_position.y + total_prediction_time * robot.center_velocity.y,
+    robot.center_position.z + total_prediction_time * robot.center_velocity.z);
+
+  // 预测 yaw
+  double predicted_yaw = robot.yaw + total_prediction_time * robot.yaw_velocity;
+
+  // 选择最佳装甲板 (基于预测位置, 带 Facing 过滤 + Hysteresis)
+  auto predicted_selection = armor_selector_->selectByMinMovementWithFacing(
     predicted_armor_positions,
+    predicted_center,
+    predicted_yaw,
+    robot.num_armors,
     context.current_yaw,
     context.current_pitch);
 
-  // 选择最佳装甲板 (基于当前位置，用于开火判断)
+  // 选择最佳装甲板 (基于当前位置，用于开火判断，不用 facing 过滤)
   auto current_selection = armor_selector_->selectByMinMovement(
     current_armor_positions,
     context.current_yaw,
     context.current_pitch);
 
-  if (predicted_selection.selected_index < 0 || current_selection.selected_index < 0) {
+  if (current_selection.selected_index < 0) {
     return createIdleCmd();
   }
 
@@ -118,13 +133,10 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   Eigen::Vector3d fire_target_position = current_selection.position;
 
   if (state_ == TRACKING_CENTER) {
-    // 高转速时跟踪机器人中心
-    control_target_position = Eigen::Vector3d(
-      robot.center_position.x + total_prediction_time * robot.center_velocity.x,
-      robot.center_position.y + total_prediction_time * robot.center_velocity.y,
-      robot.center_position.z + total_prediction_time * robot.center_velocity.z);
+    // 高转速时跟踪机器人中心 (预测位置)
+    control_target_position = predicted_center;
   } else {
-    // 正常跟踪预测装甲板位置
+    // 正常跟踪预测装甲板位置 (含 facing 过滤后的结果或 center fallback)
     control_target_position = predicted_selection.position;
   }
 

@@ -24,6 +24,17 @@ void ArmorSelector::setParameters(double side_angle, double min_switching_v_yaw)
   min_switching_v_yaw_ = min_switching_v_yaw;
 }
 
+void ArmorSelector::setFacingParameters(double enter_angle, double exit_angle)
+{
+  facing_enter_angle_ = enter_angle;
+  facing_exit_angle_ = exit_angle;
+}
+
+void ArmorSelector::resetState()
+{
+  last_selected_index_ = -1;
+}
+
 ArmorSelectionResult ArmorSelector::selectByMinMovement(
   const std::vector<Eigen::Vector3d> & armor_positions,
   double current_yaw,
@@ -159,6 +170,122 @@ void ArmorSelector::calculateYawPitch(
 
   yaw = std::atan2(target_position.y(), target_position.x());
   pitch = std::atan2(target_position.z(), distance_xy);
+}
+
+std::vector<double> ArmorSelector::computeFacingAngles(
+  const std::vector<Eigen::Vector3d> & armor_positions,
+  double target_yaw,
+  int num_armors)
+{
+  std::vector<double> facing_angles;
+  facing_angles.reserve(armor_positions.size());
+
+  for (size_t i = 0; i < armor_positions.size(); ++i) {
+    const auto & pos = armor_positions[i];
+
+    // 装甲板法向量方向 (指向外侧)
+    // 装甲板 i 相对于机器人正前方偏转 i*(2π/N),
+    // 法向量 = target_yaw + i*(2π/N) + π (指向外侧)
+    double armor_normal_angle = target_yaw + static_cast<double>(i) * (2.0 * M_PI / num_armors) + M_PI;
+
+    // 云台指向装甲板的方向
+    double view_angle = std::atan2(pos.y(), pos.x());
+
+    // 法向量与视线的夹角 (0=正面朝向云台, π/2=侧面, π=背面)
+    double facing = std::abs(angles::normalize_angle(armor_normal_angle - view_angle));
+    facing_angles.push_back(facing);
+  }
+
+  return facing_angles;
+}
+
+ArmorSelectionResult ArmorSelector::selectByMinMovementWithFacing(
+  const std::vector<Eigen::Vector3d> & armor_positions,
+  const Eigen::Vector3d & target_center,
+  double target_yaw,
+  int num_armors,
+  double current_yaw,
+  double current_pitch)
+{
+  ArmorSelectionResult result;
+  result.selected_index = -1;
+  result.gimbal_movement = std::numeric_limits<double>::max();
+  result.distance = std::numeric_limits<double>::max();
+  result.facing_angle = 0.0;
+  result.is_center_fallback = false;
+
+  if (armor_positions.empty()) {
+    // Fallback to center
+    result.position = target_center;
+    result.is_center_fallback = true;
+    result.distance = target_center.norm();
+    last_selected_index_ = -1;
+    return result;
+  }
+
+  // 1. 距离过滤 (排除最远板)
+  auto dist_valid_indices = filterByDistance(armor_positions);
+
+  // 2. 计算 facing angles
+  auto facing_angles = computeFacingAngles(armor_positions, target_yaw, num_armors);
+
+  // 3. Facing 过滤 (Hysteresis 双阈值)
+  double enter_rad = facing_enter_angle_ * M_PI / 180.0;
+  double exit_rad = facing_exit_angle_ * M_PI / 180.0;
+
+  std::vector<int> facing_valid_indices;
+  for (int idx : dist_valid_indices) {
+    double fa = facing_angles[idx];
+    if (idx == last_selected_index_) {
+      // 已锁定: 使用退出阈值 (更宽松)
+      if (fa <= exit_rad) {
+        facing_valid_indices.push_back(idx);
+      }
+    } else {
+      // 未锁定: 使用进入阈值 (更严格)
+      if (fa <= enter_rad) {
+        facing_valid_indices.push_back(idx);
+      }
+    }
+  }
+
+  // 4. 如果过滤后为空, fallback 到目标中心
+  if (facing_valid_indices.empty()) {
+    result.position = target_center;
+    result.is_center_fallback = true;
+    result.distance = target_center.norm();
+    last_selected_index_ = -1;
+    return result;
+  }
+
+  // 5. 在通过 facing 过滤的装甲板中, 选择云台移动最小的
+  for (int idx : facing_valid_indices) {
+    const auto & pos = armor_positions[idx];
+
+    double yaw, pitch;
+    calculateYawPitch(pos, current_yaw, yaw, pitch);
+
+    double yaw_diff = angles::normalize_angle(yaw - current_yaw);
+    double pitch_diff = pitch - current_pitch;
+
+    double movement = yaw_diff * yaw_diff + pitch_diff * pitch_diff;
+    double distance = pos.norm();
+
+    if (movement < result.gimbal_movement ||
+        (std::abs(movement - result.gimbal_movement) < 0.01 && distance < result.distance))
+    {
+      result.selected_index = idx;
+      result.position = pos;
+      result.gimbal_movement = movement;
+      result.distance = distance;
+      result.facing_angle = facing_angles[idx];
+    }
+  }
+
+  // 更新记忆
+  last_selected_index_ = result.selected_index;
+
+  return result;
 }
 
 }  // namespace gimbal_controller

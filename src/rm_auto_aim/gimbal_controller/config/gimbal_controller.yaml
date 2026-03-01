@@ -7,7 +7,7 @@ gimbal_controller:
     bullet_speed: 20.0
     control_rate: 250.0
     
-    # 策略选择: "current", "predicted", "mpc"
+    # 策略选择: "current", "predicted", "mpc", "state_machine"
     strategy: "current"
     
     # 弹道解算模式: "service" (使用ballistic_solver服务), "local" (本地计算)
@@ -38,3 +38,19 @@ gimbal_controller:
       # 手动补偿 (度)
       pitch_offset: 0.0
       yaw_offset: 0.0
+
+      # Facing 过滤参数 (方案一: 用于 current/predicted 策略)
+      facing_enter_angle: 40.0    # 进入阈值 (度): 未锁定时需 ≤ 此值
+      facing_exit_angle: 55.0     # 退出阈值 (度): 已锁定时 > 此值才释放
+
+    # 状态机策略参数 (方案二: strategy: "state_machine")
+    state_machine:
+      facing_enter_angle: 40.0    # 进入 SINGLE 的 facing 阈值 (度)
+      facing_exit_angle: 55.0     # 退出 SINGLE 的 facing 阈值 (度)
+      spin_v_yaw_thresh: 4.0      # 进入 SPIN 的角速度阈值 (rad/s)
+      calm_v_yaw_thresh: 2.0      # 退出 SPIN 的角速度阈值 (rad/s)
+      spin_enter_count: 5         # 进入 SPIN 所需连续帧数
+      spin_exit_count: 5          # 退出 SPIN 所需连续帧数
+      side_angle: 15.0            # SPIN 模式跳板角度 (度)
+      prediction_delay: 0.0       # 额外预测延迟 (秒)
+      max_prediction_time: 0.5    # 最大预测时间 (秒)
