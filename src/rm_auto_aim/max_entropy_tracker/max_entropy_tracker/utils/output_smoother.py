@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 import logging
 
 from .one_euro_filter import OneEuroFilter, OneEuroFilter3D, OneEuroFilterAngle
-from .structural_estimator import StructuralParameterEstimator
+from .robbins_monro_estimator import StructuralRMEstimator
 
 logger = logging.getLogger(__name__)
 
@@ -79,14 +79,16 @@ class SmootherConfig:
     vel_beta: float = 0.01
     vel_d_cutoff: float = 1.0
     
-    # ---- 结构参数收敛 ----
-    struct_base_process_noise: float = 1e-5
-    struct_decay_process_noise: float = 0.01
-    struct_decay_rate: float = 0.95
+    # ---- 结构参数收敛 (Robbins-Monro) ----
+    struct_rm_initial_step: float = 0.5
+    struct_rm_gamma: float = 0.75
+    struct_rm_n0: int = 5
+    struct_rm_dual_obs_boost: float = 3.0
     struct_min_radius: float = 0.12
     struct_max_radius: float = 0.5
     struct_min_dz: float = 0.0
     struct_max_dz: float = 1.0
+    struct_rm_convergence_eps: float = 1e-4
     
     # ---- 初始采样频率估计 ----
     default_freq: float = 30.0       # 默认采样频率(Hz), 会根据实际dt自动调节
@@ -179,15 +181,17 @@ class OutputSmoother:
             d_cutoff=self.config.vel_d_cutoff,
         )
         
-        # 结构参数收敛器
-        self._struct_est = StructuralParameterEstimator(
-            base_process_noise=self.config.struct_base_process_noise,
-            decay_process_noise=self.config.struct_decay_process_noise,
-            decay_rate=self.config.struct_decay_rate,
+        # 结构参数收敛器 (Robbins-Monro)
+        self._struct_est = StructuralRMEstimator(
+            initial_step=self.config.struct_rm_initial_step,
+            gamma=self.config.struct_rm_gamma,
+            n0=self.config.struct_rm_n0,
+            dual_obs_boost=self.config.struct_rm_dual_obs_boost,
             min_radius=self.config.struct_min_radius,
             max_radius=self.config.struct_max_radius,
             min_dz=self.config.struct_min_dz,
             max_dz=self.config.struct_max_dz,
+            convergence_eps=self.config.struct_rm_convergence_eps,
         )
         
         self._initialized = False
@@ -341,7 +345,7 @@ class OutputSmoother:
         self._frame_count = 0
     
     @property
-    def structural_estimator(self) -> StructuralParameterEstimator:
+    def structural_estimator(self) -> StructuralRMEstimator:
         """获取结构参数估计器（用于诊断）"""
         return self._struct_est
     

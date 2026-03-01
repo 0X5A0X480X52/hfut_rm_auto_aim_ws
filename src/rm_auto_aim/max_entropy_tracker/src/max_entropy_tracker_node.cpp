@@ -129,6 +129,32 @@ void MaxEntropyTrackerNode::declare_parameters() {
   declare_parameter("constraints.max_radius", 0.5);
   declare_parameter("constraints.min_dz", -1.0);
   declare_parameter("constraints.max_dz", 1.0);
+
+  // Output smoother
+  declare_parameter("smoother.enable", true);
+  declare_parameter("smoother.enable_position_smooth", true);
+  declare_parameter("smoother.enable_yaw_smooth", true);
+  declare_parameter("smoother.enable_velocity_smooth", true);
+  declare_parameter("smoother.enable_structural_convergence", true);
+  declare_parameter("smoother.pos_min_cutoff", 1.5);
+  declare_parameter("smoother.pos_beta", 0.01);
+  declare_parameter("smoother.pos_d_cutoff", 1.0);
+  declare_parameter("smoother.yaw_min_cutoff", 1.0);
+  declare_parameter("smoother.yaw_beta", 0.005);
+  declare_parameter("smoother.yaw_d_cutoff", 1.0);
+  declare_parameter("smoother.vel_min_cutoff", 2.0);
+  declare_parameter("smoother.vel_beta", 0.01);
+  declare_parameter("smoother.vel_d_cutoff", 1.0);
+  declare_parameter("smoother.rm_initial_step", 0.5);
+  declare_parameter("smoother.rm_gamma", 0.75);
+  declare_parameter("smoother.rm_n0", 5);
+  declare_parameter("smoother.rm_dual_obs_boost", 3.0);
+  declare_parameter("smoother.rm_min_radius", 0.12);
+  declare_parameter("smoother.rm_max_radius", 0.5);
+  declare_parameter("smoother.rm_min_dz", -1.0);
+  declare_parameter("smoother.rm_max_dz", 1.0);
+  declare_parameter("smoother.rm_convergence_eps", 1e-4);
+  declare_parameter("smoother.default_freq", 30.0);
 }
 
 /* ================================================================ */
@@ -194,7 +220,57 @@ void MaxEntropyTrackerNode::apply_parameters_to_config() {
   c.constraints.min_dz = get_parameter("constraints.min_dz").as_double();
   c.constraints.max_dz = get_parameter("constraints.max_dz").as_double();
 
-  RCLCPP_INFO(get_logger(), "Parameters applied to UnifiedConfig");
+  // Output smoother config
+  smoother_config_.enable = get_parameter("smoother.enable").as_bool();
+  smoother_config_.enable_position_smooth =
+      get_parameter("smoother.enable_position_smooth").as_bool();
+  smoother_config_.enable_yaw_smooth =
+      get_parameter("smoother.enable_yaw_smooth").as_bool();
+  smoother_config_.enable_velocity_smooth =
+      get_parameter("smoother.enable_velocity_smooth").as_bool();
+  smoother_config_.enable_structural_convergence =
+      get_parameter("smoother.enable_structural_convergence").as_bool();
+  smoother_config_.pos_min_cutoff =
+      get_parameter("smoother.pos_min_cutoff").as_double();
+  smoother_config_.pos_beta =
+      get_parameter("smoother.pos_beta").as_double();
+  smoother_config_.pos_d_cutoff =
+      get_parameter("smoother.pos_d_cutoff").as_double();
+  smoother_config_.yaw_min_cutoff =
+      get_parameter("smoother.yaw_min_cutoff").as_double();
+  smoother_config_.yaw_beta =
+      get_parameter("smoother.yaw_beta").as_double();
+  smoother_config_.yaw_d_cutoff =
+      get_parameter("smoother.yaw_d_cutoff").as_double();
+  smoother_config_.vel_min_cutoff =
+      get_parameter("smoother.vel_min_cutoff").as_double();
+  smoother_config_.vel_beta =
+      get_parameter("smoother.vel_beta").as_double();
+  smoother_config_.vel_d_cutoff =
+      get_parameter("smoother.vel_d_cutoff").as_double();
+  smoother_config_.rm_initial_step =
+      get_parameter("smoother.rm_initial_step").as_double();
+  smoother_config_.rm_gamma =
+      get_parameter("smoother.rm_gamma").as_double();
+  smoother_config_.rm_n0 =
+      get_parameter("smoother.rm_n0").as_int();
+  smoother_config_.rm_dual_obs_boost =
+      get_parameter("smoother.rm_dual_obs_boost").as_double();
+  smoother_config_.rm_min_radius =
+      get_parameter("smoother.rm_min_radius").as_double();
+  smoother_config_.rm_max_radius =
+      get_parameter("smoother.rm_max_radius").as_double();
+  smoother_config_.rm_min_dz =
+      get_parameter("smoother.rm_min_dz").as_double();
+  smoother_config_.rm_max_dz =
+      get_parameter("smoother.rm_max_dz").as_double();
+  smoother_config_.rm_convergence_eps =
+      get_parameter("smoother.rm_convergence_eps").as_double();
+  smoother_config_.default_freq =
+      get_parameter("smoother.default_freq").as_double();
+
+  RCLCPP_INFO(get_logger(), "Parameters applied to UnifiedConfig (smoother %s)",
+              smoother_config_.enable ? "ON" : "OFF");
 }
 
 /* ================================================================ */
@@ -234,7 +310,20 @@ void MaxEntropyTrackerNode::armors_callback(
 
   for (auto &[rid, obs_list] : obs_by_robot) {
     last_obs_counts_[rid] = static_cast<int>(obs_list.size());
+    last_dual_obs_[rid] = (obs_list.size() >= 2);
     bool is_ok = tracker_manager_->update(rid, obs_list, current_time);
+
+    // Ensure smoother exists for this robot
+    if (is_ok) {
+      auto *t = tracker_manager_->get(rid);
+      if (t && t->is_initialized() && smoothers_.find(rid) == smoothers_.end()) {
+        OutputSmoother sm(smoother_config_);
+        auto [r1, r2] = t->get_radii();
+        double dza = t->get_dza();
+        sm.initialize(r1, r2, dza);
+        smoothers_.emplace(rid, std::move(sm));
+      }
+    }
 
     if (debug_mode_) {
       auto *t = tracker_manager_->get(rid);
@@ -248,6 +337,12 @@ void MaxEntropyTrackerNode::armors_callback(
           is_ok ? "true" : "false");
       }
     }
+  }
+
+  // Clean up smoothers for removed trackers
+  for (const auto &rid : removed) {
+    smoothers_.erase(rid);
+    last_dual_obs_.erase(rid);
   }
 
   publish_results(msg->header);
@@ -270,10 +365,40 @@ void MaxEntropyTrackerNode::publish_results(
     auto *tracker = tracker_manager_->get(rid);
     if (!tracker || !tracker->is_tracking()) continue;
 
-    auto target = build_target_message(header, rid, *tracker);
+    // ---- Apply output smoothing ----
+    SmoothedOutput smoothed;
+    bool has_smoothed = false;
+    auto sm_it = smoothers_.find(rid);
+    if (sm_it != smoothers_.end() && smoother_config_.enable) {
+      auto pos = tracker->get_center_position();
+      auto idx = tracker->ukf().state_idx();
+      const auto &x = tracker->ukf().x();
+      Eigen::Vector3d vel(x(idx.VX()), x(idx.VY()), x(idx.VZ()));
+      double yaw = tracker->get_yaw();
+      double v_yaw = x(idx.DELTA_RATE());
+      auto [r1, r2] = tracker->get_radii();
+      double dza = tracker->get_dza();
+
+      bool is_dual = false;
+      auto dual_it = last_dual_obs_.find(rid);
+      if (dual_it != last_dual_obs_.end()) is_dual = dual_it->second;
+
+      rclcpp::Time stamp(header.stamp);
+      double ts = stamp.seconds();
+
+      smoothed = sm_it->second.smooth(pos, yaw, vel, v_yaw,
+                                       r1, r2, dza, is_dual, ts);
+      has_smoothed = true;
+    }
+
+    auto target = has_smoothed
+        ? build_target_message(header, rid, *tracker, &smoothed)
+        : build_target_message(header, rid, *tracker, nullptr);
     target_pub_->publish(target);
 
-    auto robot = build_tracked_robot_message(header, rid, *tracker);
+    auto robot = has_smoothed
+        ? build_tracked_robot_message(header, rid, *tracker, &smoothed)
+        : build_tracked_robot_message(header, rid, *tracker, nullptr);
     tracked_msg.robots.push_back(robot);
   }
 
@@ -295,7 +420,8 @@ void MaxEntropyTrackerNode::publish_results(
 
 rm_interfaces::msg::Target MaxEntropyTrackerNode::build_target_message(
     const std_msgs::msg::Header &header, const std::string &robot_id,
-    AdaptiveArmorTracker &tracker) {
+    AdaptiveArmorTracker &tracker,
+    const SmoothedOutput *smoothed) {
   rm_interfaces::msg::Target target;
   target.header = header;
   target.header.frame_id = target_frame_;
@@ -303,26 +429,42 @@ rm_interfaces::msg::Target MaxEntropyTrackerNode::build_target_message(
   target.id = robot_id;
   target.armors_num = 4;
 
-  auto pos = tracker.get_center_position();
-  target.position.x = pos.x();
-  target.position.y = pos.y();
-  target.position.z = pos.z();
+  if (smoothed) {
+    // Use smoothed output
+    target.position.x = smoothed->center_position.x();
+    target.position.y = smoothed->center_position.y();
+    target.position.z = smoothed->center_position.z();
+    target.velocity.x = smoothed->velocity.x();
+    target.velocity.y = smoothed->velocity.y();
+    target.velocity.z = smoothed->velocity.z();
+    target.yaw = smoothed->yaw;
+    target.v_yaw = smoothed->yaw_velocity;
+    target.radius_1 = smoothed->r1;
+    target.radius_2 = smoothed->r2;
+    target.d_za = smoothed->dza;
+  } else {
+    // Fallback: raw tracker output
+    auto pos = tracker.get_center_position();
+    target.position.x = pos.x();
+    target.position.y = pos.y();
+    target.position.z = pos.z();
 
-  auto idx = tracker.ukf().state_idx();
-  const auto &x = tracker.ukf().x();
-  target.velocity.x = x(idx.VX());
-  target.velocity.y = x(idx.VY());
-  target.velocity.z = x(idx.VZ());
+    auto idx = tracker.ukf().state_idx();
+    const auto &x = tracker.ukf().x();
+    target.velocity.x = x(idx.VX());
+    target.velocity.y = x(idx.VY());
+    target.velocity.z = x(idx.VZ());
 
-  target.yaw = tracker.get_yaw();
-  target.v_yaw = x(idx.DELTA_RATE());
+    target.yaw = tracker.get_yaw();
+    target.v_yaw = x(idx.DELTA_RATE());
 
-  auto [r1, r2] = tracker.get_radii();
-  target.radius_1 = r1;
-  target.radius_2 = r2;
-  target.d_za = tracker.get_dza();
+    auto [r1, r2] = tracker.get_radii();
+    target.radius_1 = r1;
+    target.radius_2 = r2;
+    target.d_za = tracker.get_dza();
+  }
+
   target.d_zc = 0.0;
-
   target.yaw_diff = 0.0;
   target.position_diff = 0.0;
 
@@ -332,7 +474,8 @@ rm_interfaces::msg::Target MaxEntropyTrackerNode::build_target_message(
 rm_interfaces::msg::TrackedRobot
 MaxEntropyTrackerNode::build_tracked_robot_message(
     const std_msgs::msg::Header &header, const std::string &robot_id,
-    AdaptiveArmorTracker &tracker) {
+    AdaptiveArmorTracker &tracker,
+    const SmoothedOutput *smoothed) {
   rm_interfaces::msg::TrackedRobot msg;
   msg.header = header;
   msg.header.frame_id = target_frame_;
@@ -348,19 +491,44 @@ MaxEntropyTrackerNode::build_tracked_robot_message(
     msg.track_state = rm_interfaces::msg::TrackedRobot::DETECTING;
   }
 
-  // Center position
-  auto pos = tracker.get_center_position();
-  msg.center_position.x = pos.x();
-  msg.center_position.y = pos.y();
-  msg.center_position.z = pos.z();
-
   auto idx = tracker.ukf().state_idx();
   const auto &x = tracker.ukf().x();
 
-  // Center velocity
-  msg.center_velocity.x = x(idx.VX());
-  msg.center_velocity.y = x(idx.VY());
-  msg.center_velocity.z = x(idx.VZ());
+  if (smoothed) {
+    // ---- Use smoothed output ----
+    msg.center_position.x = smoothed->center_position.x();
+    msg.center_position.y = smoothed->center_position.y();
+    msg.center_position.z = smoothed->center_position.z();
+
+    msg.center_velocity.x = smoothed->velocity.x();
+    msg.center_velocity.y = smoothed->velocity.y();
+    msg.center_velocity.z = smoothed->velocity.z();
+
+    msg.yaw = smoothed->yaw;
+    msg.yaw_velocity = smoothed->yaw_velocity;
+
+    msg.radius = smoothed->r1;
+    msg.radius_2 = smoothed->r2;
+    msg.d_za = smoothed->dza;
+  } else {
+    // ---- Fallback: raw tracker output ----
+    auto pos = tracker.get_center_position();
+    msg.center_position.x = pos.x();
+    msg.center_position.y = pos.y();
+    msg.center_position.z = pos.z();
+
+    msg.center_velocity.x = x(idx.VX());
+    msg.center_velocity.y = x(idx.VY());
+    msg.center_velocity.z = x(idx.VZ());
+
+    msg.yaw = tracker.get_yaw();
+    msg.yaw_velocity = x(idx.DELTA_RATE());
+
+    auto [r1, r2] = tracker.get_radii();
+    msg.radius = r1;
+    msg.radius_2 = r2;
+    msg.d_za = tracker.get_dza();
+  }
 
   // Center acceleration (only when model supports it)
   if (idx.has("AX")) {
@@ -373,29 +541,24 @@ MaxEntropyTrackerNode::build_tracked_robot_message(
     msg.center_acceleration.z = 0.0;
   }
 
-  // Yaw, yaw velocity, yaw acceleration
-  msg.yaw = tracker.get_yaw();
-  msg.yaw_velocity = x(idx.DELTA_RATE());
+  // Yaw acceleration
   if (idx.has("DELTA_ACC")) {
     msg.yaw_acceleration = x(idx.get("DELTA_ACC"));
   } else {
     msg.yaw_acceleration = 0.0;
   }
 
-  // Radii
-  auto [r1, r2] = tracker.get_radii();
-  msg.radius = r1;
-  msg.radius_2 = r2;
-
-  // Height difference
-  msg.d_za = tracker.get_dza();
   msg.d_zc = 0.0;
 
   // Number of armors (must be set before generating armors_offset)
   msg.num_armors = infer_num_armors(robot_id, msg.robot_type);
 
-  // Armor geometric offsets (in robot frame)
-  msg.armors_offset = generate_armors_offset(msg.num_armors, r1, r2, msg.d_za, msg.d_zc);
+  // Armor geometric offsets — use smoothed radii if available
+  double off_r1 = smoothed ? smoothed->r1 : msg.radius;
+  double off_r2 = smoothed ? smoothed->r2 : msg.radius_2;
+  double off_dza = smoothed ? smoothed->dza : msg.d_za;
+  msg.armors_offset = generate_armors_offset(
+      msg.num_armors, off_r1, off_r2, off_dza, msg.d_zc);
 
   // State covariance from UKF
   try {

@@ -20,6 +20,11 @@ from .one_euro_filter import (
     OneEuroFilterAngle,
 )
 from .structural_estimator import StructuralParameterEstimator
+from .robbins_monro_estimator import (
+    RobbinsMonroEstimator,
+    RobbinsMonroConfig,
+    StructuralRMEstimator,
+)
 from .output_smoother import OutputSmoother, SmootherConfig, SmoothedOutput
 from .virtual_frame import (
     VirtualFrameTransform,

@@ -23,6 +23,7 @@
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/tf_handler.hpp"
 #include "max_entropy_tracker/tracker_manager.hpp"
+#include "max_entropy_tracker/utils/output_smoother.hpp"
 
 namespace fyt::auto_aim {
 
@@ -38,11 +39,13 @@ class MaxEntropyTrackerNode : public rclcpp::Node {
 
   rm_interfaces::msg::Target build_target_message(
       const std_msgs::msg::Header &header, const std::string &robot_id,
-      AdaptiveArmorTracker &tracker);
+      AdaptiveArmorTracker &tracker,
+      const SmoothedOutput *smoothed = nullptr);
 
   rm_interfaces::msg::TrackedRobot build_tracked_robot_message(
       const std_msgs::msg::Header &header, const std::string &robot_id,
-      AdaptiveArmorTracker &tracker);
+      AdaptiveArmorTracker &tracker,
+      const SmoothedOutput *smoothed = nullptr);
 
   uint8_t infer_robot_type(const std::string &robot_id) const;
   int infer_num_armors(const std::string &robot_id, int robot_type) const;
@@ -69,6 +72,13 @@ class MaxEntropyTrackerNode : public rclcpp::Node {
 
   // Per-robot last visible count
   std::unordered_map<std::string, int> last_obs_counts_;
+
+  // Per-robot last dual-observation flag
+  std::unordered_map<std::string, bool> last_dual_obs_;
+
+  // Output smoothing layer (per-robot)
+  SmootherConfig smoother_config_;
+  std::unordered_map<std::string, OutputSmoother> smoothers_;
 };
 
 }  // namespace fyt::auto_aim

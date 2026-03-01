@@ -84,3 +84,43 @@
     constraints.max_radius: 0.3
     constraints.min_dz: -1.0
     constraints.max_dz: 1.0
+
+    # ========== 输出平滑器 (Output Smoother) ==========
+    # 非侵入式后处理层：位置/yaw 用 1€ Filter 消抖，结构参数用 Robbins-Monro 收敛
+    smoother.enable: true
+
+    # 子组件开关
+    smoother.enable_position_smooth: true
+    smoother.enable_yaw_smooth: true
+    smoother.enable_velocity_smooth: true
+    smoother.enable_structural_convergence: true
+
+    # ---- 位置平滑 (OneEuro 3D) ----
+    # min_cutoff 越小越平滑但延迟越大；beta 越大对快速运动跟随越好
+    smoother.pos_min_cutoff: 1.5        # Hz
+    smoother.pos_beta: 0.01             # 速度响应系数
+    smoother.pos_d_cutoff: 1.0          # 导数滤波截止
+
+    # ---- Yaw平滑 (OneEuro Angle) ----
+    smoother.yaw_min_cutoff: 1.0
+    smoother.yaw_beta: 0.005
+    smoother.yaw_d_cutoff: 1.0
+
+    # ---- 速度平滑 (OneEuro 3D) ----
+    smoother.vel_min_cutoff: 2.0
+    smoother.vel_beta: 0.01
+    smoother.vel_d_cutoff: 1.0
+
+    # ---- 结构参数 Robbins-Monro 随机逼近 ----
+    # 步长: a_n = initial_step / (n + n0)^gamma
+    # gamma ∈ (0.5, 1], 0.75 为折中值
+    smoother.rm_initial_step: 0.5       # c — 初始步长
+    smoother.rm_gamma: 0.75             # γ — 衰减指数
+    smoother.rm_n0: 5                   # 偏移量（避免初始步长过大）
+    smoother.rm_dual_obs_boost: 3.0     # 双观测时步长放大倍数
+    smoother.rm_min_radius: 0.12        # 半径下限
+    smoother.rm_max_radius: 0.5         # 半径上限
+    smoother.rm_min_dz: -1.0            # 高度差下限
+    smoother.rm_max_dz: 1.0             # 高度差上限
+    smoother.rm_convergence_eps: 0.0001 # 收敛判定阈值
+    smoother.default_freq: 30.0         # 默认采样频率(Hz)
