@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <stdexcept>
+#include <iostream>
 
 #include "max_entropy_tracker/utils/angle_utils.hpp"
 
@@ -71,6 +72,8 @@ bool AdaptiveArmorTracker::update(const std::vector<ObservationData> &obs) {
   if (!is_initialized() || obs.empty()) {
     handle_observation_loss(config_.tracker.tracking_thres,
                             config_.tracker.lost_thres);
+    std::cout << "Observation empty or tracker not initialized, transitioning to "
+                 << "state=" << static_cast<int>(state()) << std::endl;
     return false;
   }
 
@@ -104,6 +107,8 @@ bool AdaptiveArmorTracker::update(const std::vector<ObservationData> &obs) {
 
 bool AdaptiveArmorTracker::update_single(const ObservationData &obs,
                                          double override_pos_confidence) {
+  std::cout << "Updating with single observation: x=" << obs.x << " y=" << obs.y
+            << " z=" << obs.z << " yaw=" << obs.yaw << std::endl;
   auto idx = ukf_.state_idx();
 
   auto [panel_id, center_yaw, matching_error] =
@@ -142,10 +147,16 @@ bool AdaptiveArmorTracker::update_single(const ObservationData &obs,
 
 bool AdaptiveArmorTracker::update_dual(const ObservationData &obs1,
                                        const ObservationData &obs2) {
+  std::cout << "Updating with dual observations:\n"
+            << "  obs1: x=" << obs1.x << " y=" << obs1.y << " z=" << obs1.z
+            << " yaw=" << obs1.yaw << "\n"
+            << "  obs2: x=" << obs2.x << " y=" << obs2.y << " z=" << obs2.z
+            << " yaw=" << obs2.yaw << std::endl;
+
   // First: single update on obs1 with full position confidence
   bool single_ok = update_single(obs1, 1.0);
   if (!single_ok) {
-    fprintf(stderr, "[adaptive_tracker::update_dual] update_single(obs1) failed\n");
+    std::cout << "[adaptive_tracker::update_dual] update_single(obs1) failed\n";
     return false;
   }
 
@@ -164,9 +175,8 @@ bool AdaptiveArmorTracker::update_dual(const ObservationData &obs1,
 
   bool dual_ok = ukf_.update({obs1, obs2}, {rt1, rt2}, {l1, l2}, h_conf);
   if (!dual_ok) {
-    fprintf(stderr, "[adaptive_tracker::update_dual] ukf_.update(dual) failed "  \
-      "rt1=%s rt2=%s l1=%s l2=%s h_conf=%.3f\n",
-      rt1.c_str(), rt2.c_str(), l1.c_str(), l2.c_str(), h_conf);
+    std::cout << "[adaptive_tracker::update_dual] ukf_.update(dual) failed "  \
+      "rt1=" << rt1 << " rt2=" << rt2 << " l1=" << l1 << " l2=" << l2 << " h_conf=" << h_conf << std::endl;
   }
   return dual_ok;
 }
