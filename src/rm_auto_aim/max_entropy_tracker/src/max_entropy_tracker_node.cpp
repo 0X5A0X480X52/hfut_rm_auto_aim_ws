@@ -634,7 +634,7 @@ MaxEntropyTrackerNode::generate_armors_offset(
     double r, dz;
     if (num_armors == 4) {
       r = is_current_pair ? r1 : r2;
-      dz = d_zc + (is_current_pair ? 0.0 : d_za);
+      dz = d_zc + (is_current_pair ? -d_za : d_za);
       is_current_pair = !is_current_pair;
     } else {
       r = r1;

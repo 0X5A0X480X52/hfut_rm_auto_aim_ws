@@ -665,7 +665,7 @@ class MaxEntropyTrackerNode(Node):
             
             if num_armors == 4:
                 r = r1 if is_current_pair else r2
-                dz = d_zc + (0.0 if is_current_pair else d_za)
+                dz = d_zc + (-d_za if is_current_pair else d_za)
                 is_current_pair = not is_current_pair
             else:
                 r = r1

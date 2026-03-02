@@ -138,11 +138,11 @@ class PanelAssociator:
         """
         使用Z坐标辅助判断panel_id
         
-        Upper层（z > center_z）→ 偶数panel (0,2) → r1
-        Lower层（z < center_z）→ 奇数panel (1,3) → r2
+        Upper层（z > center_z）→ 奇数panel (1,3) → r2
+        Lower层（z < center_z）→ 偶数panel (0,2) → r1
         """
         is_upper = z_obs > center_z
-        preferred_parity = 0 if is_upper else 1
+        preferred_parity = 1 if is_upper else 0
         
         # 在preferred_parity的panel中选择yaw误差更小的
         candidate_panels = [i for i in range(4) if i % 2 == preferred_parity]
