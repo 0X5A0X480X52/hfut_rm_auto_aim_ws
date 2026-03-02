@@ -277,7 +277,13 @@ class AdaptiveArmorTracker(BaseTracker):
             armor_yaw=obs.yaw,  # 输入：装甲板yaw（径向方向）
             center_yaw_pred=self._reference_center_yaw,
             z_obs=obs.z,
-            center_z=self.ukf.x[StateIndex.Z]
+            center_z=self.ukf.x[StateIndex.Z],
+            obs_x=obs.x,
+            obs_y=obs.y,
+            center_x=self.ukf.x[StateIndex.X],
+            center_y=self.ukf.x[StateIndex.Y],
+            r1=self.ukf.x[StateIndex.R1],
+            r2=self.ukf.x[StateIndex.R2]
         )
         
         self._current_panel_id = panel_id
@@ -368,14 +374,26 @@ class AdaptiveArmorTracker(BaseTracker):
             armor_yaw=obs1.yaw,
             center_yaw_pred=self._reference_center_yaw,
             z_obs=obs1.z,
-            center_z=self.ukf.x[StateIndex.Z]
+            center_z=self.ukf.x[StateIndex.Z],
+            obs_x=obs1.x,
+            obs_y=obs1.y,
+            center_x=self.ukf.x[StateIndex.X],
+            center_y=self.ukf.x[StateIndex.Y],
+            r1=self.ukf.x[StateIndex.R1],
+            r2=self.ukf.x[StateIndex.R2]
         )
         
         panel_id_2, _, _ = self.panel_associator.associate_panel(
             armor_yaw=obs2.yaw,
             center_yaw_pred=self._reference_center_yaw,
             z_obs=obs2.z,
-            center_z=self.ukf.x[StateIndex.Z]
+            center_z=self.ukf.x[StateIndex.Z],
+            obs_x=obs2.x,
+            obs_y=obs2.y,
+            center_x=self.ukf.x[StateIndex.X],
+            center_y=self.ukf.x[StateIndex.Y],
+            r1=self.ukf.x[StateIndex.R1],
+            r2=self.ukf.x[StateIndex.R2]
         )
         
         r_type_1 = self.panel_associator.get_r_type(panel_id_1)

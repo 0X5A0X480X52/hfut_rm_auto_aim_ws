@@ -113,7 +113,9 @@ bool AdaptiveArmorTracker::update_single(const ObservationData &obs,
 
   auto [panel_id, center_yaw, matching_error] =
       panel_associator_.associate_panel(
-          obs.yaw, reference_center_yaw_, obs.z, ukf_.x()(idx.Z()));
+          obs.yaw, reference_center_yaw_, obs.z, ukf_.x()(idx.Z()),
+          obs.x, obs.y, ukf_.x()(idx.X()), ukf_.x()(idx.Y()),
+          ukf_.x()(idx.R1()), ukf_.x()(idx.R2()));
 
   current_panel_id_ = panel_id;
   std::string r_type = PanelAssociator::get_r_type(panel_id);
@@ -163,9 +165,13 @@ bool AdaptiveArmorTracker::update_dual(const ObservationData &obs1,
   auto idx = ukf_.state_idx();
 
   auto [pid1, cw1, _e1] = panel_associator_.associate_panel(
-      obs1.yaw, reference_center_yaw_, obs1.z, ukf_.x()(idx.Z()));
+      obs1.yaw, reference_center_yaw_, obs1.z, ukf_.x()(idx.Z()),
+      obs1.x, obs1.y, ukf_.x()(idx.X()), ukf_.x()(idx.Y()),
+      ukf_.x()(idx.R1()), ukf_.x()(idx.R2()));
   auto [pid2, cw2, _e2] = panel_associator_.associate_panel(
-      obs2.yaw, reference_center_yaw_, obs2.z, ukf_.x()(idx.Z()));
+      obs2.yaw, reference_center_yaw_, obs2.z, ukf_.x()(idx.Z()),
+      obs2.x, obs2.y, ukf_.x()(idx.X()), ukf_.x()(idx.Y()),
+      ukf_.x()(idx.R1()), ukf_.x()(idx.R2()));
 
   std::string rt1 = PanelAssociator::get_r_type(pid1);
   std::string rt2 = PanelAssociator::get_r_type(pid2);
