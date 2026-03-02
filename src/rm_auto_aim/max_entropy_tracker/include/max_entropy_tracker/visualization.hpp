@@ -132,7 +132,7 @@ inline visualization_msgs::msg::MarkerArray build_tracker_markers(
 
         if (n_armors == 4) {
           r  = is_current_pair ? r1 : r2;
-          pz = pos.z() + (is_current_pair ? 0.0 : dza);
+          pz = pos.z() + (is_current_pair ? -dza : dza);
           is_current_pair = !is_current_pair;
         }
 

@@ -186,7 +186,7 @@ std::vector<double> ArmorSelector::computeFacingAngles(
     // 装甲板法向量方向 (指向外侧)
     // 装甲板 i 相对于机器人正前方偏转 i*(2π/N),
     // 法向量 = target_yaw + i*(2π/N) + π (指向外侧)
-    double armor_normal_angle = target_yaw + static_cast<double>(i) * (2.0 * M_PI / num_armors) + M_PI;
+    double armor_normal_angle = target_yaw + static_cast<double>(i) * (2.0 * M_PI / num_armors);
 
     // 云台指向装甲板的方向
     double view_angle = std::atan2(pos.y(), pos.x());

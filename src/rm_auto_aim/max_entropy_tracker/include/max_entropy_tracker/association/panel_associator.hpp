@@ -92,7 +92,7 @@ class PanelAssociator {
                              double z_obs, double center_z, int yaw_best,
                              double yaw_best_err) const {
     bool is_upper = (z_obs > center_z);
-    int preferred_parity = is_upper ? 0 : 1;
+    int preferred_parity = is_upper ? 1 : 0;
 
     int best_p = preferred_parity;
     double best_pe = 1e9;

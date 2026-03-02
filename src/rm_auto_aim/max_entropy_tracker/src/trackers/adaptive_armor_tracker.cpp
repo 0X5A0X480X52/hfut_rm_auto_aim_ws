@@ -170,7 +170,9 @@ bool AdaptiveArmorTracker::update_dual(const ObservationData &obs1,
   std::string rt1 = PanelAssociator::get_r_type(pid1);
   std::string rt2 = PanelAssociator::get_r_type(pid2);
 
+  std::cout << "identify_dual" << std::endl;
   auto [l1, l2, h_conf] = height_identifier_.identify_dual(obs1.z, obs2.z);
+  std::cout << "identify_dual" << std::endl;
   height_confidence_ = h_conf;
 
   bool dual_ok = ukf_.update({obs1, obs2}, {rt1, rt2}, {l1, l2}, h_conf);

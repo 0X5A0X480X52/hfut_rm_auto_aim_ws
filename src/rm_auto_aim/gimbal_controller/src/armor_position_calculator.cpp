@@ -114,25 +114,19 @@ std::vector<Eigen::Vector3d> ArmorPositionCalculator::generateDefaultOffsets(
   std::vector<Eigen::Vector3d> offsets;
   offsets.reserve(static_cast<size_t>(num_armors));
 
-  bool is_current_pair = true;
-  double r = 0., target_dz = 0.;
-
   for (int i = 0; i < num_armors; i++) {
-    // 装甲板在机器人坐标系中的角度 (相对于机器人正前方)
-    double angle = i * (2 * M_PI / num_armors);
 
-    if (num_armors == 4) {
-      r = is_current_pair ? radius : radius_2;
-      target_dz = d_zc + (is_current_pair ? 0 : d_za);
-      is_current_pair = !is_current_pair;
-    } else {
-      r = radius;
-      target_dz = d_zc;
-    }
+    double panel_angle = i * (2.0 * M_PI / num_armors);
 
-    // 装甲板在机器人坐标系中的偏移
-    // 注意: 这里假设机器人正前方是 x 轴正方向
-    Eigen::Vector3d offset(-r * std::cos(angle), -r * std::sin(angle), target_dz);
+    double r = (i % 2 == 0) ? radius : radius_2;
+
+    double dz = (i % 2 == 0) ? -d_za : d_za;
+
+    Eigen::Vector3d offset(
+        r * std::cos(panel_angle),
+        r * std::sin(panel_angle),
+        dz);
+
     offsets.push_back(offset);
   }
 

@@ -40,8 +40,8 @@ gimbal_controller:
       yaw_offset: 0.0
 
       # Facing 过滤参数 (方案一: 用于 current/predicted 策略)
-      facing_enter_angle: 40.0    # 进入阈值 (度): 未锁定时需 ≤ 此值
-      facing_exit_angle: 55.0     # 退出阈值 (度): 已锁定时 > 此值才释放
+      facing_enter_angle: 30.0    # 进入阈值 (度): 未锁定时需 ≤ 此值
+      facing_exit_angle: 75.0     # 退出阈值 (度): 已锁定时 > 此值才释放
 
     # 状态机策略参数 (方案二: strategy: "state_machine")
     state_machine:
