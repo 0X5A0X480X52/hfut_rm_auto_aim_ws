@@ -1,0 +1,140 @@
+# GimbalPipeline unified configuration
+# Merges: max_entropy_tracker + target_selector + gimbal_controller
+#
+# The three inter-node ROS2 topics are replaced by internal C++ calls:
+#   /max_entropy_tracker/tracked_robots  →  internal buildTrackedRobotsMsg()
+#   /target_selector/selected_target     →  internal selectTargetInternal()
+#   (eliminates ~2 hops of serialization and scheduling latency)
+
+gimbal_pipeline:
+  ros__parameters:
+    # ═══════════════════════════════════════════════════════════════
+    # Tracker parameters (from max_entropy_tracker)
+    # ═══════════════════════════════════════════════════════════════
+    target_frame: "odom"
+    source_frame: "camera_optical_frame"
+    predict_rate: 20.0
+    default_r1: 0.15
+    default_r2: 0.20
+    default_dza: 0.0
+    tracker_timeout: 5.0
+    debug_mode: false
+    enable_oscillation_detection: false
+    visualization_frame: "odom"
+
+    # UKF tuning
+    ukf.alpha: 0.001
+    ukf.beta: 2.0
+    ukf.kappa: 0.0
+    ukf.obs_noise_pos: 0.008
+    ukf.obs_noise_yaw: 0.05
+    ukf.dual_obs_noise_pos: 0.001
+    ukf.dual_obs_noise_yaw: 0.03
+    ukf.dual_obs_geometry_noise_scale: 0.002
+    ukf.single_obs_update_weight_pos: 5.0
+    ukf.enable_innovation_gating: false
+    ukf.innovation_gate_chi2_threshold: 9.49
+
+    # Motion model
+    motion.translation_model: "Singer"
+    motion.cv_process_noise_vel: 0.001
+    motion.ca_process_noise_acc: 0.01
+    motion.singer_alpha: 0.5
+    motion.singer_sigma: 0.10
+    motion.process_noise_r: 0.00002
+    motion.process_noise_dz: 0.00005
+
+    # Spin model
+    spin.spin_process_noise_yaw_rate: 1.0
+    spin.spin_process_noise_yaw_acc: 10.0
+    spin.spin_process_noise_delta_rate: 1.0
+    spin.spin_process_noise_delta_acc: 30.0
+
+    # Entropy
+    entropy.temperature: 2.0
+    entropy.use_adaptive: true
+    entropy.k_prior_weight: 0.7
+
+    # Tracker logic
+    tracker.tracking_thres: 2
+    tracker.lost_thres: 8
+    tracker.temp_lost_thres: 3
+    tracker.max_match_distance: 2.0
+    tracker.max_match_yaw_diff: 1.0
+    tracker.n_panels: 4
+    tracker.panel_angle_step: 1.5707963267948966
+
+    # Constraints
+    constraints.min_radius: 0.12
+    constraints.max_radius: 0.3
+    constraints.min_dz: -1.0
+    constraints.max_dz: 1.0
+
+    # Output smoother (1-Euro filter + Robbins-Monro)
+    smoother.enable: true
+    smoother.enable_position_smooth: true
+    smoother.enable_yaw_smooth: false
+    smoother.enable_velocity_smooth: false
+    smoother.enable_structural_convergence: true
+    smoother.pos_min_cutoff: 1.5
+    smoother.pos_beta: 0.01
+    smoother.pos_d_cutoff: 1.0
+    smoother.yaw_min_cutoff: 1.0
+    smoother.yaw_beta: 0.005
+    smoother.yaw_d_cutoff: 1.0
+    smoother.vel_min_cutoff: 2.0
+    smoother.vel_beta: 0.01
+    smoother.vel_d_cutoff: 1.0
+    smoother.rm_initial_step: 0.5
+    smoother.rm_gamma: 0.75
+    smoother.rm_n0: 5
+    smoother.rm_dual_obs_boost: 3.0
+    smoother.rm_min_radius: 0.12
+    smoother.rm_max_radius: 0.5
+    smoother.rm_min_dz: -1.0
+    smoother.rm_max_dz: 1.0
+    smoother.rm_convergence_eps: 0.0001
+    smoother.default_freq: 30.0
+
+    # ═══════════════════════════════════════════════════════════════
+    # Target selector parameters
+    # ═══════════════════════════════════════════════════════════════
+    selector.strategy: "min_yaw_deviation"
+    selector.reference_yaw: 0.0
+    selector.max_yaw_deviation: 3.14159
+    selector.max_distance: 10.0
+    selector.min_confidence: 0.15
+    selector.hysteresis_threshold: 0.1
+
+    # ═══════════════════════════════════════════════════════════════
+    # Gimbal controller parameters
+    # ═══════════════════════════════════════════════════════════════
+    controller.bullet_speed: 20.0
+    controller.control_rate: 250.0
+    controller.strategy: "current"    # "current" | "predicted" | "mpc" | "state_machine"
+    controller.ballistic_mode: "service"  # "service" | "local"
+
+    controller.solver.shooting_range_width: 0.135
+    controller.solver.shooting_range_height: 0.135
+    controller.solver.side_angle: 15.0
+    controller.solver.min_switching_v_yaw: 1.0
+    controller.solver.prediction_delay: 0.0
+    controller.solver.max_tracking_v_yaw: 6.0
+    controller.solver.transfer_thresh: 5
+    controller.solver.gravity: 9.8
+    controller.solver.resistance: 0.001
+    controller.solver.iteration_times: 20
+    controller.solver.pitch_offset: 0.0
+    controller.solver.yaw_offset: 0.0
+    controller.solver.facing_enter_angle: 30.0
+    controller.solver.facing_exit_angle: 75.0
+
+    controller.state_machine.facing_enter_angle: 40.0
+    controller.state_machine.facing_exit_angle: 55.0
+    controller.state_machine.spin_v_yaw_thresh: 4.0
+    controller.state_machine.calm_v_yaw_thresh: 2.0
+    controller.state_machine.spin_enter_count: 5
+    controller.state_machine.spin_exit_count: 5
+    controller.state_machine.side_angle: 15.0
+    controller.state_machine.prediction_delay: 0.0
+    controller.state_machine.max_prediction_time: 0.5
