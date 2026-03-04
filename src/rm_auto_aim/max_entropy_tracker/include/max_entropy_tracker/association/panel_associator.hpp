@@ -104,8 +104,7 @@ class PanelAssociator {
     int panel_id = best_id;
 
     // Z-assisted association when yaw error large and position not available
-    if (z_obs.has_value() && center_z.has_value() &&
-        best_yaw_err > 30.0 * M_PI / 180.0) {
+    if (z_obs.has_value() && center_z.has_value()) {
       panel_id = z_assisted_association(armor_yaw, cyp, z_obs.value(),
                                         center_z.value(), best_id, best_yaw_err);
     } else {

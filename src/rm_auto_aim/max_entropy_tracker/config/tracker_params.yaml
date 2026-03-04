@@ -91,9 +91,9 @@
 
     # 子组件开关
     smoother.enable_position_smooth: true
-    smoother.enable_yaw_smooth: false
+    smoother.enable_yaw_smooth: true
     smoother.enable_velocity_smooth: false
-    smoother.enable_structural_convergence: true
+    smoother.enable_structural_convergence: false
 
     # ---- 位置平滑 (OneEuro 3D) ----
     # min_cutoff 越小越平滑但延迟越大；beta 越大对快速运动跟随越好
@@ -102,13 +102,13 @@
     smoother.pos_d_cutoff: 1.0          # 导数滤波截止
 
     # ---- Yaw平滑 (OneEuro Angle) ----
-    smoother.yaw_min_cutoff: 1.0
+    smoother.yaw_min_cutoff: 1.5
     smoother.yaw_beta: 0.005
     smoother.yaw_d_cutoff: 1.0
 
     # ---- 速度平滑 (OneEuro 3D) ----
     smoother.vel_min_cutoff: 2.0
-    smoother.vel_beta: 0.01
+    smoother.vel_beta: 0.1
     smoother.vel_d_cutoff: 1.0
 
     # ---- 结构参数 Robbins-Monro 随机逼近 ----
