@@ -550,6 +550,7 @@ void GimbalPipelineNode::armorsCallback(
         std::make_shared<rm_interfaces::msg::TrackedRobots>(tracked_msg);
     latest_selected_target_id_ = sel_result.robot_id;
     latest_selected_confidence_ = sel_result.confidence;
+    latest_update_time_ = now();  // record local clock for processing_delay
   }
 
   // ── Step 7: Debug publishing ──
@@ -984,10 +985,12 @@ void GimbalPipelineNode::timerCallback() {
   // Read shared state (thread-safe)
   rm_interfaces::msg::TrackedRobots::SharedPtr robots;
   std::string selected_id;
+  rclcpp::Time data_update_time{0, 0, RCL_ROS_TIME};
   {
     std::lock_guard<std::mutex> lock(pipeline_mutex_);
     robots = latest_tracked_robots_;
     selected_id = latest_selected_target_id_;
+    data_update_time = latest_update_time_;
   }
 
   if (robots && !robots->robots.empty()) {
@@ -995,7 +998,9 @@ void GimbalPipelineNode::timerCallback() {
       for (const auto &robot : robots->robots) {
         if (robot.robot_id == selected_id) {
           context.target_robot = robot;
-          context.target_stamp = rclcpp::Time(robot.header.stamp);
+          // Use local clock timestamp to avoid cross-clock-domain mismatch
+          // (camera hardware stamps vs system wall clock)
+          context.target_stamp = data_update_time;
           context.is_tracking =
               (robot.track_state ==
                    rm_interfaces::msg::TrackedRobot::TRACKING ||
@@ -1007,8 +1012,7 @@ void GimbalPipelineNode::timerCallback() {
     } else {
       // No selection — use first robot
       context.target_robot = robots->robots[0];
-      context.target_stamp =
-          rclcpp::Time(context.target_robot.header.stamp);
+      context.target_stamp = data_update_time;
       context.is_tracking =
           (context.target_robot.track_state ==
                rm_interfaces::msg::TrackedRobot::TRACKING ||

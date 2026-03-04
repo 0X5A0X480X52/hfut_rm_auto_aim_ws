@@ -161,6 +161,7 @@ class GimbalPipelineNode : public rclcpp::Node {
   rm_interfaces::msg::TrackedRobots::SharedPtr latest_tracked_robots_;
   std::string latest_selected_target_id_;
   double latest_selected_confidence_{0.0};
+  rclcpp::Time latest_update_time_{0, 0, RCL_ROS_TIME};  // local clock when data was cached
 
   /* ================================================================ */
   /*  ROS2 external interfaces (kept)                                 */
