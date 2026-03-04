@@ -73,11 +73,11 @@ gimbal_pipeline:
     # Output smoother (1-Euro filter + Robbins-Monro)
     smoother.enable: true
     smoother.enable_position_smooth: true
-    smoother.enable_yaw_smooth: false
+    smoother.enable_yaw_smooth: true
     smoother.enable_velocity_smooth: false
     smoother.enable_structural_convergence: true
-    smoother.pos_min_cutoff: 1.5
-    smoother.pos_beta: 0.01
+    smoother.pos_min_cutoff: 5.5
+    smoother.pos_beta: 10.0
     smoother.pos_d_cutoff: 1.0
     smoother.yaw_min_cutoff: 1.0
     smoother.yaw_beta: 0.005
@@ -112,13 +112,13 @@ gimbal_pipeline:
     controller.bullet_speed: 20.0
     controller.control_rate: 250.0
     controller.strategy: "current"    # "current" | "predicted" | "mpc" | "state_machine"
-    controller.ballistic_mode: "service"  # "service" | "local"
+    controller.ballistic_mode: "local"  # "service" | "local"
 
     controller.solver.shooting_range_width: 0.135
     controller.solver.shooting_range_height: 0.135
     controller.solver.side_angle: 15.0
     controller.solver.min_switching_v_yaw: 1.0
-    controller.solver.prediction_delay: 0.0
+    controller.solver.prediction_delay: 10.0
     controller.solver.max_tracking_v_yaw: 6.0
     controller.solver.transfer_thresh: 5
     controller.solver.gravity: 9.8

@@ -11,6 +11,8 @@
 #include <cmath>
 #include <sstream>
 
+#include "rm_utils/logger/log.hpp"
+
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
@@ -32,6 +34,13 @@ namespace fyt::auto_aim {
 GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     : Node("gimbal_pipeline", options) {
   RCLCPP_INFO(get_logger(), "Initializing GimbalPipelineNode (unified pipeline)");
+
+  // Register loggers used by inlined target_selector code
+  try {
+    FYT_REGISTER_LOGGER("target_selector", "logs/gimbal_pipeline", INFO);
+  } catch (...) {
+    // Logger may already be registered
+  }
 
   // ── 1. Declare all parameters ──
   declareTrackerParameters();

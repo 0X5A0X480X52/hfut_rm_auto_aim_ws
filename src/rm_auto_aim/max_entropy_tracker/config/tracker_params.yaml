@@ -103,7 +103,7 @@
 
     # ---- Yaw平滑 (OneEuro Angle) ----
     smoother.yaw_min_cutoff: 1.5
-    smoother.yaw_beta: 0.005
+    smoother.yaw_beta: 0.5
     smoother.yaw_d_cutoff: 1.0
 
     # ---- 速度平滑 (OneEuro 3D) ----
