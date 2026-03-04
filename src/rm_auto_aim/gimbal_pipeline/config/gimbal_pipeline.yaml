@@ -74,15 +74,15 @@ gimbal_pipeline:
     smoother.enable: true
     smoother.enable_position_smooth: true
     smoother.enable_yaw_smooth: true
-    smoother.enable_velocity_smooth: false
+    smoother.enable_velocity_smooth: true
     smoother.enable_structural_convergence: true
-    smoother.pos_min_cutoff: 5.5
-    smoother.pos_beta: 10.0
+    smoother.pos_min_cutoff: 1.5
+    smoother.pos_beta: 1.0
     smoother.pos_d_cutoff: 1.0
     smoother.yaw_min_cutoff: 1.0
     smoother.yaw_beta: 0.005
     smoother.yaw_d_cutoff: 1.0
-    smoother.vel_min_cutoff: 2.0
+    smoother.vel_min_cutoff: 1.0
     smoother.vel_beta: 0.01
     smoother.vel_d_cutoff: 1.0
     smoother.rm_initial_step: 0.5
@@ -111,7 +111,7 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     controller.bullet_speed: 20.0
     controller.control_rate: 250.0
-    controller.strategy: "current"    # "current" | "predicted" | "mpc" | "state_machine"
+    controller.strategy: "predicted"    # "current" | "predicted" | "mpc" | "state_machine"
     controller.ballistic_mode: "local"  # "service" | "local"
 
     controller.solver.shooting_range_width: 0.135
@@ -128,7 +128,7 @@ gimbal_pipeline:
     controller.solver.pitch_offset: 0.0
     controller.solver.yaw_offset: 0.0
     controller.solver.facing_enter_angle: 30.0
-    controller.solver.facing_exit_angle: 75.0
+    controller.solver.facing_exit_angle: 45.0
 
     controller.state_machine.facing_enter_angle: 40.0
     controller.state_machine.facing_exit_angle: 55.0

@@ -126,10 +126,7 @@ def generate_launch_description():
         parameters=[
             get_pkg_params('gimbal_pipeline', 'gimbal_pipeline.yaml'),
             {
-                'debug_mode': LaunchConfiguration('debug'),
-                'controller.strategy': 'current',
-                'controller.ballistic_mode': 'service',
-                'controller.bullet_speed': 20.0,
+                'debug_mode': LaunchConfiguration('debug')
             }
         ],
         remappings=[
