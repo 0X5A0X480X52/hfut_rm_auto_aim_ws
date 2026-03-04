@@ -119,6 +119,7 @@ gimbal_pipeline:
     controller.solver.side_angle: 15.0
     controller.solver.min_switching_v_yaw: 1.0
     controller.solver.prediction_delay: 10.0
+    controller.solver.max_prediction_time: 0.5
     controller.solver.max_tracking_v_yaw: 6.0
     controller.solver.transfer_thresh: 5
     controller.solver.gravity: 9.8

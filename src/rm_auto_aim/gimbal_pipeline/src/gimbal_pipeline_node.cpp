@@ -105,6 +105,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   double side_angle = get_parameter("controller.solver.side_angle").as_double();
   double min_switching_v_yaw = get_parameter("controller.solver.min_switching_v_yaw").as_double();
   double prediction_delay = get_parameter("controller.solver.prediction_delay").as_double();
+  double max_prediction_time = get_parameter("controller.solver.max_prediction_time").as_double();
   double max_tracking_v_yaw = get_parameter("controller.solver.max_tracking_v_yaw").as_double();
   int transfer_thresh = get_parameter("controller.solver.transfer_thresh").as_int();
   double gravity = get_parameter("controller.solver.gravity").as_double();
@@ -126,7 +127,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       gimbal_controller::PredictedPositionStrategy>(
       gimbal_strategies_["predicted"]);
   if (predicted_strategy) {
-    predicted_strategy->setPredictionParameters(prediction_delay, 0.5);
+    predicted_strategy->setPredictionParameters(prediction_delay, max_prediction_time);
     predicted_strategy->setManualOffset(pitch_offset, yaw_offset);
     predicted_strategy->setTrackingCenterParams(max_tracking_v_yaw,
                                                 transfer_thresh);
@@ -334,6 +335,7 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.solver.side_angle", 15.0);
   declare_parameter("controller.solver.min_switching_v_yaw", 1.0);
   declare_parameter("controller.solver.prediction_delay", 0.0);
+  declare_parameter("controller.solver.max_prediction_time", 0.5);
   declare_parameter("controller.solver.max_tracking_v_yaw", 6.0);
   declare_parameter("controller.solver.transfer_thresh", 5);
   declare_parameter("controller.solver.gravity", 9.8);
