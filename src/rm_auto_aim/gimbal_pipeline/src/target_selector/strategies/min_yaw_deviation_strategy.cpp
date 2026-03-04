@@ -17,22 +17,23 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
-#include "rm_utils/logger/log.hpp"
+#include <rclcpp/rclcpp.hpp>
 
 namespace fyt::auto_aim {
 
 std::optional<SelectionResult> MinYawDeviationStrategy::selectTarget(
     const TrackedRobots& robots,
     const SelectionConfig& config) {
-  FYT_DEBUG("target_selector", "MinYawDeviationStrategy::selectTarget called with {} robots", robots.robots.size());
+  auto logger = rclcpp::get_logger("target_selector");
+  RCLCPP_DEBUG(logger, "MinYawDeviationStrategy::selectTarget called with %zu robots", robots.robots.size());
   
   // Filter candidates based on basic criteria
   auto candidates = filterCandidates(robots, config);
   
-  FYT_DEBUG("target_selector", "After filtering, {} candidates remain", candidates.size());
+  RCLCPP_DEBUG(logger, "After filtering, %zu candidates remain", candidates.size());
   
   if (candidates.empty()) {
-    FYT_DEBUG("target_selector", "No candidates after filtering");
+    RCLCPP_DEBUG(logger, "No candidates after filtering");
     return std::nullopt;
   }
   
@@ -40,10 +41,10 @@ std::optional<SelectionResult> MinYawDeviationStrategy::selectTarget(
   const TrackedRobot* best_candidate = findMinYawDeviationRobot(
     candidates, config.reference_yaw);
   
-  FYT_DEBUG("target_selector", "Best candidate: {}", best_candidate ? best_candidate->robot_id : "nullptr");
+  RCLCPP_DEBUG(logger, "Best candidate: %s", best_candidate ? best_candidate->robot_id.c_str() : "nullptr");
   
   if (best_candidate == nullptr) {
-    FYT_DEBUG("target_selector", "No best candidate found");
+    RCLCPP_DEBUG(logger, "No best candidate found");
     return std::nullopt;
   }
   

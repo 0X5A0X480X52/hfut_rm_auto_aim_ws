@@ -16,7 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include "rm_utils/logger/log.hpp"
+#include <rclcpp/rclcpp.hpp>
 
 namespace fyt::auto_aim {
 
@@ -25,42 +25,43 @@ std::vector<const SelectionStrategy::TrackedRobot*> SelectionStrategy::filterCan
     const SelectionConfig& config) const {
   std::vector<const TrackedRobot*> candidates;
   
-  FYT_DEBUG("target_selector", "Filtering {} robots with config: min_conf={:.3f}, max_dist={:.2f}, max_yaw_dev={:.3f}",
-            robots.robots.size(), config.min_confidence, config.max_distance, config.max_yaw_deviation);
+  auto logger = rclcpp::get_logger("target_selector");
+  RCLCPP_DEBUG(logger, "Filtering %zu robots with config: min_conf=%.3f, max_dist=%.2f, max_yaw_dev=%.3f",
+              robots.robots.size(), config.min_confidence, config.max_distance, config.max_yaw_deviation);
   
   for (const auto& robot : robots.robots) {
-    FYT_DEBUG("target_selector", "Evaluating robot {}: confidence={:.3f}", robot.robot_id, robot.confidence);
+    RCLCPP_DEBUG(logger, "Evaluating robot %s: confidence=%.3f", robot.robot_id.c_str(), robot.confidence);
     
     // Skip robots with low confidence
     if (robot.confidence < config.min_confidence) {
-      FYT_DEBUG("target_selector", "Robot {} rejected: confidence {:.3f} < {:.3f}", 
-                robot.robot_id, robot.confidence, config.min_confidence);
+      RCLCPP_DEBUG(logger, "Robot %s rejected: confidence %.3f < %.3f", 
+                   robot.robot_id.c_str(), robot.confidence, config.min_confidence);
       continue;
     }
     
     // Calculate distance
     double distance = calculateDistanceToRobot(robot);
-    FYT_DEBUG("target_selector", "Robot {} distance: {:.3f}", robot.robot_id, distance);
+    RCLCPP_DEBUG(logger, "Robot %s distance: %.3f", robot.robot_id.c_str(), distance);
     if (distance > config.max_distance) {
-      FYT_DEBUG("target_selector", "Robot {} rejected: distance {:.3f} > {:.3f}", 
-                robot.robot_id, distance, config.max_distance);
+      RCLCPP_DEBUG(logger, "Robot %s rejected: distance %.3f > %.3f", 
+                   robot.robot_id.c_str(), distance, config.max_distance);
       continue;
     }
     
     // Calculate yaw deviation
     double yaw_deviation = calculateYawDeviation(robot, config.reference_yaw);
-    FYT_DEBUG("target_selector", "Robot {} yaw deviation: {:.3f}", robot.robot_id, yaw_deviation);
+    RCLCPP_DEBUG(logger, "Robot %s yaw deviation: %.3f", robot.robot_id.c_str(), yaw_deviation);
     if (yaw_deviation > config.max_yaw_deviation) {
-      FYT_DEBUG("target_selector", "Robot {} rejected: yaw deviation {:.3f} > {:.3f}", 
-                robot.robot_id, yaw_deviation, config.max_yaw_deviation);
+      RCLCPP_DEBUG(logger, "Robot %s rejected: yaw deviation %.3f > %.3f", 
+                   robot.robot_id.c_str(), yaw_deviation, config.max_yaw_deviation);
       continue;
     }
     
-    FYT_DEBUG("target_selector", "Robot {} accepted as candidate", robot.robot_id);
+    RCLCPP_DEBUG(logger, "Robot %s accepted as candidate", robot.robot_id.c_str());
     candidates.push_back(&robot);
   }
   
-  FYT_DEBUG("target_selector", "Filtering complete: {} candidates selected", candidates.size());
+  RCLCPP_DEBUG(logger, "Filtering complete: %zu candidates selected", candidates.size());
   return candidates;
 }
 

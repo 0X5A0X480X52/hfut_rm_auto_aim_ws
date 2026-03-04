@@ -8,7 +8,7 @@ gimbal_controller:
     control_rate: 250.0
     
     # 策略选择: "current", "predicted", "mpc", "state_machine"
-    strategy: "current"
+    strategy: "predicted"
     
     # 弹道解算模式: "service" (使用ballistic_solver服务), "local" (本地计算)
     ballistic_mode: "local"
