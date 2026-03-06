@@ -17,7 +17,7 @@ gimbal_pipeline:
     default_r1: 0.15
     default_r2: 0.20
     default_dza: 0.0
-    tracker_timeout: 0.050
+    tracker_timeout: 0.50
     debug_mode: false
     enable_oscillation_detection: false
     visualization_frame: "odom"
@@ -36,7 +36,7 @@ gimbal_pipeline:
     ukf.innovation_gate_chi2_threshold: 9.49
 
     # Motion model
-    motion.translation_model: "CV"
+    motion.translation_model: "CV"  # "CV" | "Singer"
     motion.cv_process_noise_vel: 1.00
     motion.ca_process_noise_acc: 0.01
     motion.singer_alpha: 0.5
@@ -82,8 +82,8 @@ gimbal_pipeline:
     smoother.yaw_min_cutoff: 1.0
     smoother.yaw_beta: 0.005
     smoother.yaw_d_cutoff: 1.0
-    smoother.vel_min_cutoff: 2.0
-    smoother.vel_beta: 0.01
+    smoother.vel_min_cutoff: 5.0
+    smoother.vel_beta: 10.0
     smoother.vel_d_cutoff: 1.0
     smoother.rm_initial_step: 0.5
     smoother.rm_gamma: 0.75
@@ -118,8 +118,8 @@ gimbal_pipeline:
     controller.solver.shooting_range_height: 0.135
     controller.solver.side_angle: 15.0
     controller.solver.min_switching_v_yaw: 0.0
-    controller.solver.prediction_delay: 0.50
-    controller.solver.max_prediction_time: 10.50
+    controller.solver.prediction_delay: 0.00
+    controller.solver.max_prediction_time: 1.00
     controller.solver.max_tracking_v_yaw: 6.0
     controller.solver.transfer_thresh: 5
     controller.solver.gravity: 9.8
@@ -127,12 +127,12 @@ gimbal_pipeline:
     controller.solver.iteration_times: 20
     controller.solver.pitch_offset: 0.0
     controller.solver.yaw_offset: 0.0
-    controller.solver.facing_enter_angle: 45.0
-    controller.solver.facing_exit_angle: 55.0
+    controller.solver.facing_enter_angle: 35.0
+    controller.solver.facing_exit_angle: 45.0
     # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
     # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
     # 若启用自适应 delay（adaptive_delay.enable=true），本值作为 delay 初始值。
-    controller.solver.controller_delay: 0.01
+    controller.solver.controller_delay: 0.00
 
     # ── 自适应 controller_delay（AIMD 策略）────────────────────────
     # 启用后根据目标线速度/角速度及连续未开火帧数动态调整 controller_delay：
@@ -172,7 +172,7 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     # 启用后会将观测值与 Tracker 后验状态写入 CSV 文件，
     # 供 scripts/analyze_prediction.py 离线分析预测误差。
-    logging.enable: true
+    logging.enable: false
     logging.output_dir: "/tmp/prediction_logs"
     logging.robot_id_filter: ""      # 只记录指定 robot_id；为空则记录全部
     logging.flush_every_n: 50        # 每 N 行落盘一次，减少 I/O 阻塞
