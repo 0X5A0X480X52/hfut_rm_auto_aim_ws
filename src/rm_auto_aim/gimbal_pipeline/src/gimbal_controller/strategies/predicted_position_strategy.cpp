@@ -19,6 +19,8 @@
 #include "gimbal_controller/local_trajectory_compensator.hpp"
 #include <angles/angles.h>
 
+#include <iostream>
+
 namespace gimbal_controller
 {
 
@@ -64,6 +66,10 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   double processing_delay = (context.current_time - context.target_stamp).seconds();
   double total_prediction_time = processing_delay + flight_time + prediction_delay_;
   total_prediction_time = std::min(total_prediction_time, max_prediction_time_);
+
+  std::cout << "Processing delay: " << processing_delay
+            << " s, Flight time: " << flight_time
+            << " s, Total prediction time: " << total_prediction_time << " s" << std::endl;
 
   // 计算预测位置的装甲板坐标
   auto predicted_armor_positions = position_calculator_->calculatePredicted(
