@@ -153,18 +153,38 @@ def propagate_state(row: pd.Series, dt: float):
 
 
 def predict_armors(pred_cx, pred_cy, pred_cz, pred_yaw, r1, r2, dza, n_armors=4):
-    """返回 n_armors 块装甲板的预测位置列表，半径按 r1/r2 交替，高度按 dza 交替。"""
+    """返回 n_armors 块装甲板的预测位置列表，半径按 r1/r2 交替，高度按 dza 交替。
+
+    与 C++ 观测模型一致：
+      偶数面板 (0,2): r1, lower, z = center_z - d_za
+      奇数面板 (1,3): r2, upper, z = center_z + d_za
+    """
     armors = []
     step = 2.0 * math.pi / n_armors
     for i in range(n_armors):
         a_yaw = pred_yaw + i * step
         r = r1 if (i % 2 == 0) else r2
-        dz = 0.0 if (i % 2 == 0) else dza
+        dz = -dza if (i % 2 == 0) else dza  # lower=-dza, upper=+dza
         ax = pred_cx + r * math.cos(a_yaw)
         ay = pred_cy + r * math.sin(a_yaw)
         az = pred_cz + dz
         armors.append((ax, ay, az))
     return armors
+
+
+def infer_panel_radius(obs_yaw: float, pred_yaw: float, r1: float, r2: float,
+                        dza: float, n_armors: int = 4):
+    """根据观测 yaw 与预测 robot_yaw 推断哪块装甲板，返回 (r, dz)。
+
+    obs_yaw 是装甲板法线方向 = robot_yaw + panel_idx * (2π/n)。
+    通过取最近的 panel_idx 来决定使用 r1/r2 和 dz。
+    """
+    step = 2.0 * math.pi / n_armors
+    offset = (obs_yaw - pred_yaw) % (2.0 * math.pi)
+    panel_idx = int(round(offset / step)) % n_armors
+    r  = r1 if (panel_idx % 2 == 0) else r2
+    dz = -dza if (panel_idx % 2 == 0) else dza  # lower=-dza, upper=+dza
+    return r, dz
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -203,8 +223,10 @@ def compute_errors(obs_df: pd.DataFrame,
         for _, obs_row in obs_r.iterrows():
             t_obs = obs_row["t"]
 
-            # 找最近的前序状态（t_state <= t_obs）
-            idx = np.searchsorted(state_times, t_obs, side="right") - 1
+            # 找最近的 **严格前序** 状态（t_state < t_obs）
+            # 因为同一回调中 obs 和 state 共享 timestamp，
+            # 用 side="left" 确保跳过同帧状态（后验已含本帧观测，不能自比）。
+            idx = np.searchsorted(state_times, t_obs, side="left") - 1
             if idx < 0:
                 continue   # 没有前序状态
 
@@ -224,12 +246,15 @@ def compute_errors(obs_df: pd.DataFrame,
             pred_cx, pred_cy, pred_cz, pred_yaw = propagate_state(st, dt)
 
             # ── ① 机器人中心误差 ────────────────────────────────────────────
-            # 从观测反推机器人中心（用参数 r1 作默认半径）
+            # obs_yaw 是装甲板法线方向 = robot_yaw + panel_idx * π/2
+            # 根据预测 yaw 推断 panel，选择对应 r 和 dz 来反推真实中心
             obs_yaw  = obs_row["obs_yaw"]
-            r_infer  = r1   # 假定观测为 r1 类装甲板（保守近似）
+            n_a = int(st["num_armors"]) if st["num_armors"] > 0 else 4
+            r_infer, dz_infer = infer_panel_radius(obs_yaw, pred_yaw,
+                                                    r1, r2, dza, n_a)
             true_cx  = obs_row["obs_x"] - r_infer * math.cos(obs_yaw)
             true_cy  = obs_row["obs_y"] - r_infer * math.sin(obs_yaw)
-            true_cz  = obs_row["obs_z"] - (0.0)   # dza 方向由 panel_id 决定，默认 0
+            true_cz  = obs_row["obs_z"] - dz_infer
 
             err_center_2d = math.hypot(pred_cx - true_cx, pred_cy - true_cy)
             err_center_3d = math.sqrt((pred_cx - true_cx)**2 +
@@ -237,7 +262,6 @@ def compute_errors(obs_df: pd.DataFrame,
                                       (pred_cz - true_cz)**2)
 
             # ── ② 所有装甲板误差（最近装甲板）──────────────────────────────
-            n_a = int(st["num_armors"]) if st["num_armors"] > 0 else 4
             pred_armors = predict_armors(pred_cx, pred_cy, pred_cz, pred_yaw,
                                          r1, r2, dza, n_armors=n_a)
             ox, oy, oz = obs_row["obs_x"], obs_row["obs_y"], obs_row["obs_z"]
@@ -255,9 +279,11 @@ def compute_errors(obs_df: pd.DataFrame,
             err_vis_3d = err_all_armors_3d if is_visible_slot else float("nan")
 
             # ── yaw 误差 ────────────────────────────────────────────────────
-            # 从观测推断真实 yaw：观测的 obs_yaw 是装甲板的朝向，等于 robot_yaw
-            yaw_diff = (pred_yaw - obs_yaw + math.pi) % (2 * math.pi) - math.pi
-            err_yaw  = abs(yaw_diff)
+            # obs_yaw 是装甲板朝向 = robot_yaw + k*(2π/n_armors)
+            # 真实 robot_yaw 对称等价模 (2π/n_armors)，取最小残差
+            panel_step = 2.0 * math.pi / n_a
+            yaw_diff = (pred_yaw - obs_yaw) % panel_step
+            err_yaw  = min(yaw_diff, panel_step - yaw_diff)
 
             records.append({
                 "robot_id"          : rid,
@@ -355,6 +381,16 @@ def summarize_overall(df: pd.DataFrame):
         if s.empty:
             results[name] = {"N": 0, "Mean": "—", "RMSE": "—",
                              "P50": "—", "P90": "—", "P95": "—"}
+        elif col == "err_yaw_deg":
+            # Yaw 误差使用度为单位
+            results[name] = {
+                "N"   : len(s),
+                "Mean": f"{s.mean():.2f}°",
+                "RMSE": f"{math.sqrt((s**2).mean()):.2f}°",
+                "P50" : f"{s.quantile(0.50):.2f}°",
+                "P90" : f"{s.quantile(0.90):.2f}°",
+                "P95" : f"{s.quantile(0.95):.2f}°",
+            }
         else:
             results[name] = {
                 "N"   : len(s),
@@ -456,13 +492,11 @@ def plot_horizon_curves(horizon_df: pd.DataFrame, output_dir: str, dpi: int):
     x = np.arange(len(x_labels))
 
     for ax, (col, title) in zip(axes, triples):
-        means = horizon_df.get(col.replace("rmse", "mean"),
-                               pd.Series([float("nan")] * len(horizon_df)))
-        rmse  = horizon_df[col] if col in horizon_df.columns else pd.Series(
-            [float("nan")] * len(horizon_df))
-        p90_col = col.replace("rmse", "p90")
-        p90   = horizon_df[p90_col] if p90_col in horizon_df.columns else pd.Series(
-            [float("nan")] * len(horizon_df))
+        means_col = col.replace("rmse", "mean")
+        p90_col   = col.replace("rmse", "p90")
+        means = horizon_df[means_col].values if means_col in horizon_df.columns else np.full(len(horizon_df), np.nan)
+        rmse  = horizon_df[col].values      if col      in horizon_df.columns else np.full(len(horizon_df), np.nan)
+        p90   = horizon_df[p90_col].values  if p90_col  in horizon_df.columns else np.full(len(horizon_df), np.nan)
 
         ax.plot(x, rmse  * 100, "o-",  label="RMSE",  linewidth=2)
         ax.plot(x, means * 100, "s--", label="Mean",  linewidth=1.5, alpha=0.7)
@@ -500,9 +534,9 @@ def plot_error_cdf(err_df: pd.DataFrame, output_dir: str, dpi: int):
         ("err_vis_2d",        "可视装甲板2D误差 (m)"),
     ]
     for ax, (col, xlabel) in zip(axes, pairs):
-        s = err_df[col].dropna().sort_values()
-        if s.empty:
-            ax.text(0.5, 0.5, "无数据", ha="center", va="center",
+        s = err_df[col].dropna().sort_values().values  # numpy array
+        if len(s) == 0:
+            ax.text(0.5, 0.5, "no data", ha="center", va="center",
                     transform=ax.transAxes)
             ax.set_title(xlabel)
             continue
@@ -510,11 +544,11 @@ def plot_error_cdf(err_df: pd.DataFrame, output_dir: str, dpi: int):
         ax.plot(s * 100, cdf, linewidth=2)
         # 标注 P50 / P90 / P95
         for q, c in [(0.50, "b"), (0.90, "g"), (0.95, "r")]:
-            val = s.quantile(q) * 100
+            val = np.percentile(s, q * 100) * 100
             ax.axvline(val, color=c, linestyle="--", linewidth=1,
                        label=f"P{int(q*100)}={val:.2f}cm")
         ax.set_title(col.replace("err_", "").replace("_", " "))
-        ax.set_xlabel("误差 (cm)")
+        ax.set_xlabel("Error (cm)")
         ax.set_ylabel("CDF")
         ax.legend(fontsize=8)
         ax.grid(True, alpha=0.3)
@@ -543,16 +577,22 @@ def plot_time_series(err_df: pd.DataFrame, output_dir: str, dpi: int,
     t0 = df_sorted["t_obs"].min()
 
     for ax, (col, title) in zip(axes, pairs):
-        s = df_sorted[col] * 100  # cm
-        t = df_sorted["t_obs"] - t0
+        s = (df_sorted[col] * 100).values  # numpy, cm
+        t = (df_sorted["t_obs"] - t0).values
         ax.plot(t, s, ".", markersize=2, alpha=0.4, color="steelblue")
-        roll_mean = s.rolling(rolling_window, center=True, min_periods=5).mean()
-        ax.plot(t, roll_mean, linewidth=2, color="crimson", label=f"滚动均值({rolling_window})")
-        ax.set_ylabel("误差 (cm)")
+        # rolling mean via numpy convolution (avoids pandas Series plotting issues)
+        kernel = np.ones(rolling_window) / rolling_window
+        valid = ~np.isnan(s)
+        roll_mean = np.full_like(s, np.nan)
+        if valid.sum() > rolling_window:
+            roll_mean[valid] = np.convolve(
+                s[valid], kernel, mode="same")
+        ax.plot(t, roll_mean, linewidth=2, color="crimson",
+                label=f"Rolling mean({rolling_window})")
+        ax.set_ylabel("Error (cm)")
         ax.set_title(title)
         ax.legend(fontsize=8)
         ax.grid(True, alpha=0.3)
-        # 误差等级
         for level_cm, c in zip([1, 3, 5], ["green", "orange", "red"]):
             ax.axhline(level_cm, linestyle="--", linewidth=0.7,
                        color=c, alpha=0.6)

@@ -48,8 +48,48 @@ struct ArmorSelectionResult
 class ArmorSelector
 {
 public:
+  /**
+   * @brief 选板策略枚举
+   *  - MIN_MOVEMENT_WITH_FACING : 最小运动量 + 正面朝向 Hysteresis 过滤 (默认)
+   *  - MIN_MOVEMENT             : 最小运动量，无朝向过滤
+   *  - DECISION_ANGLE           : 传统决策角算法 (与 armor_solver 原版一致)
+   */
+  enum class SelectionMethod
+  {
+    MIN_MOVEMENT_WITH_FACING = 0,
+    MIN_MOVEMENT             = 1,
+    DECISION_ANGLE           = 2,
+  };
+
   ArmorSelector() = default;
   ~ArmorSelector() = default;
+
+  /**
+   * @brief 设置选板策略
+   * @param method 选板方法枚举
+   */
+  void setSelectionMethod(SelectionMethod method);
+
+  /**
+   * @brief 统一选板入口，根据 setSelectionMethod 配置路由到对应算法
+   * 
+   * @param armor_positions 各装甲板的世界坐标位置
+   * @param target_center   目标机器人中心位置
+   * @param target_yaw      目标机器人 yaw 角 (弧度)
+   * @param num_armors      装甲板总数
+   * @param target_v_yaw    目标 yaw 角速度 (仅 DECISION_ANGLE 模式使用)
+   * @param current_yaw     当前云台 yaw 角 (弧度)
+   * @param current_pitch   当前云台 pitch 角 (弧度)
+   * @return 选择结果
+   */
+  ArmorSelectionResult selectBest(
+    const std::vector<Eigen::Vector3d> & armor_positions,
+    const Eigen::Vector3d & target_center,
+    double target_yaw,
+    int num_armors,
+    double target_v_yaw,
+    double current_yaw,
+    double current_pitch);
 
   /**
    * @brief 设置基础选择参数
@@ -160,6 +200,9 @@ private:
   // Facing hysteresis 参数
   double facing_enter_angle_{40.0};   // 进入阈值 (度)
   double facing_exit_angle_{55.0};    // 退出阈值 (度)
+
+  // 选板策略
+  SelectionMethod selection_method_{SelectionMethod::MIN_MOVEMENT_WITH_FACING};
 
   // 记忆上次选择 (用于 hysteresis)
   mutable int last_selected_index_{-1};

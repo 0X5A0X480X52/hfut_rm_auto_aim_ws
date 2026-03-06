@@ -18,6 +18,53 @@
 namespace gimbal_controller
 {
 
+void ArmorSelector::setSelectionMethod(SelectionMethod method)
+{
+  selection_method_ = method;
+}
+
+ArmorSelectionResult ArmorSelector::selectBest(
+  const std::vector<Eigen::Vector3d> & armor_positions,
+  const Eigen::Vector3d & target_center,
+  double target_yaw,
+  int num_armors,
+  double target_v_yaw,
+  double current_yaw,
+  double current_pitch)
+{
+  switch (selection_method_) {
+    case SelectionMethod::MIN_MOVEMENT:
+      return selectByMinMovement(armor_positions, current_yaw, current_pitch);
+
+    case SelectionMethod::DECISION_ANGLE: {
+      int idx = selectByDecisionAngle(armor_positions, target_center, target_yaw, target_v_yaw);
+      ArmorSelectionResult result;
+      if (idx >= 0 && idx < static_cast<int>(armor_positions.size())) {
+        result.selected_index = idx;
+        result.position = armor_positions[idx];
+        result.distance = armor_positions[idx].norm();
+        double yaw, pitch;
+        calculateYawPitch(armor_positions[idx], current_yaw, yaw, pitch);
+        double dy = angles::normalize_angle(yaw - current_yaw);
+        double dp = pitch - current_pitch;
+        result.gimbal_movement = dy * dy + dp * dp;
+      } else {
+        // fallback to center
+        result.position = target_center;
+        result.is_center_fallback = true;
+        result.distance = target_center.norm();
+      }
+      return result;
+    }
+
+    case SelectionMethod::MIN_MOVEMENT_WITH_FACING:
+    default:
+      return selectByMinMovementWithFacing(
+        armor_positions, target_center, target_yaw, num_armors,
+        current_yaw, current_pitch);
+  }
+}
+
 void ArmorSelector::setParameters(double side_angle, double min_switching_v_yaw)
 {
   side_angle_ = side_angle;

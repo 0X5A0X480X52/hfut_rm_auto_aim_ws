@@ -115,9 +115,23 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   double yaw_offset = get_parameter("controller.solver.yaw_offset").as_double();
   double facing_enter_angle = get_parameter("controller.solver.facing_enter_angle").as_double();
   double facing_exit_angle = get_parameter("controller.solver.facing_exit_angle").as_double();
+  double controller_delay = get_parameter("controller.solver.controller_delay").as_double();
+  std::string selection_method_str = get_parameter("controller.solver.selection_method").as_string();
 
   armor_selector_->setParameters(side_angle, min_switching_v_yaw);
   armor_selector_->setFacingParameters(facing_enter_angle, facing_exit_angle);
+
+  // 配置选板策略
+  gimbal_controller::ArmorSelector::SelectionMethod sel_method =
+    gimbal_controller::ArmorSelector::SelectionMethod::MIN_MOVEMENT_WITH_FACING;
+  if (selection_method_str == "min_movement") {
+    sel_method = gimbal_controller::ArmorSelector::SelectionMethod::MIN_MOVEMENT;
+  } else if (selection_method_str == "decision_angle") {
+    sel_method = gimbal_controller::ArmorSelector::SelectionMethod::DECISION_ANGLE;
+  }
+  armor_selector_->setSelectionMethod(sel_method);
+  RCLCPP_INFO(get_logger(), "[GimbalController] selection_method: %s", selection_method_str.c_str());
+
   fire_advisor_->setParameters(shooting_range_w, shooting_range_h);
   local_compensator_->setParameters(bullet_speed_, gravity, resistance,
                                     iteration_times);
@@ -129,14 +143,48 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   if (predicted_strategy) {
     predicted_strategy->setPredictionParameters(prediction_delay, max_prediction_time);
     predicted_strategy->setManualOffset(pitch_offset, yaw_offset);
-    predicted_strategy->setTrackingCenterParams(max_tracking_v_yaw,
-                                                transfer_thresh);
+    predicted_strategy->setTrackingCenterParams(max_tracking_v_yaw, transfer_thresh);
+    predicted_strategy->setControllerDelay(controller_delay);
   }
   auto current_strategy = std::dynamic_pointer_cast<
       gimbal_controller::CurrentPositionStrategy>(
       gimbal_strategies_["current"]);
   if (current_strategy) {
     current_strategy->setManualOffset(pitch_offset, yaw_offset);
+    current_strategy->setControllerDelay(controller_delay);
+  }
+
+  // Configure adaptive controller_delay (AIMD)
+  bool   adaptive_enable   = get_parameter("controller.solver.adaptive_delay.enable").as_bool();
+  int    adaptive_threshold = get_parameter("controller.solver.adaptive_delay.fire_wait_threshold").as_int();
+  double adaptive_mul      = get_parameter("controller.solver.adaptive_delay.mul_factor").as_double();
+  double adaptive_step     = get_parameter("controller.solver.adaptive_delay.add_step").as_double();
+  double adaptive_max      = get_parameter("controller.solver.adaptive_delay.max_delay").as_double();
+  double adaptive_min      = get_parameter("controller.solver.adaptive_delay.min_delay").as_double();
+  double adaptive_max_lin  = get_parameter("controller.solver.adaptive_delay.max_linear_speed").as_double();
+  double adaptive_max_ang  = get_parameter("controller.solver.adaptive_delay.max_angular_speed").as_double();
+
+  RCLCPP_INFO(get_logger(),
+    "[GimbalController] adaptive_delay: %s (init=%.4f s, min=%.4f, max=%.4f, "
+    "add_step=%.4f, mul=%.2f, thresh=%d, max_lin=%.1f, max_ang=%.1f)",
+    adaptive_enable ? "ENABLED" : "disabled",
+    controller_delay, adaptive_min, adaptive_max,
+    adaptive_step, adaptive_mul, adaptive_threshold,
+    adaptive_max_lin, adaptive_max_ang);
+
+  if (predicted_strategy) {
+    predicted_strategy->setAdaptiveDelayParams(
+      adaptive_enable, controller_delay,
+      adaptive_min, adaptive_max,
+      adaptive_step, adaptive_mul, adaptive_threshold,
+      adaptive_max_lin, adaptive_max_ang);
+  }
+  if (current_strategy) {
+    current_strategy->setAdaptiveDelayParams(
+      adaptive_enable, controller_delay,
+      adaptive_min, adaptive_max,
+      adaptive_step, adaptive_mul, adaptive_threshold,
+      adaptive_max_lin, adaptive_max_ang);
   }
 
   double sm_facing_enter = get_parameter("controller.state_machine.facing_enter_angle").as_double();
@@ -355,6 +403,18 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.solver.yaw_offset", 0.0);
   declare_parameter("controller.solver.facing_enter_angle", 40.0);
   declare_parameter("controller.solver.facing_exit_angle", 55.0);
+  declare_parameter("controller.solver.controller_delay", 0.0);
+  declare_parameter("controller.solver.selection_method", std::string("min_movement_with_facing"));
+
+  // Adaptive controller_delay (AIMD)
+  declare_parameter("controller.solver.adaptive_delay.enable",              false);
+  declare_parameter("controller.solver.adaptive_delay.fire_wait_threshold", 10);
+  declare_parameter("controller.solver.adaptive_delay.mul_factor",          1.2);
+  declare_parameter("controller.solver.adaptive_delay.add_step",            0.005);
+  declare_parameter("controller.solver.adaptive_delay.max_delay",           0.10);
+  declare_parameter("controller.solver.adaptive_delay.min_delay",           0.0);
+  declare_parameter("controller.solver.adaptive_delay.max_linear_speed",    3.0);
+  declare_parameter("controller.solver.adaptive_delay.max_angular_speed",   10.0);
 
   // State machine
   declare_parameter("controller.state_machine.facing_enter_angle", 40.0);

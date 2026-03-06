@@ -16,6 +16,7 @@
 #define GIMBAL_CONTROLLER__STRATEGIES__PREDICTED_POSITION_STRATEGY_HPP_
 
 #include "gimbal_controller/gimbal_control_strategy.hpp"
+#include "gimbal_controller/adaptive_delay_controller.hpp"
 
 namespace gimbal_controller
 {
@@ -65,14 +66,52 @@ public:
    */
   void setTrackingCenterParams(double max_tracking_v_yaw, int transfer_thresh);
 
+  /**
+   * @brief 设置 controller_delay 参数
+   * 
+   * 与 armor_solver 原版一致：在 TRACKING_ARMOR 状态下，若 controller_delay > 0，
+   * 则在 total_prediction_time 基础上额外叠加 controller_delay 秒作为云台控制目标；
+   * 开火判断仍基于当前位置，不受影响。
+   * @param controller_delay 额外云台前馈延迟 (秒, 0 表示禁用)
+   */
+  void setControllerDelay(double controller_delay);
+
+  /**
+   * @brief 配置自适应 delay AIMD 参数
+   * @param enable              是否启用自适应模式（false 时退化为静态 controller_delay）
+   * @param initial_delay       初始 delay，即 controller.solver.controller_delay 的值 (秒)
+   * @param min_delay           delay 下限 (秒)
+   * @param max_delay           delay 上限 (秒)
+   * @param add_step            开火成功时每帧减小量 (秒)
+   * @param mul_factor          未开火时乘性增幅因子 (>1.0)
+   * @param fire_wait_threshold 连续未开火超过此帧数后才开始增大
+   * @param max_linear_speed    线速度归一化参考值 (m/s)
+   * @param max_angular_speed   角速度归一化参考值 (rad/s)
+   */
+  void setAdaptiveDelayParams(
+    bool enable,
+    double initial_delay,
+    double min_delay,
+    double max_delay,
+    double add_step,
+    double mul_factor,
+    int    fire_wait_threshold,
+    double max_linear_speed,
+    double max_angular_speed);
+
 private:
   double prediction_delay_{0.0};      // 额外预测延迟 (秒)
   double max_prediction_time_{0.5};   // 最大预测时间 (秒)
+  double controller_delay_{0.0};      // 云台前馈延迟 (秒, 0=禁用)
   double pitch_offset_{0.0};          // pitch手动补偿 (度)
   double yaw_offset_{0.0};            // yaw手动补偿 (度)
   double max_tracking_v_yaw_{6.0};    // 触发跟踪中心的角速度阈值
   int transfer_thresh_{5};            // 状态切换阈值
   int overflow_count_{0};             // 溢出计数
+
+  // 自适应 delay AIMD
+  bool adaptive_delay_enabled_{false};
+  AdaptiveDelayController adaptive_ctrl_;
 
   enum TrackingState { TRACKING_ARMOR = 0, TRACKING_CENTER = 1 };
   TrackingState state_{TRACKING_ARMOR};

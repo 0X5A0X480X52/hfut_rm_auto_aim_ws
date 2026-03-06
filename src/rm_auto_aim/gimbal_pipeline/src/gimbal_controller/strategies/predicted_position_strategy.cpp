@@ -32,6 +32,10 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
     if (armor_selector_) {
       armor_selector_->resetState();
     }
+    // 跟丢目标时重置自适应 delay 状态
+    if (adaptive_delay_enabled_) {
+      adaptive_ctrl_.reset();
+    }
     return createIdleCmd();
   }
 
@@ -81,16 +85,17 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   // 预测 yaw
   double predicted_yaw = robot.yaw + total_prediction_time * robot.yaw_velocity;
 
-  // 选择最佳装甲板 (基于预测位置, 带 Facing 过滤 + Hysteresis)
-  auto predicted_selection = armor_selector_->selectByMinMovementWithFacing(
+  // 选择最佳装甲板 (基于预测位置，路由到配置的选板策略)
+  auto predicted_selection = armor_selector_->selectBest(
     predicted_armor_positions,
     predicted_center,
     predicted_yaw,
     robot.num_armors,
+    robot.yaw_velocity,
     context.current_yaw,
     context.current_pitch);
 
-  // 选择最佳装甲板 (基于当前位置，用于开火判断，不用 facing 过滤)
+  // 选择最佳装甲板 (基于当前位置，用于开火判断，始终使用最小运动量算法)
   auto current_selection = armor_selector_->selectByMinMovement(
     current_armor_positions,
     context.current_yaw,
@@ -138,6 +143,30 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   } else {
     // 正常跟踪预测装甲板位置 (含 facing 过滤后的结果或 center fallback)
     control_target_position = predicted_selection.position;
+
+    // controller_delay 前馈：在 TRACKING_ARMOR 状态且配置了 controller_delay 时，
+    // 在 total_prediction_time 基础上再额外预测 controller_delay_ 秒，
+    // 强制云台超前运动（与 armor_solver 原版 controller_delay 机制一致）
+    // 若启用自适应模式，则使用 adaptive_ctrl_ 的当前 delay 替代静态 controller_delay_
+    double effective_ctrl_delay =
+      adaptive_delay_enabled_ ? adaptive_ctrl_.getDelay() : controller_delay_;
+    if (effective_ctrl_delay > 0.0) {
+      double extra_dt = total_prediction_time + effective_ctrl_delay;
+      extra_dt = std::min(extra_dt, max_prediction_time_);
+      auto extra_positions = position_calculator_->calculatePredicted(robot, extra_dt);
+      if (!extra_positions.empty()) {
+        Eigen::Vector3d extra_center(
+          robot.center_position.x + extra_dt * robot.center_velocity.x,
+          robot.center_position.y + extra_dt * robot.center_velocity.y,
+          robot.center_position.z + extra_dt * robot.center_velocity.z);
+        double extra_yaw = robot.yaw + extra_dt * robot.yaw_velocity;
+        auto extra_selection = armor_selector_->selectBest(
+          extra_positions, extra_center, extra_yaw,
+          robot.num_armors, robot.yaw_velocity,
+          context.current_yaw, context.current_pitch);
+        control_target_position = extra_selection.position;
+      }
+    }
   }
 
   Eigen::Vector3d target_velocity(
@@ -185,6 +214,17 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
     fire_advice = true;
   }
 
+  // 自适应 delay 更新（根据本帧 fire_advice 和目标速度）
+  if (adaptive_delay_enabled_) {
+    Eigen::Vector3d vel(
+      robot.center_velocity.x,
+      robot.center_velocity.y,
+      robot.center_velocity.z);
+    double v_linear  = vel.norm();
+    double v_angular = std::abs(robot.yaw_velocity);
+    adaptive_ctrl_.update(fire_advice, v_linear, v_angular);
+  }
+
   // 构建控制命令
   rm_interfaces::msg::GimbalCmd cmd;
   cmd.header = robot.header;
@@ -210,6 +250,31 @@ void PredictedPositionStrategy::setManualOffset(double pitch_offset, double yaw_
 {
   pitch_offset_ = pitch_offset;
   yaw_offset_ = yaw_offset;
+}
+
+void PredictedPositionStrategy::setControllerDelay(double controller_delay)
+{
+  controller_delay_ = controller_delay;
+}
+
+void PredictedPositionStrategy::setAdaptiveDelayParams(
+  bool enable,
+  double initial_delay,
+  double min_delay,
+  double max_delay,
+  double add_step,
+  double mul_factor,
+  int    fire_wait_threshold,
+  double max_linear_speed,
+  double max_angular_speed)
+{
+  adaptive_delay_enabled_ = enable;
+  if (enable) {
+    adaptive_ctrl_.init(
+      initial_delay, min_delay, max_delay,
+      add_step, mul_factor, fire_wait_threshold,
+      max_linear_speed, max_angular_speed);
+  }
 }
 
 void PredictedPositionStrategy::setTrackingCenterParams(double max_tracking_v_yaw, int transfer_thresh)

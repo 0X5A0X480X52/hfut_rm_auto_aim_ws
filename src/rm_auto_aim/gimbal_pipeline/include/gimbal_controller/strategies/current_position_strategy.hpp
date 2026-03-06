@@ -16,6 +16,7 @@
 #define GIMBAL_CONTROLLER__STRATEGIES__CURRENT_POSITION_STRATEGY_HPP_
 
 #include "gimbal_controller/gimbal_control_strategy.hpp"
+#include "gimbal_controller/adaptive_delay_controller.hpp"
 
 namespace gimbal_controller
 {
@@ -51,9 +52,37 @@ public:
    */
   void setManualOffset(double pitch_offset, double yaw_offset);
 
+  /**
+   * @brief 设置 controller_delay 参数
+   * 
+   * 当 controller_delay > 0 时，用 calculatePredicted(dt=controller_delay) 计算
+   * 云台控制目标（超前击打），开火判断仍使用当前位置。
+   * @param controller_delay 前馈延迟 (秒, 0 表示禁用)
+   */
+  void setControllerDelay(double controller_delay);
+
+  /**
+   * @brief 配置自适应 delay AIMD 参数（与 PredictedPositionStrategy 同名接口）
+   */
+  void setAdaptiveDelayParams(
+    bool enable,
+    double initial_delay,
+    double min_delay,
+    double max_delay,
+    double add_step,
+    double mul_factor,
+    int    fire_wait_threshold,
+    double max_linear_speed,
+    double max_angular_speed);
+
 private:
-  double pitch_offset_{0.0};  // pitch手动补偿 (度)
-  double yaw_offset_{0.0};    // yaw手动补偿 (度)
+  double pitch_offset_{0.0};       // pitch手动补偿 (度)
+  double yaw_offset_{0.0};         // yaw手动补偿 (度)
+  double controller_delay_{0.0};   // 云台前馈延迟 (秒, 0=禁用)
+
+  // 自适应 delay AIMD
+  bool adaptive_delay_enabled_{false};
+  AdaptiveDelayController adaptive_ctrl_;
 };
 
 }  // namespace gimbal_controller
