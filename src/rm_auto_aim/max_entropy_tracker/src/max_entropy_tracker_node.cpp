@@ -27,8 +27,15 @@ MaxEntropyTrackerNode::MaxEntropyTrackerNode(const rclcpp::NodeOptions &options)
   config_ = UnifiedConfig::create_default();
   apply_parameters_to_config();
 
+  // ── TF2 buffer — shared by TFHandler and MessageFilter ──
+  tf2_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
+  auto timer_interface = std::make_shared<tf2_ros::CreateTimerROS>(
+      get_node_base_interface(), get_node_timers_interface());
+  tf2_buffer_->setCreateTimerInterface(timer_interface);
+  tf2_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
+
   // TF handler
-  tf_handler_ = std::make_unique<TFHandler>(this, target_frame_);
+  tf_handler_ = std::make_unique<TFHandler>(tf2_buffer_, target_frame_);
 
   // Tracker manager
   double dt = (predict_rate_ > 0) ? (1.0 / predict_rate_) : 0.01;
@@ -44,11 +51,17 @@ MaxEntropyTrackerNode::MaxEntropyTrackerNode(const rclcpp::NodeOptions &options)
   rclcpp::QoS sensor_qos(10);
   sensor_qos.best_effort();
 
-  // Subscriptions & publishers
-  armors_sub_ = create_subscription<rm_interfaces::msg::Armors>(
-      "/armor_detector/armors", sensor_qos,
-      std::bind(&MaxEntropyTrackerNode::armors_callback, this,
-                std::placeholders::_1));
+  // Subscribe: /armor_detector/armors via tf2_ros::MessageFilter
+  // The callback fires only when the TF at the message timestamp is available,
+  // matching armor_solver's pattern to prevent time-mismatch drift.
+  armors_sub_.subscribe(this, "/armor_detector/armors",
+                         rmw_qos_profile_sensor_data);
+  tf2_filter_ = std::make_shared<tf2_armor_filter>(
+      armors_sub_, *tf2_buffer_, target_frame_,
+      /*queue_size=*/10,
+      get_node_logging_interface(), get_node_clock_interface(),
+      std::chrono::duration<int>(1));
+  tf2_filter_->registerCallback(&MaxEntropyTrackerNode::armors_callback, this);
 
   target_pub_ = create_publisher<rm_interfaces::msg::Target>(
       "/max_entropy_tracker/target", sensor_qos);

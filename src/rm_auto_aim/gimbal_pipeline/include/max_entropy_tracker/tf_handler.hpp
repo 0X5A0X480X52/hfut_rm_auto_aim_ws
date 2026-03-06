@@ -19,29 +19,35 @@
 namespace fyt::auto_aim {
 
 /// TF2-based coordinate transform handler (camera→odom).
+///
+/// This class does NOT own a tf2_ros::Buffer or TransformListener.
+/// Instead it shares the buffer owned by the calling node, which
+/// must also have set up a tf2_ros::MessageFilter on that buffer.
+/// The MessageFilter guarantees that by the time armorsCallback fires
+/// the transform at the message timestamp is already in the buffer,
+/// so transform_pose() can use timeout=0 and will always succeed.
 class TFHandler {
  public:
-  TFHandler(rclcpp::Node *node, const std::string &target_frame = "odom")
+  /// @param buffer  Shared tf2 buffer owned by the node (also used by
+  ///                tf2_ros::MessageFilter). Must outlive this object.
+  TFHandler(std::shared_ptr<tf2_ros::Buffer> buffer,
+            const std::string &target_frame = "odom")
       : target_frame_(target_frame),
-        tf_buffer_(node->get_clock()),
-        tf_listener_(tf_buffer_) {}
+        tf_buffer_(std::move(buffer)) {}
 
   /// Transform PoseStamped into the target frame.
+  /// Pre-condition: the caller's MessageFilter has already confirmed that
+  /// the transform at pose_in.header.stamp is available, so no waiting.
   std::optional<geometry_msgs::msg::PoseStamped> transform_pose(
       const geometry_msgs::msg::PoseStamped &pose_in) {
     try {
-      return tf_buffer_.transform(pose_in, target_frame_,
-                                  tf2::durationFromSec(0.1));
-    } catch (const tf2::TransformException &) {
-      // Fallback: latest
-      try {
-        auto ps = pose_in;
-        ps.header.stamp = rclcpp::Time(0);
-        return tf_buffer_.transform(ps, target_frame_,
-                                    tf2::durationFromSec(0.1));
-      } catch (...) {
-        return std::nullopt;
-      }
+      return tf_buffer_->transform(pose_in, target_frame_,
+                                   tf2::durationFromSec(0.0));
+    } catch (const tf2::TransformException &ex) {
+      RCLCPP_ERROR(rclcpp::get_logger("tf_handler"),
+                   "Unexpected TF error at stamp %.4f: %s",
+                   rclcpp::Time(pose_in.header.stamp).seconds(), ex.what());
+      return std::nullopt;
     }
   }
 
@@ -62,17 +68,16 @@ class TFHandler {
   }
 
   bool can_transform(const std::string &source_frame) const {
-    return tf_buffer_.canTransform(target_frame_, source_frame,
-                                   tf2::TimePointZero,
-                                   tf2::durationFromSec(0.01));
+    return tf_buffer_->canTransform(target_frame_, source_frame,
+                                    tf2::TimePointZero,
+                                    tf2::durationFromSec(0.01));
   }
 
   const std::string &target_frame() const { return target_frame_; }
 
  private:
   std::string target_frame_;
-  tf2_ros::Buffer tf_buffer_;
-  tf2_ros::TransformListener tf_listener_;
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;  // shared with node & MessageFilter
 };
 
 }  // namespace fyt::auto_aim

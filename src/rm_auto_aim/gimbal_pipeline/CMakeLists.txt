@@ -22,6 +22,7 @@ find_package(std_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
+find_package(message_filters REQUIRED)
 find_package(angles REQUIRED)
 find_package(Eigen3 REQUIRED)
 
@@ -49,6 +50,7 @@ ament_target_dependencies(${PROJECT_NAME}
   tf2
   tf2_ros
   tf2_geometry_msgs
+  message_filters
   angles
 )
 
@@ -103,6 +105,7 @@ ament_export_dependencies(
   tf2
   tf2_ros
   tf2_geometry_msgs
+  message_filters
   angles
 )
 

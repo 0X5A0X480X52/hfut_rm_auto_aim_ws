@@ -20,12 +20,19 @@
 #include <std_msgs/msg/header.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
+// ─── message_filters + TF2 filter ──────────────────────────────
+#include <message_filters/subscriber.h>
+#include <tf2_ros/create_timer_ros.h>
+#include <tf2_ros/message_filter.h>
+
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/tf_handler.hpp"
 #include "max_entropy_tracker/tracker_manager.hpp"
 #include "max_entropy_tracker/utils/output_smoother.hpp"
 
 namespace fyt::auto_aim {
+
+using tf2_armor_filter = tf2_ros::MessageFilter<rm_interfaces::msg::Armors>;
 
 class MaxEntropyTrackerNode : public rclcpp::Node {
  public:
@@ -65,7 +72,10 @@ class MaxEntropyTrackerNode : public rclcpp::Node {
   std::unique_ptr<TrackerManager> tracker_manager_;
 
   // ROS pub/sub
-  rclcpp::Subscription<rm_interfaces::msg::Armors>::SharedPtr armors_sub_;
+  message_filters::Subscriber<rm_interfaces::msg::Armors> armors_sub_;
+  std::shared_ptr<tf2_ros::Buffer> tf2_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf2_listener_;
+  std::shared_ptr<tf2_armor_filter> tf2_filter_;
   rclcpp::Publisher<rm_interfaces::msg::Target>::SharedPtr target_pub_;
   rclcpp::Publisher<rm_interfaces::msg::TrackedRobots>::SharedPtr tracked_robots_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;

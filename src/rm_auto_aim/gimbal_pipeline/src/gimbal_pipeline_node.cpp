@@ -57,8 +57,17 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   tracker_config_ = UnifiedConfig::create_default();
   applyTrackerParamsToConfig();
 
+  // ── TF2 buffer — shared by TFHandler, MessageFilter, and gimbal state ──
+  // Must be created before TFHandler and before initGimbalComponents().
+  tf2_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
+  auto timer_interface = std::make_shared<tf2_ros::CreateTimerROS>(
+      get_node_base_interface(), get_node_timers_interface());
+  tf2_buffer_->setCreateTimerInterface(timer_interface);
+  tf2_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
+
   // TF handler (used by tracker for armor → odom transform)
-  tf_handler_ = std::make_unique<TFHandler>(this, target_frame_);
+  // Shares tf2_buffer_ so MessageFilter and TFHandler use the same cache.
+  tf_handler_ = std::make_unique<TFHandler>(tf2_buffer_, target_frame_);
 
   // Tracker manager
   double dt = (predict_rate_ > 0) ? (1.0 / predict_rate_) : 0.01;
@@ -92,9 +101,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       get_parameter("controller.strategy").as_string();
   ballistic_mode_ = get_parameter("controller.ballistic_mode").as_string();
 
-  // TF2 (shared w/ gimbal state update)
-  tf2_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
-  tf2_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
+  // TF2 buffer was already created above (shared with TFHandler & MessageFilter).
 
   initGimbalComponents();
   initGimbalStrategies();
@@ -214,11 +221,20 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   rclcpp::QoS sensor_qos(10);
   sensor_qos.best_effort();
 
-  // Subscribe: /armor_detector/armors  (input from detector)
-  armors_sub_ = create_subscription<rm_interfaces::msg::Armors>(
-      "/armor_detector/armors", sensor_qos,
-      std::bind(&GimbalPipelineNode::armorsCallback, this,
-                std::placeholders::_1));
+  // Subscribe: /armor_detector/armors via tf2_ros::MessageFilter
+  // This mirrors armor_solver's design: the callback is only invoked once
+  // the TF transform at the message's timestamp is available in tf2_buffer_,
+  // guaranteeing that TFHandler::transform_pose() uses the correct
+  // camera-frame → odom transform (the one that matches the image capture
+  // moment) and not a stale/future transform that would cause drift.
+  armors_sub_.subscribe(this, "/armor_detector/armors",
+                         rmw_qos_profile_sensor_data);
+  tf2_filter_ = std::make_shared<tf2_armor_filter>(
+      armors_sub_, *tf2_buffer_, target_frame_,
+      /*queue_size=*/10,
+      get_node_logging_interface(), get_node_clock_interface(),
+      std::chrono::duration<int>(1));
+  tf2_filter_->registerCallback(&GimbalPipelineNode::armorsCallback, this);
 
   // Subscribe: /joint_states (input from serial driver)
   joint_state_sub_ = create_subscription<sensor_msgs::msg::JointState>(

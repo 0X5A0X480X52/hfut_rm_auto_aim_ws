@@ -17,6 +17,11 @@
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
+// ─── message_filters + TF2 filter ──────────────────────────────
+#include <message_filters/subscriber.h>
+#include <tf2_ros/create_timer_ros.h>
+#include <tf2_ros/message_filter.h>
+
 // ─── rm_interfaces ─────────────────────────────────────────────
 #include <rm_interfaces/msg/armor.hpp>
 #include <rm_interfaces/msg/armors.hpp>
@@ -49,6 +54,8 @@
 #include "gimbal_controller/local_trajectory_compensator.hpp"
 
 namespace fyt::auto_aim {
+
+using tf2_armor_filter = tf2_ros::MessageFilter<rm_interfaces::msg::Armors>;
 
 class GimbalPipelineNode : public rclcpp::Node {
  public:
@@ -170,7 +177,8 @@ class GimbalPipelineNode : public rclcpp::Node {
   /*  ROS2 external interfaces (kept)                                 */
   /* ================================================================ */
   // Subscriptions
-  rclcpp::Subscription<rm_interfaces::msg::Armors>::SharedPtr armors_sub_;
+  message_filters::Subscriber<rm_interfaces::msg::Armors> armors_sub_;
+  std::shared_ptr<tf2_armor_filter> tf2_filter_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
 
   // Publishers
