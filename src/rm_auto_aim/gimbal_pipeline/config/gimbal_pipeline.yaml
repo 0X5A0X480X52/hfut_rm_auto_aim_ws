@@ -74,15 +74,15 @@ gimbal_pipeline:
     smoother.enable: true
     smoother.enable_position_smooth: true
     smoother.enable_yaw_smooth: true
-    smoother.enable_velocity_smooth: true
+    smoother.enable_velocity_smooth: false
     smoother.enable_structural_convergence: true
-    smoother.pos_min_cutoff: 1.5
-    smoother.pos_beta: 1.0
+    smoother.pos_min_cutoff: 5.5
+    smoother.pos_beta: 10.0
     smoother.pos_d_cutoff: 1.0
     smoother.yaw_min_cutoff: 1.0
     smoother.yaw_beta: 0.005
     smoother.yaw_d_cutoff: 1.0
-    smoother.vel_min_cutoff: 1.0
+    smoother.vel_min_cutoff: 2.0
     smoother.vel_beta: 0.01
     smoother.vel_d_cutoff: 1.0
     smoother.rm_initial_step: 0.5
@@ -111,7 +111,7 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     controller.bullet_speed: 20.0
     controller.control_rate: 250.0
-    controller.strategy: "predicted"    # "current" | "predicted" | "mpc" | "state_machine"
+    controller.strategy: "current"    # "current" | "predicted" | "mpc" | "state_machine"
     controller.ballistic_mode: "local"  # "service" | "local"
 
     controller.solver.shooting_range_width: 0.135
@@ -128,7 +128,7 @@ gimbal_pipeline:
     controller.solver.pitch_offset: 0.0
     controller.solver.yaw_offset: 0.0
     controller.solver.facing_enter_angle: 30.0
-    controller.solver.facing_exit_angle: 45.0
+    controller.solver.facing_exit_angle: 75.0
 
     controller.state_machine.facing_enter_angle: 40.0
     controller.state_machine.facing_exit_angle: 55.0
@@ -139,3 +139,13 @@ gimbal_pipeline:
     controller.state_machine.side_angle: 15.0
     controller.state_machine.prediction_delay: 0.0
     controller.state_machine.max_prediction_time: 0.5
+
+    # ═══════════════════════════════════════════════════════════════
+    # Prediction Logger — 预测准确率记录（可选）
+    # ═══════════════════════════════════════════════════════════════
+    # 启用后会将观测值与 Tracker 后验状态写入 CSV 文件，
+    # 供 scripts/analyze_prediction.py 离线分析预测误差。
+    logging.enable: false
+    logging.output_dir: "/tmp/prediction_logs"
+    logging.robot_id_filter: ""      # 只记录指定 robot_id；为空则记录全部
+    logging.flush_every_n: 50        # 每 N 行落盘一次，减少 I/O 阻塞

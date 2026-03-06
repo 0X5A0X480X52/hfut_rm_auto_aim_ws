@@ -37,6 +37,9 @@
 #include "target_selector/selection_strategy.hpp"
 #include "target_selector/strategies/min_yaw_deviation_strategy.hpp"
 
+// ─── prediction logger ────────────────────────────────────────
+#include "gimbal_pipeline/prediction_logger.hpp"
+
 // ─── gimbal_controller internals ──────────────────────────────
 #include "gimbal_controller/armor_position_calculator.hpp"
 #include "gimbal_controller/armor_selector.hpp"
@@ -193,6 +196,11 @@ class GimbalPipelineNode : public rclcpp::Node {
   // TF2
   std::shared_ptr<tf2_ros::Buffer> tf2_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf2_listener_;
+
+  /* ================================================================ */
+  /*  Prediction logger (optional, controlled by logging.enable)   */
+  /* ================================================================ */
+  std::unique_ptr<PredictionLogger> prediction_logger_;
 
   // Markers (gimbal visualization)
   visualization_msgs::msg::Marker position_marker_;

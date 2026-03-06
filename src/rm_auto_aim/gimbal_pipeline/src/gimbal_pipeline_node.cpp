@@ -214,6 +214,16 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
 
   if (debug_mode_) initMarkers();
 
+  // ─── Prediction logger ────────────────────────────────────────
+  if (get_parameter("logging.enable").as_bool()) {
+    prediction_logger_ = std::make_unique<PredictionLogger>(
+        get_parameter("logging.output_dir").as_string(),
+        get_parameter("logging.robot_id_filter").as_string(),
+        get_parameter("logging.flush_every_n").as_int());
+    RCLCPP_INFO(get_logger(), "PredictionLogger enabled, output: %s",
+                get_parameter("logging.output_dir").as_string().c_str());
+  }
+
   RCLCPP_INFO(get_logger(),
               "GimbalPipelineNode initialized: target_frame=%s, "
               "control_rate=%.0f Hz, strategy=%s, ballistic=%s",
@@ -356,6 +366,12 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.state_machine.side_angle", 15.0);
   declare_parameter("controller.state_machine.prediction_delay", 0.0);
   declare_parameter("controller.state_machine.max_prediction_time", 0.5);
+
+  // ─── Prediction logger ────────────────────────────────────────
+  declare_parameter("logging.enable",          false);
+  declare_parameter("logging.output_dir",       std::string("/tmp/prediction_logs"));
+  declare_parameter("logging.robot_id_filter",  std::string(""));
+  declare_parameter("logging.flush_every_n",    50);
 }
 
 /* ================================================================ */
@@ -509,6 +525,28 @@ void GimbalPipelineNode::armorsCallback(
     obs_by_robot[armor.number].push_back(obs.value());
   }
 
+  // ── Log observations (before update, so we record incoming sensor data) ──
+  if (prediction_logger_) {
+    int64_t ts_ns = msg_time.nanoseconds();
+    for (const auto &[rid, obs_list] : obs_by_robot) {
+      bool is_dual = (obs_list.size() >= 2);
+      std::vector<LogObservation> log_obs;
+      log_obs.reserve(obs_list.size());
+      for (const auto &o : obs_list) {
+        LogObservation lo;
+        lo.x          = o.x;
+        lo.y          = o.y;
+        lo.z          = o.z;
+        lo.yaw        = o.yaw;
+        lo.panel_id   = o.panel_id.value_or(-1);
+        lo.confidence = o.confidence;
+        lo.is_dual_obs = is_dual;
+        log_obs.push_back(lo);
+      }
+      prediction_logger_->logObservations(ts_ns, rid, log_obs);
+    }
+  }
+
   // ── Step 3: Update trackers ──
   for (auto &[rid, obs_list] : obs_by_robot) {
     last_obs_counts_[rid] = static_cast<int>(obs_list.size());
@@ -536,6 +574,32 @@ void GimbalPipelineNode::armorsCallback(
 
   // ── Step 4: Build TrackedRobots message (internal) ──
   auto tracked_msg = buildTrackedRobotsMsg(msg->header);
+
+  // ── Log tracker posterior states (after update, before selection) ──
+  if (prediction_logger_) {
+    int64_t ts_ns = msg_time.nanoseconds();
+    for (const auto &robot : tracked_msg.robots) {
+      LogTrackerState st;
+      st.center_x           = robot.center_position.x;
+      st.center_y           = robot.center_position.y;
+      st.center_z           = robot.center_position.z;
+      st.vel_x              = robot.center_velocity.x;
+      st.vel_y              = robot.center_velocity.y;
+      st.vel_z              = robot.center_velocity.z;
+      st.yaw                = robot.yaw;
+      st.yaw_velocity       = robot.yaw_velocity;
+      st.yaw_acceleration   = robot.yaw_acceleration;
+      st.radius_1           = robot.radius;
+      st.radius_2           = robot.radius_2;
+      st.dza                = robot.d_za;
+      st.track_state        = robot.track_state;
+      st.num_armors         = robot.num_armors;
+      st.visible_armor_count = robot.visible_armor_count;
+      st.is_visible         = robot.is_visible;
+      st.confidence         = robot.confidence;
+      prediction_logger_->logTrackerState(ts_ns, robot.robot_id, st);
+    }
+  }
 
   // ── Step 5: Target selection (direct C++ call, no ROS topic!) ──
   SelectionResult sel_result;
