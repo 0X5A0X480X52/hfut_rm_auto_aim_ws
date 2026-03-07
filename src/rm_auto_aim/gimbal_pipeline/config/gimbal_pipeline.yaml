@@ -82,8 +82,8 @@ gimbal_pipeline:
     smoother.yaw_min_cutoff: 1.0
     smoother.yaw_beta: 0.005
     smoother.yaw_d_cutoff: 1.0
-    smoother.vel_min_cutoff: 5.0
-    smoother.vel_beta: 10.0
+    smoother.vel_min_cutoff: 2.0
+    smoother.vel_beta: 0.01
     smoother.vel_d_cutoff: 1.0
     smoother.rm_initial_step: 0.5
     smoother.rm_gamma: 0.75
@@ -155,7 +155,7 @@ gimbal_pipeline:
     #   min_movement_with_facing  — 最小运动量 + 正面朝向 Hysteresis 过滤（默认）
     #   min_movement              — 纯最小运动量，无朝向过滤
     #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
-    controller.solver.selection_method: "min_movement_with_facing"
+    controller.solver.selection_method: "decision_angle"
 
     controller.state_machine.facing_enter_angle: 40.0
     controller.state_machine.facing_exit_angle: 55.0
@@ -172,7 +172,7 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     # 启用后会将观测值与 Tracker 后验状态写入 CSV 文件，
     # 供 scripts/analyze_prediction.py 离线分析预测误差。
-    logging.enable: false
+    logging.enable: true
     logging.output_dir: "/tmp/prediction_logs"
     logging.robot_id_filter: ""      # 只记录指定 robot_id；为空则记录全部
     logging.flush_every_n: 50        # 每 N 行落盘一次，减少 I/O 阻塞
