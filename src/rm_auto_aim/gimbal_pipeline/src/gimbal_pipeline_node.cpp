@@ -217,6 +217,39 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     sm_strategy_ptr->setManualOffset(pitch_offset, yaw_offset);
   }
 
+  // ── 配置 GimbalCmd 输出端保护滤波器 ──
+  {
+    gimbal_controller::GimbalCmdFilterConfig fcfg;
+    fcfg.enable_clamping             = get_parameter("controller.output_filter.enable_clamping").as_bool();
+    fcfg.max_yaw_diff                = get_parameter("controller.output_filter.max_yaw_diff").as_double();
+    fcfg.max_pitch_diff              = get_parameter("controller.output_filter.max_pitch_diff").as_double();
+    fcfg.enable_outlier_rejection    = get_parameter("controller.output_filter.enable_outlier_rejection").as_bool();
+    fcfg.outlier_threshold_yaw       = get_parameter("controller.output_filter.outlier_threshold_yaw").as_double();
+    fcfg.outlier_threshold_pitch     = get_parameter("controller.output_filter.outlier_threshold_pitch").as_double();
+    fcfg.max_outlier_count           = get_parameter("controller.output_filter.max_outlier_count").as_int();
+    fcfg.enable_rate_limiter         = get_parameter("controller.output_filter.enable_rate_limiter").as_bool();
+    fcfg.max_yaw_rate                = get_parameter("controller.output_filter.max_yaw_rate").as_double();
+    fcfg.max_pitch_rate              = get_parameter("controller.output_filter.max_pitch_rate").as_double();
+    fcfg.enable_ema                  = get_parameter("controller.output_filter.enable_ema").as_bool();
+    fcfg.ema_alpha                   = get_parameter("controller.output_filter.ema_alpha").as_double();
+    fcfg.enable_one_euro             = get_parameter("controller.output_filter.enable_one_euro").as_bool();
+    fcfg.one_euro_freq               = get_parameter("controller.output_filter.one_euro_freq").as_double();
+    fcfg.one_euro_min_cutoff         = get_parameter("controller.output_filter.one_euro_min_cutoff").as_double();
+    fcfg.one_euro_beta               = get_parameter("controller.output_filter.one_euro_beta").as_double();
+    fcfg.one_euro_d_cutoff           = get_parameter("controller.output_filter.one_euro_d_cutoff").as_double();
+    cmd_filter_.setConfig(fcfg);
+    RCLCPP_INFO(get_logger(),
+      "[GimbalCmdFilter] clamp=%s(%.1f°,%.1f°) outlier=%s(%.1f°,%.1f°,max%d)"
+      " rate=%s(%.1f°,%.1f°) ema=%s(a=%.2f) 1euro=%s(f=%.0f,mc=%.2f,b=%.4f)",
+      fcfg.enable_clamping ? "ON" : "off", fcfg.max_yaw_diff, fcfg.max_pitch_diff,
+      fcfg.enable_outlier_rejection ? "ON" : "off",
+      fcfg.outlier_threshold_yaw, fcfg.outlier_threshold_pitch, fcfg.max_outlier_count,
+      fcfg.enable_rate_limiter ? "ON" : "off", fcfg.max_yaw_rate, fcfg.max_pitch_rate,
+      fcfg.enable_ema ? "ON" : "off", fcfg.ema_alpha,
+      fcfg.enable_one_euro ? "ON" : "off",
+      fcfg.one_euro_freq, fcfg.one_euro_min_cutoff, fcfg.one_euro_beta);
+  }
+
   // ── 5. ROS2 external interfaces ──
   rclcpp::QoS sensor_qos(10);
   sensor_qos.best_effort();
@@ -442,6 +475,30 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.state_machine.side_angle", 15.0);
   declare_parameter("controller.state_machine.prediction_delay", 0.0);
   declare_parameter("controller.state_machine.max_prediction_time", 0.5);
+
+  // ─── GimbalCmd 输出端保护滤波器 ──────────────────────────────
+  // 0. Clamping — 绝对限幅
+  declare_parameter("controller.output_filter.enable_clamping",         true);
+  declare_parameter("controller.output_filter.max_yaw_diff",            15.0);
+  declare_parameter("controller.output_filter.max_pitch_diff",          10.0);
+  // 1. 外点检测
+  declare_parameter("controller.output_filter.enable_outlier_rejection", true);
+  declare_parameter("controller.output_filter.outlier_threshold_yaw",   8.0);
+  declare_parameter("controller.output_filter.outlier_threshold_pitch",  5.0);
+  declare_parameter("controller.output_filter.max_outlier_count",        3);
+  // 2. Rate Limiter
+  declare_parameter("controller.output_filter.enable_rate_limiter",     true);
+  declare_parameter("controller.output_filter.max_yaw_rate",            5.0);
+  declare_parameter("controller.output_filter.max_pitch_rate",          3.0);
+  // 3. EMA
+  declare_parameter("controller.output_filter.enable_ema",              false);
+  declare_parameter("controller.output_filter.ema_alpha",               0.7);
+  // 4. 1-Euro 自适应滤波
+  declare_parameter("controller.output_filter.enable_one_euro",         false);
+  declare_parameter("controller.output_filter.one_euro_freq",           250.0);
+  declare_parameter("controller.output_filter.one_euro_min_cutoff",     1.0);
+  declare_parameter("controller.output_filter.one_euro_beta",           0.007);
+  declare_parameter("controller.output_filter.one_euro_d_cutoff",       1.0);
 
   // ─── Prediction logger ────────────────────────────────────────
   declare_parameter("logging.enable",          false);
@@ -1102,6 +1159,9 @@ void GimbalPipelineNode::timerCallback() {
     idle_cmd.distance = -1;
     idle_cmd.fire_advice = false;
     gimbal_cmd_pub_->publish(idle_cmd);
+    // idle 期间清空滤波器状态，恢复跟踪时允许首帧自由跳变
+    cmd_filter_.reset();
+    prev_tracking_target_id_.clear();
     return;
   }
 
@@ -1162,6 +1222,16 @@ void GimbalPipelineNode::timerCallback() {
   }
 
   auto cmd = strategy->solve(context);
+
+  // ── GimbalCmd 输出端保护滤波 ──
+  // 目标切换（或从无目标变为有目标）时重置滤波器，允许首帧自由跳变快速锁定
+  const std::string &current_target = context.is_tracking ? selected_id : std::string("");
+  if (current_target != prev_tracking_target_id_) {
+    cmd_filter_.reset();
+  }
+  cmd_filter_.filter(cmd);
+  prev_tracking_target_id_ = current_target;
+
   gimbal_cmd_pub_->publish(cmd);
 
   if (debug_mode_ && context.is_tracking)

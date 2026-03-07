@@ -50,6 +50,7 @@
 #include "gimbal_controller/armor_selector.hpp"
 #include "gimbal_controller/ballistic_solver_client.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
+#include "gimbal_controller/gimbal_cmd_filter.hpp"
 #include "gimbal_controller/gimbal_control_strategy.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
 
@@ -163,6 +164,11 @@ class GimbalPipelineNode : public rclcpp::Node {
   double control_rate_{250.0};
   std::string ballistic_mode_{"service"};
   bool enable_{true};
+
+  // GimbalCmd 输出端保护滤波器
+  gimbal_controller::GimbalCmdFilter cmd_filter_;
+  // 记录上一帧跟踪的目标 ID，用于检测目标切换并 reset 滤波器
+  std::string prev_tracking_target_id_;
 
   /* ================================================================ */
   /*  Shared pipeline state (protected by mutex)                      */

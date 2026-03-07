@@ -36,11 +36,11 @@ gimbal_pipeline:
     ukf.innovation_gate_chi2_threshold: 9.49
 
     # Motion model
-    motion.translation_model: "CV"  # "CV" | "Singer"
+    motion.translation_model: "Singer"  # "CV" | "Singer"
     motion.cv_process_noise_vel: 1.00
     motion.ca_process_noise_acc: 0.01
     motion.singer_alpha: 0.5
-    motion.singer_sigma: 0.10
+    motion.singer_sigma: 0.50
     motion.process_noise_r: 0.00002
     motion.process_noise_dz: 0.00005
 
@@ -71,7 +71,7 @@ gimbal_pipeline:
     constraints.max_dz: 1.0
 
     # Output smoother (1-Euro filter + Robbins-Monro)
-    smoother.enable: true
+    smoother.enable: false
     smoother.enable_position_smooth: true
     smoother.enable_yaw_smooth: true
     smoother.enable_velocity_smooth: true
@@ -109,7 +109,7 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     # Gimbal controller parameters
     # ═══════════════════════════════════════════════════════════════
-    controller.bullet_speed: 20.0
+    controller.bullet_speed: 25.0
     controller.control_rate: 250.0
     controller.strategy: "predicted"    # "current" | "predicted" | "mpc" | "state_machine"
     controller.ballistic_mode: "local"  # "service" | "local"
@@ -120,7 +120,7 @@ gimbal_pipeline:
     controller.solver.min_switching_v_yaw: 0.0
     controller.solver.prediction_delay: 0.00
     controller.solver.max_prediction_time: 1.00
-    controller.solver.max_tracking_v_yaw: 6.0
+    controller.solver.max_tracking_v_yaw: 12.0
     controller.solver.transfer_thresh: 5
     controller.solver.gravity: 9.8
     controller.solver.resistance: 0.001
@@ -132,7 +132,7 @@ gimbal_pipeline:
     # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
     # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
     # 若启用自适应 delay（adaptive_delay.enable=true），本值作为 delay 初始值。
-    controller.solver.controller_delay: 0.00
+    controller.solver.controller_delay: 0.0025
 
     # ── 自适应 controller_delay（AIMD 策略）────────────────────────
     # 启用后根据目标线速度/角速度及连续未开火帧数动态调整 controller_delay：
@@ -151,11 +151,47 @@ gimbal_pipeline:
     controller.solver.adaptive_delay.max_linear_speed: 3.0     # 线速度归一化参考 (m/s)
     controller.solver.adaptive_delay.max_angular_speed: 10.0   # 角速度归一化参考 (rad/s)
 
+    # ── GimbalCmd 输出端保护滤波器 ──────────────────────────────────
+    # 在 gimbal_cmd 发布前对 yaw_diff / pitch_diff 执行多级可配置保护：
+    #   0. Clamping        — 绝对限幅，防止极端控制量
+    #   1. Outlier Reject  — 帧间突变外点检测，hold 上帧或强制接受
+    #   2. Rate Limiter    — 限制每帧变化量上限
+    #   3. EMA             — 指数移动平均平滑（默认关闭，会引入延迟）
+    #   4. 1-Euro Filter   — 速度自适应低通（默认关闭，运动快时自动减弱平滑）
+    # 各级独立开关；目标切换或从 idle 恢复时自动重置滤波器历史。
+
+    # 0. Clamping
+    controller.output_filter.enable_clamping: true
+    controller.output_filter.max_yaw_diff: 15.0      # 度，yaw_diff 绝对上限
+    controller.output_filter.max_pitch_diff: 10.0    # 度，pitch_diff 绝对上限
+
+    # 1. 外点检测
+    controller.output_filter.enable_outlier_rejection: true
+    controller.output_filter.outlier_threshold_yaw: 8.0    # 帧间跳变判定阈值 (度)
+    controller.output_filter.outlier_threshold_pitch: 5.0  # 帧间跳变判定阈值 (度)
+    controller.output_filter.max_outlier_count: 3          # 连续外点超此数后强制 accept
+
+    # 2. Rate Limiter
+    controller.output_filter.enable_rate_limiter: true
+    controller.output_filter.max_yaw_rate: 5.0     # 每帧最大变化量 (度/帧 @ 250Hz)
+    controller.output_filter.max_pitch_rate: 3.0   # 每帧最大变化量 (度/帧 @ 250Hz)
+
+    # 3. EMA 平滑（默认关闭；开启会引入 1~2 帧延迟）
+    controller.output_filter.enable_ema: false
+    controller.output_filter.ema_alpha: 0.7         # (0,1]，越大越跟随，越小越平滑
+
+    # 4. 1-Euro 自适应低通滤波（默认关闭；运动快时自动减弱平滑，适合高速目标）
+    controller.output_filter.enable_one_euro: false
+    controller.output_filter.one_euro_freq: 250.0        # Hz，应与 control_rate 一致
+    controller.output_filter.one_euro_min_cutoff: 1.0    # 最小截止频率 (Hz)
+    controller.output_filter.one_euro_beta: 0.007        # 速度灵敏度（越大高速时截止频率越高）
+    controller.output_filter.one_euro_d_cutoff: 1.0      # 导数截止频率 (Hz)
+
     # selection_method: 选板算法
     #   min_movement_with_facing  — 最小运动量 + 正面朝向 Hysteresis 过滤（默认）
     #   min_movement              — 纯最小运动量，无朝向过滤
     #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
-    controller.solver.selection_method: "decision_angle"
+    controller.solver.selection_method: "min_movement_with_facing"
 
     controller.state_machine.facing_enter_angle: 40.0
     controller.state_machine.facing_exit_angle: 55.0
@@ -172,7 +208,7 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     # 启用后会将观测值与 Tracker 后验状态写入 CSV 文件，
     # 供 scripts/analyze_prediction.py 离线分析预测误差。
-    logging.enable: true
+    logging.enable: false
     logging.output_dir: "/tmp/prediction_logs"
     logging.robot_id_filter: ""      # 只记录指定 robot_id；为空则记录全部
     logging.flush_every_n: 50        # 每 N 行落盘一次，减少 I/O 阻塞
