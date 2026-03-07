@@ -132,7 +132,7 @@ gimbal_pipeline:
     # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
     # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
     # 若启用自适应 delay（adaptive_delay.enable=true），本值作为 delay 初始值。
-    controller.solver.controller_delay: 0.0025
+    controller.solver.controller_delay: 0.003
 
     # ── 自适应 controller_delay（AIMD 策略）────────────────────────
     # 启用后根据目标线速度/角速度及连续未开火帧数动态调整 controller_delay：
@@ -191,7 +191,7 @@ gimbal_pipeline:
     #   min_movement_with_facing  — 最小运动量 + 正面朝向 Hysteresis 过滤（默认）
     #   min_movement              — 纯最小运动量，无朝向过滤
     #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
-    controller.solver.selection_method: "min_movement_with_facing"
+    controller.solver.selection_method: "decision_angle"
 
     controller.state_machine.facing_enter_angle: 40.0
     controller.state_machine.facing_exit_angle: 55.0

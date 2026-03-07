@@ -9,6 +9,7 @@
 #include "gimbal_pipeline/gimbal_pipeline_node.hpp"
 
 #include <cmath>
+#include <set>
 #include <sstream>
 
 #include "rm_utils/logger/log.hpp"
@@ -341,7 +342,7 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("default_r1", 0.15);
   declare_parameter("default_r2", 0.20);
   declare_parameter("default_dza", 0.0);
-  declare_parameter("tracker_timeout", 3.0);
+  declare_parameter("tracker_timeout", 0.5);
   declare_parameter("debug_mode", false);
   declare_parameter("enable_oscillation_detection", false);
   declare_parameter("visualization_frame", "odom");
@@ -646,7 +647,18 @@ void GimbalPipelineNode::armorsCallback(
   std::string sf =
       msg->header.frame_id.empty() ? source_frame_ : msg->header.frame_id;
 
+  // Valid robot ID whitelist to filter out misclassified detections
+  static const std::set<std::string> valid_robot_ids = {
+      "1", "2", "3", "4", "5", "outpost", "base", "sentry", "guard"};
+
   for (const auto &armor : msg->armors) {
+    // Skip invalid/unknown robot IDs to prevent false tracker creation
+    if (valid_robot_ids.count(armor.number) == 0) {
+      if (debug_mode_)
+        RCLCPP_WARN(get_logger(), "Ignoring armor with invalid ID: '%s'",
+                    armor.number.c_str());
+      continue;
+    }
     auto obs =
         tf_handler_->transform_armor_to_observation(armor, sf, msg_time);
     if (!obs.has_value()) {
@@ -703,6 +715,17 @@ void GimbalPipelineNode::armorsCallback(
   for (const auto &rid : removed) {
     smoothers_.erase(rid);
     last_dual_obs_.erase(rid);
+  }
+
+  // ── Step 3.5: Notify trackers that did NOT receive observations this frame ──
+  // This drives the state machine: TRACKING → TEMP_LOST → LOST for
+  // missing targets, preventing "ghost tracking" of disappeared targets.
+  {
+    std::set<std::string> observed_ids;
+    for (const auto &[rid, _] : obs_by_robot) {
+      observed_ids.insert(rid);
+    }
+    tracker_manager_->notify_missing(observed_ids, current_time);
   }
 
   // ── Step 4: Build TrackedRobots message (internal) ──
@@ -784,10 +807,10 @@ rm_interfaces::msg::TrackedRobots GimbalPipelineNode::buildTrackedRobotsMsg(
   tracked_msg.header = header;
   tracked_msg.header.frame_id = target_frame_;
 
-  auto tracking_ids = tracker_manager_->tracking_robot_ids();
+  auto tracking_ids = tracker_manager_->active_robot_ids();
   for (const auto &rid : tracking_ids) {
     auto *tracker = tracker_manager_->get(rid);
-    if (!tracker || !tracker->is_tracking()) continue;
+    if (!tracker || (!tracker->is_tracking() && !tracker->is_temp_lost())) continue;
 
     // Apply output smoothing
     SmoothedOutput smoothed;
@@ -1194,7 +1217,17 @@ void GimbalPipelineNode::timerCallback() {
   }
 
   if (robots && !robots->robots.empty()) {
-    if (!selected_id.empty()) {
+    // ── Cache freshness check ──
+    // If data is too old (e.g., camera stopped, detection crashed),
+    // treat as no target to prevent chasing stale predictions.
+    double data_age = (now() - data_update_time).seconds();
+    const double max_data_age = 0.5;  // seconds
+    if (data_age > max_data_age) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                           "Stale tracking data (age=%.3fs > %.3fs), ignoring",
+                           data_age, max_data_age);
+      // Fall through — context.is_tracking stays false, idle cmd will be sent
+    } else if (!selected_id.empty()) {
       for (const auto &robot : robots->robots) {
         if (robot.robot_id == selected_id) {
           context.target_robot = robot;
@@ -1203,8 +1236,10 @@ void GimbalPipelineNode::timerCallback() {
           context.target_stamp = data_update_time;
           context.is_tracking =
               (robot.track_state ==
-                   rm_interfaces::msg::TrackedRobot::TRACKING ||
-               robot.track_state ==
+                   rm_interfaces::msg::TrackedRobot::TRACKING);
+          // TEMP_LOST: hold last command but do NOT actively track
+          context.is_temp_lost =
+              (robot.track_state ==
                    rm_interfaces::msg::TrackedRobot::TEMP_LOST);
           break;
         }
@@ -1215,8 +1250,9 @@ void GimbalPipelineNode::timerCallback() {
       context.target_stamp = data_update_time;
       context.is_tracking =
           (context.target_robot.track_state ==
-               rm_interfaces::msg::TrackedRobot::TRACKING ||
-           context.target_robot.track_state ==
+               rm_interfaces::msg::TrackedRobot::TRACKING);
+      context.is_temp_lost =
+          (context.target_robot.track_state ==
                rm_interfaces::msg::TrackedRobot::TEMP_LOST);
     }
   }

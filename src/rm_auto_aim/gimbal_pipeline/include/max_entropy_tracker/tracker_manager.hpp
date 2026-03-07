@@ -5,6 +5,7 @@
 #include <chrono>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -28,7 +29,7 @@ class TrackerManager {
   explicit TrackerManager(const UnifiedConfig &config, double dt = 0.01,
                           double default_r1 = 0.15, double default_r2 = 0.20,
                           double default_dza = 0.0,
-                          double timeout_seconds = 3.0,
+                          double timeout_seconds = 0.5,
                           bool enable_oscillation = false)
       : config_(config),
         dt_(dt),
@@ -89,6 +90,30 @@ class TrackerManager {
     return ok;
   }
 
+  /// Notify trackers that were NOT observed in the current frame.
+  /// This drives the state machine: TRACKING → TEMP_LOST → LOST.
+  void notify_missing(const std::set<std::string> &observed_ids,
+                      double /*current_time*/) {
+    for (auto &[id, entry] : trackers_) {
+      if (observed_ids.count(id) == 0 && entry.tracker->is_initialized()) {
+        // Call update with empty observations to trigger handle_observation_loss
+        entry.tracker->update({});
+        std::cout << "[TrackerManager] notify_missing: robot_id=" << id
+                  << " state=" << tracker_state_to_string(entry.tracker->state())
+                  << " lost_count=" << entry.tracker->lost_count() << std::endl;
+      }
+    }
+    // Also clean up trackers that have transitioned to LOST state
+    for (auto it = trackers_.begin(); it != trackers_.end();) {
+      if (it->second.tracker->is_lost()) {
+        std::cout << "[TrackerManager] Removing LOST tracker: robot_id=" << it->first << std::endl;
+        it = trackers_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
   /// Predict all active trackers to target_time.
   void predict_all(std::optional<double> target_time = std::nullopt) {
     for (auto &[id, entry] : trackers_) {
@@ -125,10 +150,20 @@ class TrackerManager {
     return trackers_;
   }
 
+  /// Returns IDs of trackers in TRACKING state only.
   std::vector<std::string> tracking_robot_ids() const {
     std::vector<std::string> ids;
     for (const auto &[id, e] : trackers_)
       if (e.tracker->is_tracking()) ids.push_back(id);
+    return ids;
+  }
+
+  /// Returns IDs of trackers in TRACKING or TEMP_LOST state (active trackers).
+  std::vector<std::string> active_robot_ids() const {
+    std::vector<std::string> ids;
+    for (const auto &[id, e] : trackers_)
+      if (e.tracker->is_tracking() || e.tracker->is_temp_lost())
+        ids.push_back(id);
     return ids;
   }
 

@@ -39,7 +39,8 @@ void AdaptiveArmorTracker::initialize(const std::vector<ObservationData> &obs,
     last_update_time_ = o.timestamp.value();
   }
 
-  transition_to(TrackerState::TRACKING);
+  mark_initialized();
+  transition_to(TrackerState::INITIALIZING);
   increment_frame();
 }
 
@@ -57,6 +58,24 @@ void AdaptiveArmorTracker::predict(std::optional<double> target_time) {
     current_time_ = target_time.value();
   else if (current_time_.has_value())
     current_time_ = current_time_.value() + dt;
+
+  // When in TEMP_LOST state, decay velocity and acceleration to prevent
+  // runaway prediction from CA model. Each predict step multiplies by
+  // decay_factor, so velocity exponentially decays toward zero.
+  if (is_temp_lost()) {
+    const double decay_factor = 0.8;  // ~20% decay per frame
+    auto idx = ukf_.state_idx();
+    auto &x = ukf_.x();
+    x(idx.VX()) *= decay_factor;
+    x(idx.VY()) *= decay_factor;
+    x(idx.VZ()) *= decay_factor;
+    x(idx.DELTA_RATE()) *= decay_factor;
+    if (idx.has("AX")) {
+      x(idx.AX()) *= decay_factor;
+      x(idx.AY()) *= decay_factor;
+      x(idx.AZ()) *= decay_factor;
+    }
+  }
 
   auto [r1, r2] = ukf_.get_radii();
   if (osc_detector_.update(r1, r2)) reset_parameters();

@@ -46,11 +46,12 @@ class BaseTracker {
 
   /* ---------- state machine ---------- */
   TrackerState state() const { return state_; }
-  bool is_initialized() const { return state_ != TrackerState::INITIALIZING; }
+  bool is_initialized() const { return initialized_; }
   bool is_tracking() const { return state_ == TrackerState::TRACKING; }
   bool is_temp_lost() const { return state_ == TrackerState::TEMP_LOST; }
   bool is_lost() const { return state_ == TrackerState::LOST; }
   int frame_count() const { return frame_count_; }
+  int lost_count() const { return lost_count_; }
 
   /// Unified process interface: auto-predict then update.
   bool process(const std::vector<ObservationData> &obs,
@@ -76,6 +77,7 @@ class BaseTracker {
   }
 
  protected:
+  void mark_initialized() { initialized_ = true; }
   void transition_to(TrackerState s) {
     if (state_ != s) state_ = s;
   }
@@ -85,6 +87,7 @@ class BaseTracker {
     ++lost_count_;
     if (lost_count_ >= lost_thres) transition_to(TrackerState::LOST);
     else if (state_ == TrackerState::TRACKING) transition_to(TrackerState::TEMP_LOST);
+    else if (state_ == TrackerState::INITIALIZING) transition_to(TrackerState::LOST);
   }
 
   void handle_observation_received(int tracking_thres) {
@@ -107,6 +110,7 @@ class BaseTracker {
   }
 
   double dt_;
+  bool initialized_ = false;
   TrackerState state_ = TrackerState::INITIALIZING;
   int frame_count_ = 0;
   int lost_count_ = 0;
