@@ -477,6 +477,20 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.state_machine.prediction_delay", 0.0);
   declare_parameter("controller.state_machine.max_prediction_time", 0.5);
 
+  // MPC strategy
+  declare_parameter("controller.mpc.N", 20);
+  declare_parameter("controller.mpc.dt", 0.01);
+  declare_parameter("controller.mpc.control_delay_s", 0.0);
+  declare_parameter("controller.mpc.max_accel", 30.0);
+  declare_parameter("controller.mpc.q_yaw", 100.0);
+  declare_parameter("controller.mpc.q_pitch", 100.0);
+  declare_parameter("controller.mpc.q_yaw_vel", 10.0);
+  declare_parameter("controller.mpc.q_pitch_vel", 10.0);
+  declare_parameter("controller.mpc.r_yaw", 0.01);
+  declare_parameter("controller.mpc.r_pitch", 0.01);
+  declare_parameter("controller.mpc.s_yaw", 5.0);
+  declare_parameter("controller.mpc.s_pitch", 5.0);
+
   // ─── GimbalCmd 输出端保护滤波器 ──────────────────────────────
   // 0. Clamping — 绝对限幅
   declare_parameter("controller.output_filter.enable_clamping",         true);
@@ -1131,6 +1145,20 @@ void GimbalPipelineNode::initGimbalStrategies() {
   auto mpc_s = std::make_shared<gimbal_controller::MpcControlStrategy>();
   mpc_s->setComponents(position_calculator_, armor_selector_,
                        ballistic_client_, local_compensator_, fire_advisor_);
+  mpc_s->initReferenceGenerator();
+  mpc_s->setMpcParameters(
+    get_parameter("controller.mpc.N").as_int(),
+    get_parameter("controller.mpc.dt").as_double(),
+    get_parameter("controller.mpc.control_delay_s").as_double(),
+    get_parameter("controller.mpc.max_accel").as_double(),
+    get_parameter("controller.mpc.q_yaw").as_double(),
+    get_parameter("controller.mpc.q_pitch").as_double(),
+    get_parameter("controller.mpc.q_yaw_vel").as_double(),
+    get_parameter("controller.mpc.q_pitch_vel").as_double(),
+    get_parameter("controller.mpc.r_yaw").as_double(),
+    get_parameter("controller.mpc.r_pitch").as_double(),
+    get_parameter("controller.mpc.s_yaw").as_double(),
+    get_parameter("controller.mpc.s_pitch").as_double());
   gimbal_strategies_["mpc"] = mpc_s;
 
   auto sm_s = std::make_shared<gimbal_controller::StateMachineStrategy>();

@@ -203,6 +203,20 @@ gimbal_pipeline:
     controller.state_machine.prediction_delay: 0.0
     controller.state_machine.max_prediction_time: 0.5
 
+    # MPC 控制策略参数（controller.strategy: "mpc" 时生效）
+    controller.mpc.N: 20
+    controller.mpc.dt: 0.01
+    controller.mpc.control_delay_s: 0.0
+    controller.mpc.max_accel: 30.0
+    controller.mpc.q_yaw: 100.0
+    controller.mpc.q_pitch: 100.0
+    controller.mpc.q_yaw_vel: 10.0
+    controller.mpc.q_pitch_vel: 10.0
+    controller.mpc.r_yaw: 0.01
+    controller.mpc.r_pitch: 0.01
+    controller.mpc.s_yaw: 5.0
+    controller.mpc.s_pitch: 5.0
+
     # ═══════════════════════════════════════════════════════════════
     # Prediction Logger — 预测准确率记录（可选）
     # ═══════════════════════════════════════════════════════════════

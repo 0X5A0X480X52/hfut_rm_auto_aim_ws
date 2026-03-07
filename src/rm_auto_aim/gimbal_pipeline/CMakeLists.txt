@@ -25,11 +25,13 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(angles REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(qpOASES REQUIRED)
 
 # ─── Include directories ───────────────────────────────────────
 include_directories(
   include
   ${EIGEN3_INCLUDE_DIRS}
+  ${qpOASES_INCLUDE_DIR}
 )
 
 # ─── Collect all source files ──────────────────────────────────
@@ -56,6 +58,7 @@ ament_target_dependencies(${PROJECT_NAME}
 
 target_link_libraries(${PROJECT_NAME}
   Eigen3::Eigen
+  ${qpOASES_LIBRARY}
 )
 
 # ─── Register composable node ─────────────────────────────────
@@ -88,6 +91,35 @@ if(BUILD_TESTING)
     ament_cmake_cpplint
   )
   ament_lint_auto_find_test_dependencies()
+
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_mpc_core test/test_mpc_core.cpp
+    ${ALL_SRCS}
+  )
+  target_include_directories(test_mpc_core PRIVATE
+    include
+    ${EIGEN3_INCLUDE_DIRS}
+    ${qpOASES_INCLUDE_DIR}
+  )
+  ament_target_dependencies(test_mpc_core
+    rclcpp
+    rm_interfaces
+    rm_utils
+    geometry_msgs
+    std_msgs
+    sensor_msgs
+    visualization_msgs
+    tf2
+    tf2_ros
+    tf2_geometry_msgs
+    message_filters
+    angles
+    rclcpp_components
+  )
+  target_link_libraries(test_mpc_core
+    Eigen3::Eigen
+    ${qpOASES_LIBRARY}
+  )
 endif()
 
 # ─── Export ─────────────────────────────────────────────────────
