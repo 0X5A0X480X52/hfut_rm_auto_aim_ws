@@ -191,7 +191,7 @@ gimbal_pipeline:
     #   min_movement_with_facing  — 最小运动量 + 正面朝向 Hysteresis 过滤（默认）
     #   min_movement              — 纯最小运动量，无朝向过滤
     #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
-    controller.solver.selection_method: "min_movement_with_facing"
+    controller.solver.selection_method: "decision_angle"
 
     controller.state_machine.facing_enter_angle: 40.0
     controller.state_machine.facing_exit_angle: 55.0
@@ -204,18 +204,31 @@ gimbal_pipeline:
     controller.state_machine.max_prediction_time: 0.5
 
     # MPC 控制策略参数（controller.strategy: "mpc" 时生效）
-    controller.mpc.N: 20
-    controller.mpc.dt: 0.1
-    controller.mpc.control_delay_s: 0.0
+    # controller.mpc.N: 50
+    # controller.mpc.dt: 0.02
+    # controller.mpc.control_delay_s: 0.0
+    # controller.mpc.max_accel: 30.0
+    # controller.mpc.q_yaw: 100.0
+    # controller.mpc.q_pitch: 100.0
+    # controller.mpc.q_yaw_vel: 10.0
+    # controller.mpc.q_pitch_vel: 10.0
+    # controller.mpc.r_yaw: 0.001
+    # controller.mpc.r_pitch: 0.001
+    # controller.mpc.s_yaw: 0.001
+    # controller.mpc.s_pitch: 0.001
+
+    controller.mpc.N: 50
+    controller.mpc.dt: 0.05
+    controller.mpc.control_delay_s: 0.025
     controller.mpc.max_accel: 30.0
     controller.mpc.q_yaw: 100.0
     controller.mpc.q_pitch: 100.0
     controller.mpc.q_yaw_vel: 10.0
     controller.mpc.q_pitch_vel: 10.0
-    controller.mpc.r_yaw: 0.01
-    controller.mpc.r_pitch: 0.01
-    controller.mpc.s_yaw: 5.0
-    controller.mpc.s_pitch: 5.0
+    controller.mpc.r_yaw: 0.001
+    controller.mpc.r_pitch: 0.001
+    controller.mpc.s_yaw: 0.001
+    controller.mpc.s_pitch: 0.001
 
     # ═══════════════════════════════════════════════════════════════
     # Prediction Logger — 预测准确率记录（可选）

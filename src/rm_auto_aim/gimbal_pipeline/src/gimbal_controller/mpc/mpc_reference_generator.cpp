@@ -94,9 +94,9 @@ Eigen::VectorXd MpcReferenceGenerator::generate(
       yaw_ref = std::atan2(target_position.y(), target_position.x());
       pitch_ref = std::atan2(target_position.z(), dist_xy);
 
-      std::cout << "Ballistic compensation failed at step " << k
-                << ", using geometric fallback. Target position: "
-                << target_position.transpose() << std::endl;
+      // std::cout << "Ballistic compensation failed at step " << k
+      //           << ", using geometric fallback. Target position: "
+      //           << target_position.transpose() << std::endl;
     }
 
     // 6. 估计参考角速度 (数值微分)
@@ -109,12 +109,12 @@ Eigen::VectorXd MpcReferenceGenerator::generate(
     prev_pitch_ref = pitch_ref;
 
     // Debug 输出
-    std::cout << "Step " << k << ": t_ahead=" << t_ahead
-              << "s, target_pos=" << target_position.transpose()
-              << ", yaw_ref=" << yaw_ref << ", pitch_ref=" << pitch_ref
-              << ", yaw_dot_ref=" << yaw_dot_ref << ", pitch_dot_ref=" << pitch_dot_ref
-              << (selection.is_center_fallback ? " (center fallback)" : "")
-              << std::endl;
+    // std::cout << "Step " << k << ": t_ahead=" << t_ahead
+    //           << "s, target_pos=" << target_position.transpose()
+    //           << ", yaw_ref=" << yaw_ref << ", pitch_ref=" << pitch_ref
+    //           << ", yaw_dot_ref=" << yaw_dot_ref << ", pitch_dot_ref=" << pitch_dot_ref
+    //           << (selection.is_center_fallback ? " (center fallback)" : "")
+    //           << std::endl;
   }
 
   return X_ref;
