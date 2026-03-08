@@ -15,6 +15,7 @@
 #include "gimbal_controller/strategies/mpc_control_strategy.hpp"
 
 #include <angles/angles.h>
+#include <iostream>
 
 #include "gimbal_controller/fire_advisor.hpp"
 
@@ -72,7 +73,19 @@ void MpcControlStrategy::rebuildMatrices()
 rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   const GimbalControlContext & context)
 {
+
+  std::cout << "MPC Control Strategy: Solving for target robot at position ("
+            << context.target_robot.center_position.x << ", "
+            << context.target_robot.center_position.y << ", "
+            << context.target_robot.center_position.z << ") with velocity ("
+            << context.target_robot.center_velocity.x << ", "
+            << context.target_robot.center_velocity.y << ", "
+            << context.target_robot.center_velocity.z << ") and yaw "
+            << context.target_robot.yaw << " rad." 
+            << context.target_robot.yaw_velocity << " rad/s." << std::endl;
+
   if (!context.is_tracking && !context.is_temp_lost) {
+    std::cout << "Target not in tracking/temp_lost state, skipping MPC control.  " << std::endl;
     has_prev_state_ = false;
     U_prev_.resize(0);
     return createIdleCmd();
@@ -116,6 +129,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   auto result = qp_solver_.solve(H, f, lb, ub);
   if (!result.success) {
     // QP 求解失败: 回退到弹道直瞄
+    std::cout << "MPC QP solve failed, fallback to direct aim.  " << std::endl;
     return fallbackDirectAim(context, X_ref);
   }
 
@@ -129,9 +143,17 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   double cmd_yaw = x_next(0);
   double cmd_pitch = x_next(1);
 
+  std::cout << "MPC optimal control: yaw_accel=" << u_opt(0) << " rad/s^2, pitch_accel=" << u_opt(1)
+            << " rad/s^2. Predicted next state: yaw=" << cmd_yaw << " rad, pitch=" << cmd_pitch
+            << " rad." << std::endl;
+
   // 9) 计算与当前的差值
   double yaw_diff = angles::normalize_angle(cmd_yaw - context.current_yaw);
   double pitch_diff = cmd_pitch - context.current_pitch;
+
+  std::cout << "Current state: yaw=" << context.current_yaw << " rad, pitch=" << context.current_pitch
+            << " rad. Command diff: yaw_diff=" << yaw_diff << " rad, pitch_diff=" << pitch_diff
+            << " rad." << std::endl;
 
   // 10) 开火判断: 使用参考轨迹第一步的 yaw/pitch 作为开火目标
   double ref_yaw = X_ref(0);

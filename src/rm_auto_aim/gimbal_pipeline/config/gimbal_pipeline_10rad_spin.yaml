@@ -111,7 +111,7 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     controller.bullet_speed: 22.0
     controller.control_rate: 250.0
-    controller.strategy: "mpc"    # "current" | "predicted" | "mpc" | "state_machine"
+    controller.strategy: "predicted"    # "current" | "predicted" | "mpc" | "state_machine"
     controller.ballistic_mode: "local"  # "service" | "local"
 
     controller.solver.shooting_range_width: 0.135
@@ -205,7 +205,7 @@ gimbal_pipeline:
 
     # MPC 控制策略参数（controller.strategy: "mpc" 时生效）
     controller.mpc.N: 20
-    controller.mpc.dt: 0.1
+    controller.mpc.dt: 0.001
     controller.mpc.control_delay_s: 0.0
     controller.mpc.max_accel: 30.0
     controller.mpc.q_yaw: 100.0
