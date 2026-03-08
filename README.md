@@ -100,6 +100,16 @@
     source /opt/ros/humble/setup.bash
     ```
 
+- qpOASES库 (优化装甲板Yaw角度)
+    ```bash
+    git clone https://github.com/coin-or/qpOASES.git
+    cd qpOASES
+    mkdir build && cd build
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON
+    make -j4
+    sudo make install
+    ```
+
 ## 使用 Docker 初始化容器
 
 可以使用类似以下命令初始化 docker 容器：
