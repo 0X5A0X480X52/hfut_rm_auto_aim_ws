@@ -43,6 +43,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/TrackHistoryWindows.msg"
   "msg/TrackPredictionWindow.msg"
   "msg/TrackPredictionWindows.msg"
+  "msg/ManeuverState.msg"
+  "msg/ManeuverStates.msg"
   "srv/SetMode.srv"
   "srv/SolveBallistic.srv"
   "srv/SetTargetRobot.srv"

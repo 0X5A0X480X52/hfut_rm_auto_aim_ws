@@ -26,6 +26,8 @@
 #include <rm_interfaces/msg/armor.hpp>
 #include <rm_interfaces/msg/armors.hpp>
 #include <rm_interfaces/msg/gimbal_cmd.hpp>
+#include <rm_interfaces/msg/maneuver_state.hpp>
+#include <rm_interfaces/msg/maneuver_states.hpp>
 #include <rm_interfaces/msg/selected_target.hpp>
 #include <rm_interfaces/msg/target.hpp>
 #include <rm_interfaces/msg/tracked_robot.hpp>
@@ -190,6 +192,10 @@ class GimbalPipelineNode : public rclcpp::Node {
 
   // Publishers
   rclcpp::Publisher<rm_interfaces::msg::GimbalCmd>::SharedPtr gimbal_cmd_pub_;
+
+  // Maneuver states publisher (always-on, for chart monitoring)
+  rclcpp::Publisher<rm_interfaces::msg::ManeuverStates>::SharedPtr
+      maneuver_states_pub_;
 
   // Debug publishers (only when debug_mode_ == true)
   rclcpp::Publisher<rm_interfaces::msg::TrackedRobots>::SharedPtr

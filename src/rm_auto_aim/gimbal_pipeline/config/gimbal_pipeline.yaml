@@ -191,7 +191,7 @@ gimbal_pipeline:
     #   min_movement_with_facing  — 最小运动量 + 正面朝向 Hysteresis 过滤（默认）
     #   min_movement              — 纯最小运动量，无朝向过滤
     #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
-    controller.solver.selection_method: "decision_angle"
+    controller.solver.selection_method: "min_movement_with_facing"
 
     controller.state_machine.facing_enter_angle: 40.0
     controller.state_machine.facing_exit_angle: 55.0
@@ -219,7 +219,7 @@ gimbal_pipeline:
 
     controller.mpc.N: 50
     controller.mpc.dt: 0.05
-    controller.mpc.control_delay_s: 0.025
+    controller.mpc.control_delay_s: 0.0
     controller.mpc.max_accel: 30.0
     controller.mpc.q_yaw: 100.0
     controller.mpc.q_pitch: 100.0
@@ -247,7 +247,13 @@ gimbal_pipeline:
     #   单观测(update_type=1): nis > nis_threshold_single AND innov_norm > innov_norm_threshold_single
     #   双观测(update_type=2): nis > nis_threshold_dual   AND innov_norm > innov_norm_threshold_dual
     maneuver.enable: true
-    maneuver.nis_threshold_single: 238.807
-    maneuver.nis_threshold_dual: 4132.110
-    maneuver.innov_norm_threshold_single: 0.1279
-    maneuver.innov_norm_threshold_dual: 0.0613
+    # maneuver.nis_threshold_single: 238.807
+    # maneuver.nis_threshold_dual: 4132.110
+    # maneuver.innov_norm_threshold_single: 0.1279
+    # maneuver.innov_norm_threshold_dual: 0.0613
+
+    maneuver.nis_threshold_single: 300.0
+    maneuver.nis_threshold_dual: 4500.0
+    maneuver.innov_norm_threshold_single: 0.15
+    maneuver.innov_norm_threshold_dual: 0.10
+

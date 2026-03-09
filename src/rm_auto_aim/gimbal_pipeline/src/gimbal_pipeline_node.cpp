@@ -281,6 +281,11 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   gimbal_cmd_pub_ = create_publisher<rm_interfaces::msg::GimbalCmd>(
       "cmd_gimbal", rclcpp::SensorDataQoS());
 
+  // Maneuver states publisher (always-on, for chart monitoring)
+  maneuver_states_pub_ =
+      create_publisher<rm_interfaces::msg::ManeuverStates>(
+          "~/maneuver_states", rclcpp::SensorDataQoS());
+
   // Debug publishers
   if (debug_mode_) {
     debug_tracked_robots_pub_ =
@@ -884,6 +889,27 @@ void GimbalPipelineNode::armorsCallback(
     if (debug_maneuver_pub_) {
       publishManeuverMarkers(msg->header);
     }
+  }
+
+  // ── Step 8: Publish maneuver states (always-on, for chart monitoring) ──
+  if (maneuver_states_pub_) {
+    rm_interfaces::msg::ManeuverStates states_msg;
+    states_msg.header.stamp    = msg->header.stamp;
+    states_msg.header.frame_id = target_frame_;
+    for (const auto &[robot_id, entry] : tracker_manager_->trackers()) {
+      if (!entry.tracker || !entry.tracker->is_initialized()) continue;
+      const auto result = entry.tracker->assess_maneuver();
+      const auto &ukf   = entry.tracker->ukf();
+      rm_interfaces::msg::ManeuverState s;
+      s.robot_id        = robot_id;
+      s.is_maneuvering  = result.is_maneuvering;
+      s.nis             = result.nis;
+      s.innov_norm      = result.innov_norm;
+      s.innov_yaw_abs   = std::abs(ukf.last_innov_yaw());
+      s.update_type     = result.update_type;
+      states_msg.states.push_back(s);
+    }
+    maneuver_states_pub_->publish(states_msg);
   }
 }
 
