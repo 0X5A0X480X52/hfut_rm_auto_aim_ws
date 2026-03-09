@@ -297,6 +297,9 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     debug_gimbal_marker_pub_ =
         create_publisher<visualization_msgs::msg::MarkerArray>(
             "~/gimbal_markers", 10);
+    debug_maneuver_pub_ =
+        create_publisher<visualization_msgs::msg::MarkerArray>(
+            "~/maneuver_markers", 10);
   }
 
   // Service: ~/set_mode
@@ -395,6 +398,13 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("constraints.max_radius", 0.5);
   declare_parameter("constraints.min_dz", -1.0);
   declare_parameter("constraints.max_dz", 1.0);
+
+  // Maneuver detection
+  declare_parameter("maneuver.enable", true);
+  declare_parameter("maneuver.nis_threshold_single", 238.807);
+  declare_parameter("maneuver.nis_threshold_dual", 4132.110);
+  declare_parameter("maneuver.innov_norm_threshold_single", 0.1279);
+  declare_parameter("maneuver.innov_norm_threshold_dual", 0.0613);
 
   // Output smoother
   declare_parameter("smoother.enable", true);
@@ -590,6 +600,16 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("constraints.max_radius").as_double();
   c.constraints.min_dz = get_parameter("constraints.min_dz").as_double();
   c.constraints.max_dz = get_parameter("constraints.max_dz").as_double();
+
+  c.maneuver.enable = get_parameter("maneuver.enable").as_bool();
+  c.maneuver.nis_threshold_single =
+      get_parameter("maneuver.nis_threshold_single").as_double();
+  c.maneuver.nis_threshold_dual =
+      get_parameter("maneuver.nis_threshold_dual").as_double();
+  c.maneuver.innov_norm_threshold_single =
+      get_parameter("maneuver.innov_norm_threshold_single").as_double();
+  c.maneuver.innov_norm_threshold_dual =
+      get_parameter("maneuver.innov_norm_threshold_dual").as_double();
 
   // Output smoother
   smoother_config_.enable = get_parameter("smoother.enable").as_bool();
@@ -859,6 +879,10 @@ void GimbalPipelineNode::armorsCallback(
       auto marker_array = build_tracker_markers(
           visualization_frame_, tracker_manager_->trackers(), stamp);
       debug_tracker_marker_pub_->publish(marker_array);
+    }
+
+    if (debug_maneuver_pub_) {
+      publishManeuverMarkers(msg->header);
     }
   }
 }
@@ -1557,6 +1581,65 @@ void GimbalPipelineNode::publishGimbalMarkers(
   }
 
   debug_gimbal_marker_pub_->publish(marker_array);
+}
+
+void GimbalPipelineNode::publishManeuverMarkers(
+    const std_msgs::msg::Header &header) {
+  visualization_msgs::msg::MarkerArray arr;
+  rclcpp::Time stamp(header.stamp);
+  int id = 0;
+
+  for (const auto &[robot_id, entry] : tracker_manager_->trackers()) {
+    if (!entry.tracker || !entry.tracker->is_initialized()) continue;
+
+    const auto result = entry.tracker->assess_maneuver();
+    const auto pos    = entry.tracker->get_center_position();
+
+    // ── Sphere marker ──────────────────────────────────────────
+    visualization_msgs::msg::Marker sphere;
+    sphere.header       = header;
+    sphere.ns           = "maneuver";
+    sphere.id           = id++;
+    sphere.type         = visualization_msgs::msg::Marker::SPHERE;
+    sphere.action       = visualization_msgs::msg::Marker::ADD;
+    sphere.pose.position.x = pos.x();
+    sphere.pose.position.y = pos.y();
+    sphere.pose.position.z = pos.z();
+    sphere.pose.orientation.w = 1.0;
+    sphere.scale.x = sphere.scale.y = sphere.scale.z = 0.12;
+    sphere.lifetime = rclcpp::Duration::from_seconds(0.15);
+    if (result.is_maneuvering) {
+      sphere.color.r = 0.9f; sphere.color.g = 0.1f;
+      sphere.color.b = 0.1f; sphere.color.a = 0.8f;
+    } else {
+      sphere.color.r = 0.1f; sphere.color.g = 0.9f;
+      sphere.color.b = 0.1f; sphere.color.a = 0.6f;
+    }
+    arr.markers.push_back(sphere);
+
+    // ── Text marker ────────────────────────────────────────────
+    visualization_msgs::msg::Marker text;
+    text.header    = header;
+    text.ns        = "maneuver_text";
+    text.id        = id++;
+    text.type      = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+    text.action    = visualization_msgs::msg::Marker::ADD;
+    text.pose.position.x = pos.x();
+    text.pose.position.y = pos.y();
+    text.pose.position.z = pos.z() + 0.20;
+    text.pose.orientation.w = 1.0;
+    text.scale.z   = 0.08;
+    text.color.r   = 1.0f; text.color.g = 1.0f;
+    text.color.b   = 1.0f; text.color.a = 1.0f;
+    text.lifetime  = rclcpp::Duration::from_seconds(0.15);
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "NIS=%.0f\nIN=%.3f",
+                  result.nis, result.innov_norm);
+    text.text = buf;
+    arr.markers.push_back(text);
+  }
+
+  if (!arr.markers.empty()) debug_maneuver_pub_->publish(arr);
 }
 
 std::array<float, 4> GimbalPipelineNode::hsvToRgb(float h, float s,

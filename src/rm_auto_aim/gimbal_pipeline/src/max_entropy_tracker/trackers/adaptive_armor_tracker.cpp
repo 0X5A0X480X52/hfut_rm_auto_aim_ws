@@ -15,7 +15,16 @@ AdaptiveArmorTracker::AdaptiveArmorTracker(const UnifiedConfig &config,
     : BaseTracker(dt),
       config_(config),
       ukf_(config, dt),
-      osc_detector_(50, 0.05, 5, 100, enable_oscillation) {}
+      osc_detector_(50, 0.05, 5, 100, enable_oscillation),
+      maneuver_detector_(config.maneuver) {}
+
+ManeuverResult AdaptiveArmorTracker::assess_maneuver() const {
+  const double innov_norm = ukf_.last_innov_xyz().size() >= 3
+                                ? ukf_.last_innov_xyz().norm()
+                                : 0.0;
+  return maneuver_detector_.detect(
+      ukf_.last_nis(), innov_norm, ukf_.last_update_type());
+}
 
 /* ================================================================ */
 /*  Initialize                                                       */

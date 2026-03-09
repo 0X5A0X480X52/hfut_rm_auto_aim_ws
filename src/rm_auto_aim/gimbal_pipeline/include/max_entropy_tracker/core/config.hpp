@@ -88,6 +88,14 @@ struct ConstraintParameters {
   double max_dz = 1.0;
 };
 
+struct ManeuverDetectionParameters {
+  bool   enable                      = true;
+  double nis_threshold_single        = 238.807;
+  double nis_threshold_dual          = 4132.110;
+  double innov_norm_threshold_single = 0.1279;
+  double innov_norm_threshold_dual   = 0.0613;
+};
+
 // ======================== Unified Config ========================
 
 struct UnifiedConfig {
@@ -100,6 +108,7 @@ struct UnifiedConfig {
   MaxEntropyParameters entropy;
   TrackerParameters tracker;
   ConstraintParameters constraints;
+  ManeuverDetectionParameters maneuver;
 
   static UnifiedConfig create_default() { return UnifiedConfig{}; }
 

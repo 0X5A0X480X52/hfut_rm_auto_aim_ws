@@ -12,6 +12,7 @@
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/filters/dual_radius_spin_ukf.hpp"
 #include "max_entropy_tracker/trackers/base_tracker.hpp"
+#include "max_entropy_tracker/utils/maneuver_detector.hpp"
 
 namespace fyt::auto_aim {
 
@@ -44,6 +45,9 @@ class AdaptiveArmorTracker : public BaseTracker {
   DualRadiusSpinUKF &ukf() { return ukf_; }
   const DualRadiusSpinUKF &ukf() const { return ukf_; }
 
+  /// Assess whether the tracked robot is currently maneuvering.
+  ManeuverResult assess_maneuver() const;
+
  private:
   bool update_single(const ObservationData &obs,
                      double override_pos_confidence = -1.0);
@@ -63,6 +67,8 @@ class AdaptiveArmorTracker : public BaseTracker {
   std::optional<double> reference_center_yaw_;
   HeightLabel height_label_ = HeightLabel::UNKNOWN;
   double height_confidence_ = 0.0;
+
+  ManeuverDetector maneuver_detector_;
 };
 
 }  // namespace fyt::auto_aim

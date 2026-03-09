@@ -117,6 +117,7 @@ class GimbalPipelineNode : public rclcpp::Node {
   void publishGimbalMarkers(
       const rm_interfaces::msg::TrackedRobot &target_robot,
       const rm_interfaces::msg::GimbalCmd &cmd);
+  void publishManeuverMarkers(const std_msgs::msg::Header &header);
   std::array<float, 4> hsvToRgb(float h, float s, float v);
 
   /* ================================================================ */
@@ -200,6 +201,8 @@ class GimbalPipelineNode : public rclcpp::Node {
       debug_tracker_marker_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
       debug_gimbal_marker_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
+      debug_maneuver_pub_;
 
   // Services
   rclcpp::Service<rm_interfaces::srv::SetMode>::SharedPtr set_mode_srv_;

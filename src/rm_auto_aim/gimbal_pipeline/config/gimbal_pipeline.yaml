@@ -239,3 +239,15 @@ gimbal_pipeline:
     logging.output_dir: "/tmp/prediction_logs"
     logging.robot_id_filter: ""      # 只记录指定 robot_id；为空则记录全部
     logging.flush_every_n: 50        # 每 N 行落盘一次，减少 I/O 阻塞
+
+    # ═══════════════════════════════════════════════════════════════
+    # Maneuver Detection — 机动检测（基于 UKF NIS + 新息范数）
+    # ═══════════════════════════════════════════════════════════════
+    # 分 update_type 的组合阈值规则（FPR≤10% 离线分析结果）：
+    #   单观测(update_type=1): nis > nis_threshold_single AND innov_norm > innov_norm_threshold_single
+    #   双观测(update_type=2): nis > nis_threshold_dual   AND innov_norm > innov_norm_threshold_dual
+    maneuver.enable: true
+    maneuver.nis_threshold_single: 238.807
+    maneuver.nis_threshold_dual: 4132.110
+    maneuver.innov_norm_threshold_single: 0.1279
+    maneuver.innov_norm_threshold_dual: 0.0613
