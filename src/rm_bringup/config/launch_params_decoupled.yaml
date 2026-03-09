@@ -7,7 +7,7 @@
 namespace: ''
 
 # image_source: (video | mindvision | hik)
-image_source: 'hik'
+image_source: 'mindvision'
 
 # true: 虚拟下位机 false: 实车
 virtual_serial: false
@@ -21,9 +21,15 @@ debug: true
 tracker_impl: 'cpp'
 
 # --------- 相机/URDF参数 ---------
+# # 舵轮
+# odom2camera:
+#   xyz: "\"0.141 0.00  0.040\""
+#   rpy: "\"0.0  0.02  -0.00\""
+
+# 英雄
 odom2camera:
-  xyz: "\"0.141 0.00  0.040\""
-  rpy: "\"0.0  0.02  -0.00\""
+  xyz: "\"0.174275 0.000 0.086463 \""
+  rpy: "\"0.0  0.1396  -0.00\""
 
 # --------- 节点启动延迟 (秒) ---------
 # 用于控制节点启动顺序，确保依赖关系正确
