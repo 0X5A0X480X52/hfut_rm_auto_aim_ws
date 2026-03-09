@@ -152,8 +152,8 @@ def generate_launch_description():
             image_node = ComposableNode(
                 package='mindvision_camera',
                 plugin='mindvision_camera::MVCameraNode',
-                name='camera_driver',
-                parameters=[get_bringup_params('camera_driver')],
+                name='mv_camera',
+                parameters=[get_bringup_params('mindvision_camera_driver')],
                 extra_arguments=[{'use_intra_process_comms': True}]
             )
         elif image_source == 'hik':
@@ -161,7 +161,7 @@ def generate_launch_description():
                 package='ros2_hik_camera',
                 plugin='ros2_hik_camera::HikCameraNode',
                 name='hik_camera',
-                parameters=[get_bringup_params('camera_driver')],
+                parameters=[get_bringup_params('hik_camera_driver')],
                 extra_arguments=[{'use_intra_process_comms': True}]
             )
         else:
