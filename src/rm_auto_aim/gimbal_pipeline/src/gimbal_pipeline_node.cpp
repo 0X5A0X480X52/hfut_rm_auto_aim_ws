@@ -1586,7 +1586,13 @@ void GimbalPipelineNode::publishGimbalMarkers(
 void GimbalPipelineNode::publishManeuverMarkers(
     const std_msgs::msg::Header &header) {
   visualization_msgs::msg::MarkerArray arr;
-  rclcpp::Time stamp(header.stamp);
+
+  // Tracker positions are expressed in target_frame_ (== visualization_frame_).
+  // Use visualization_frame_ explicitly to avoid the camera source frame mismatch.
+  std_msgs::msg::Header viz_header;
+  viz_header.stamp    = header.stamp;
+  viz_header.frame_id = visualization_frame_;
+
   int id = 0;
 
   for (const auto &[robot_id, entry] : tracker_manager_->trackers()) {
@@ -1595,16 +1601,19 @@ void GimbalPipelineNode::publishManeuverMarkers(
     const auto result = entry.tracker->assess_maneuver();
     const auto pos    = entry.tracker->get_center_position();
 
-    // ── Sphere marker ──────────────────────────────────────────
+    // Estimate robot top: center pos + half robot height (~0.25 m)
+    const double top_z = pos.z() + 0.25;
+
+    // ── Sphere marker (at robot top) ───────────────────────────
     visualization_msgs::msg::Marker sphere;
-    sphere.header       = header;
+    sphere.header       = viz_header;
     sphere.ns           = "maneuver";
     sphere.id           = id++;
     sphere.type         = visualization_msgs::msg::Marker::SPHERE;
     sphere.action       = visualization_msgs::msg::Marker::ADD;
     sphere.pose.position.x = pos.x();
     sphere.pose.position.y = pos.y();
-    sphere.pose.position.z = pos.z();
+    sphere.pose.position.z = top_z;
     sphere.pose.orientation.w = 1.0;
     sphere.scale.x = sphere.scale.y = sphere.scale.z = 0.12;
     sphere.lifetime = rclcpp::Duration::from_seconds(0.15);
@@ -1617,16 +1626,16 @@ void GimbalPipelineNode::publishManeuverMarkers(
     }
     arr.markers.push_back(sphere);
 
-    // ── Text marker ────────────────────────────────────────────
+    // ── Text marker (above sphere) ─────────────────────────────
     visualization_msgs::msg::Marker text;
-    text.header    = header;
+    text.header    = viz_header;
     text.ns        = "maneuver_text";
     text.id        = id++;
     text.type      = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
     text.action    = visualization_msgs::msg::Marker::ADD;
     text.pose.position.x = pos.x();
     text.pose.position.y = pos.y();
-    text.pose.position.z = pos.z() + 0.20;
+    text.pose.position.z = top_z + 0.15;
     text.pose.orientation.w = 1.0;
     text.scale.z   = 0.08;
     text.color.r   = 1.0f; text.color.g = 1.0f;
