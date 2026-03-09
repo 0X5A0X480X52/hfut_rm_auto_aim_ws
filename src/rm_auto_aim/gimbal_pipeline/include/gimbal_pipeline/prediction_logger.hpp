@@ -53,6 +53,34 @@ struct LogTrackerState {
   int     visible_armor_count;
   bool    is_visible;
   double  confidence;
+
+  // ── 机动检测指标 (Maneuver Detection Metrics) ──
+  // UKF 创新向量（位置分量）
+  double innov_x   = 0.0;
+  double innov_y   = 0.0;
+  double innov_z   = 0.0;
+  double innov_yaw = 0.0;   // 单观测时有效；双观测几何更新无 yaw 分量，填 0
+  // 归一化创新平方 (NIS = innov^T * Pzz^{-1} * innov)
+  // -1.0 = 本周期未执行 UKF update（纯预测帧或初始化前）
+  double nis        = -1.0;
+  int    update_type = 0;   // 0=无更新, 1=单观测, 2=双观测
+  // 状态协方差 P 对角线 —— 位置方差
+  double p_var_x  = 0.0;
+  double p_var_y  = 0.0;
+  double p_var_z  = 0.0;
+  // 状态协方差 P 对角线 —— 速度方差
+  double p_var_vx = 0.0;
+  double p_var_vy = 0.0;
+  double p_var_vz = 0.0;
+  // 状态协方差 P 对角线 —— 加速度方差（CV 模型时为 NaN）
+  double p_var_ax = 0.0;
+  double p_var_ay = 0.0;
+  double p_var_az = 0.0;
+  // 加速度状态估计（CA / Singer 模型时有效；CV 模型时为 NaN）
+  double accel_x         = 0.0;
+  double accel_y         = 0.0;
+  double accel_z         = 0.0;
+  double accel_magnitude = 0.0;
 };
 
 // -----------------------------------------------------------------------------

@@ -60,7 +60,13 @@ PredictionLogger::PredictionLogger(const std::string &output_dir,
                  "vel_x,vel_y,vel_z,"
                  "yaw,yaw_velocity,yaw_acceleration,"
                  "radius_1,radius_2,dza,"
-                 "num_armors,visible_armor_count,is_visible,confidence\n";
+                 "num_armors,visible_armor_count,is_visible,confidence,"
+                 "innov_x,innov_y,innov_z,innov_yaw,"
+                 "nis,update_type,"
+                 "p_var_x,p_var_y,p_var_z,"
+                 "p_var_vx,p_var_vy,p_var_vz,"
+                 "p_var_ax,p_var_ay,p_var_az,"
+                 "accel_x,accel_y,accel_z,accel_magnitude\n";
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +129,26 @@ void PredictionLogger::logTrackerState(int64_t timestamp_ns,
               << s.num_armors         << ','
               << s.visible_armor_count << ','
               << (s.is_visible ? 1 : 0) << ','
-              << s.confidence         << '\n';
+              << s.confidence         << ','
+              << s.innov_x            << ','
+              << s.innov_y            << ','
+              << s.innov_z            << ','
+              << s.innov_yaw          << ','
+              << s.nis                << ','
+              << s.update_type        << ','
+              << s.p_var_x            << ','
+              << s.p_var_y            << ','
+              << s.p_var_z            << ','
+              << s.p_var_vx           << ','
+              << s.p_var_vy           << ','
+              << s.p_var_vz           << ','
+              << s.p_var_ax           << ','
+              << s.p_var_ay           << ','
+              << s.p_var_az           << ','
+              << s.accel_x            << ','
+              << s.accel_y            << ','
+              << s.accel_z            << ','
+              << s.accel_magnitude    << '\n';
   ++state_write_count_;
 
   if (state_write_count_ % flush_every_n_ == 0) {

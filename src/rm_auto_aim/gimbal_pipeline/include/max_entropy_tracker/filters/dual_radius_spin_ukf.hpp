@@ -58,6 +58,16 @@ class DualRadiusSpinUKF : public BaseUKF {
   const CompositeProcessModel &process_model() const { return *motion_model_; }
   const DynamicStateIndex &state_idx() const { return state_idx_; }
 
+  /* ---------- Maneuver detection getters ---------- */
+  /// 3-D position innovation from the last update(); size-0 if no update yet.
+  const Eigen::VectorXd &last_innov_xyz() const { return last_innov_xyz_; }
+  /// yaw innovation (single-obs only; 0 for dual-obs or no-update).
+  double last_innov_yaw() const { return last_innov_yaw_; }
+  /// Normalized Innovation Squared (NIS); -1 = no update since last predict().
+  double last_nis() const { return last_nis_; }
+  /// Update type: 0=none, 1=single-observation, 2=dual-observation.
+  int last_update_type() const { return last_update_type_; }
+
  private:
   /* ---------- internal ---------- */
   std::shared_ptr<CompositeProcessModel> create_process_model(
@@ -97,6 +107,12 @@ class DualRadiusSpinUKF : public BaseUKF {
   int k_ = 0;
   std::optional<int> last_k_;
   int mode_switches_ = 0;
+
+  // Maneuver detection cache (reset in predict(), filled in update_single/dual)
+  Eigen::VectorXd last_innov_xyz_;   ///< 3-D position innovation [x, y, z]
+  double last_innov_yaw_   = 0.0;   ///< yaw innovation (single-obs only)
+  double last_nis_         = -1.0;  ///< NIS; -1 = no update this cycle
+  int    last_update_type_ = 0;     ///< 0=none, 1=single, 2=dual
 };
 
 }  // namespace fyt::auto_aim

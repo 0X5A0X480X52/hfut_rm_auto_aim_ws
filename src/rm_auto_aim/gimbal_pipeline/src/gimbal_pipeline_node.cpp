@@ -9,6 +9,7 @@
 #include "gimbal_pipeline/gimbal_pipeline_node.hpp"
 
 #include <cmath>
+#include <limits>
 #include <set>
 #include <sstream>
 
@@ -767,6 +768,57 @@ void GimbalPipelineNode::armorsCallback(
       st.visible_armor_count = robot.visible_armor_count;
       st.is_visible         = robot.is_visible;
       st.confidence         = robot.confidence;
+
+      // ── 机动检测指标：从对应 tracker 的 UKF 内部读取 ──
+      auto *tracker = tracker_manager_->get(robot.robot_id);
+      if (tracker && tracker->is_initialized()) {
+        const auto &ukf = tracker->ukf();
+        const auto &idx = ukf.state_idx();
+        const auto &xv  = ukf.x();
+        const auto &Pv  = ukf.P();
+
+        // 创新向量
+        const auto &iv = ukf.last_innov_xyz();
+        if (iv.size() >= 3) {
+          st.innov_x = iv(0);
+          st.innov_y = iv(1);
+          st.innov_z = iv(2);
+        }
+        st.innov_yaw   = ukf.last_innov_yaw();
+        st.nis         = ukf.last_nis();
+        st.update_type = ukf.last_update_type();
+
+        // P 对角线 —— 位置与速度
+        st.p_var_x  = Pv(idx.X(),  idx.X());
+        st.p_var_y  = Pv(idx.Y(),  idx.Y());
+        st.p_var_z  = Pv(idx.Z(),  idx.Z());
+        st.p_var_vx = Pv(idx.VX(), idx.VX());
+        st.p_var_vy = Pv(idx.VY(), idx.VY());
+        st.p_var_vz = Pv(idx.VZ(), idx.VZ());
+
+        // 加速度状态（仅 CA / Singer 过程模型存在 AX/AY/AZ）
+        constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+        if (idx.has("AX")) {
+          st.p_var_ax = Pv(idx.AX(), idx.AX());
+          st.p_var_ay = Pv(idx.AY(), idx.AY());
+          st.p_var_az = Pv(idx.AZ(), idx.AZ());
+          st.accel_x  = xv(idx.AX());
+          st.accel_y  = xv(idx.AY());
+          st.accel_z  = xv(idx.AZ());
+          st.accel_magnitude = std::sqrt(xv(idx.AX()) * xv(idx.AX()) +
+                                         xv(idx.AY()) * xv(idx.AY()) +
+                                         xv(idx.AZ()) * xv(idx.AZ()));
+        } else {
+          st.p_var_ax = kNaN;
+          st.p_var_ay = kNaN;
+          st.p_var_az = kNaN;
+          st.accel_x         = kNaN;
+          st.accel_y         = kNaN;
+          st.accel_z         = kNaN;
+          st.accel_magnitude = kNaN;
+        }
+      }
+
       prediction_logger_->logTrackerState(ts_ns, robot.robot_id, st);
     }
   }

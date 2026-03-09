@@ -25,6 +25,7 @@ DualRadiusSpinUKF::DualRadiusSpinUKF(
   P_ = Eigen::MatrixXd::Identity(state_dim(), state_dim()) * 100.0;
   Q_ = motion_model_->build_Q(dt_);
   init_sigma_generator();
+  last_innov_xyz_ = Eigen::VectorXd::Zero(3);
 }
 
 std::shared_ptr<CompositeProcessModel>
@@ -142,6 +143,10 @@ Eigen::VectorXd DualRadiusSpinUKF::observation_model_geometry(
 
 void DualRadiusSpinUKF::predict(std::optional<double> dt_opt) {
   if (!initialized_) return;
+
+  // Reset maneuver cache; will be filled by the subsequent update() call
+  last_update_type_ = 0;
+  last_nis_         = -1.0;
 
   double dt = dt_opt.value_or(dt_);
   Q_ = motion_model_->build_Q(dt);
@@ -302,6 +307,13 @@ bool DualRadiusSpinUKF::update_single(
 
   // Apply update
   apply_kalman_update(K, innov, Pzz);
+
+  // Cache maneuver detection metrics (single-obs, 4D: [x, y, z, yaw])
+  last_innov_xyz_   = innov.head<3>();
+  last_innov_yaw_   = innov(3);
+  last_nis_         = innov.dot(Pzz.inverse() * innov);
+  last_update_type_ = 1;
+
   handle_mode_switch();
   apply_constraints();
   return true;
@@ -443,6 +455,13 @@ bool DualRadiusSpinUKF::update_dual(
   if (height_confidence < 0.3) K.row(idx.DZA()).setZero();
 
   apply_kalman_update(K, innov, Pzz);
+
+  // Cache maneuver detection metrics (dual-obs, 6D geometry: [xc, yc, zc, r1, r2, dza])
+  last_innov_xyz_   = innov.head<3>();
+  last_innov_yaw_   = 0.0;
+  last_nis_         = innov.dot(Pzz.inverse() * innov);
+  last_update_type_ = 2;
+
   apply_constraints();
   return true;
 }
