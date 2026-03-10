@@ -411,6 +411,13 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("maneuver.innov_norm_threshold_single", 0.1279);
   declare_parameter("maneuver.innov_norm_threshold_dual", 0.0613);
 
+  // Panel mismatch detection
+  declare_parameter("panel_mismatch.enable", true);
+  declare_parameter("panel_mismatch.window_size", 8);
+  declare_parameter("panel_mismatch.threshold_t1", 0.0009);
+  declare_parameter("panel_mismatch.confirm_count", 3);
+  declare_parameter("panel_mismatch.reinit_count", 5);
+
   // Output smoother
   declare_parameter("smoother.enable", true);
   declare_parameter("smoother.enable_position_smooth", true);
@@ -628,6 +635,17 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("maneuver.innov_norm_threshold_single").as_double();
   c.maneuver.innov_norm_threshold_dual =
       get_parameter("maneuver.innov_norm_threshold_dual").as_double();
+
+  c.panel_mismatch.enable =
+      get_parameter("panel_mismatch.enable").as_bool();
+  c.panel_mismatch.window_size =
+      get_parameter("panel_mismatch.window_size").as_int();
+  c.panel_mismatch.threshold_t1 =
+      get_parameter("panel_mismatch.threshold_t1").as_double();
+  c.panel_mismatch.confirm_count =
+      get_parameter("panel_mismatch.confirm_count").as_int();
+  c.panel_mismatch.reinit_count =
+      get_parameter("panel_mismatch.reinit_count").as_int();
 
   // Output smoother
   smoother_config_.enable = get_parameter("smoother.enable").as_bool();

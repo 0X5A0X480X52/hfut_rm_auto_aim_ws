@@ -16,6 +16,11 @@ AdaptiveArmorTracker::AdaptiveArmorTracker(const UnifiedConfig &config,
       config_(config),
       ukf_(config, dt),
       osc_detector_(50, 0.05, 5, 100, enable_oscillation),
+      mismatch_detector_(config.panel_mismatch.window_size,
+                         config.panel_mismatch.threshold_t1,
+                         config.panel_mismatch.confirm_count,
+                         config.panel_mismatch.reinit_count,
+                         config.panel_mismatch.enable),
       maneuver_detector_(config.maneuver) {}
 
 ManeuverResult AdaptiveArmorTracker::assess_maneuver() const {
@@ -41,7 +46,16 @@ void AdaptiveArmorTracker::initialize(const std::vector<ObservationData> &obs,
   current_panel_id_ = panel_id;
   reference_center_yaw_ = center_yaw;
 
+  // Cache defaults for potential re-initialization
+  default_r1_  = r1;
+  default_r2_  = r2;
+  default_dza_ = dza;
+
   ukf_.initialize(obs, r1, r2, dza, panel_id);
+
+  // Reset detectors on every (re-)initialization
+  mismatch_detector_.reset();
+  height_identifier_.reset();
 
   if (o.timestamp.has_value()) {
     current_time_ = o.timestamp.value();
@@ -167,8 +181,36 @@ bool AdaptiveArmorTracker::update_single(const ObservationData &obs,
 
   double panel_angle = panel_id * (M_PI / 2.0);
 
-  return ukf_.update({obs}, {r_type}, {armor_layer}, h_conf, pos_conf,
-                     panel_angle);
+  bool ok = ukf_.update({obs}, {r_type}, {armor_layer}, h_conf, pos_conf,
+                        panel_angle);
+  if (!ok) return false;
+
+  // ── Post-update mismatch detection ──
+  // Run only when the filter has had a chance to estimate dza (dza_converged).
+  // The z-innovation (innov(2)) is available immediately after update().
+  {
+    double z_innov = ukf_.last_z_innovation();
+    auto result = mismatch_detector_.update(
+        panel_id, obs.z,
+        ukf_.x()(idx.Z()), ukf_.x()(idx.DZA()),
+        armor_layer, ukf_.is_dza_converged(),
+        z_innov);
+
+    if (result.action == PanelMismatchDetector::Action::REINIT) {
+      std::cerr << "[AdaptiveArmorTracker] mismatch REINIT triggered "
+                << "panel_id=" << panel_id
+                << " -> " << result.new_panel_id << "\n";
+      reinitialize_tracker(obs);
+      // Return true: update itself succeeded; caller sees a valid (reinit) state
+    } else if (result.action == PanelMismatchDetector::Action::PATCH) {
+      std::cerr << "[AdaptiveArmorTracker] mismatch PATCH triggered "
+                << "panel_id=" << panel_id
+                << " -> " << result.new_panel_id << "\n";
+      correct_panel_id(result.new_panel_id, obs.yaw);
+    }
+  }
+
+  return true;
 }
 
 /* ================================================================ */
@@ -248,6 +290,42 @@ void AdaptiveArmorTracker::reset_parameters() {
   auto idx = ukf_.state_idx();
   ukf_.x()(idx.R1()) = r1;
   ukf_.x()(idx.R2()) = r2;
+}
+
+/* ================================================================ */
+/*  Panel mismatch correction                                        */
+/* ================================================================ */
+
+void AdaptiveArmorTracker::correct_panel_id(int new_panel_id,
+                                             double armor_yaw) {
+  // 1. Recompute center_yaw with the corrected panel offset
+  double new_center_yaw =
+      normalize_angle(armor_yaw - new_panel_id * (M_PI / 2.0));
+
+  // 2. Update tracker-level bookkeeping
+  current_panel_id_     = new_panel_id;
+  reference_center_yaw_ = new_center_yaw;
+
+  // 3. Patch the UKF state (swap R1/R2, update delta/k, inflate covariances)
+  ukf_.apply_panel_correction(new_center_yaw);
+
+  // 4. Seed the HeightIdentifier with the correct layer for the new panel
+  //    even panels → lower;  odd panels → upper
+  HeightLabel correct_label = (new_panel_id % 2 == 0)
+                                   ? HeightLabel::LOWER
+                                   : HeightLabel::UPPER;
+  height_identifier_.reset_with_hint(correct_label);
+
+  // 5. Reset the mismatch detector's sliding window to avoid re-triggering on
+  //    stale data accumulated under the wrong panel assumption
+  mismatch_detector_.reset();
+}
+
+void AdaptiveArmorTracker::reinitialize_tracker(const ObservationData &obs) {
+  // Full re-initialization loses velocity/acceleration estimates but gives a
+  // clean state without any panel-binding artefacts.
+  // initialize() resets mismatch_detector_ and height_identifier_ internally.
+  initialize({obs}, default_r1_, default_r2_, default_dza_);
 }
 
 /* ================================================================ */

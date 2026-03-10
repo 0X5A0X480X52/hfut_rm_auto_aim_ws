@@ -535,6 +535,55 @@ double DualRadiusSpinUKF::get_dza() const {
   return x_(state_idx_.DZA());
 }
 
+/* ================================================================ */
+/*  Panel mismatch correction                                        */
+/* ================================================================ */
+
+void DualRadiusSpinUKF::apply_panel_correction(double new_center_yaw) {
+  if (!initialized_) return;
+  auto idx = state_idx_;
+
+  // 1. Swap R1 ↔ R2 in state vector (parity flipped → radii exchange)
+  std::swap(x_(idx.R1()), x_(idx.R2()));
+
+  // 2. Swap the corresponding rows AND columns in P
+  //    This preserves the cross-correlations correctly.
+  int r1 = idx.R1(), r2 = idx.R2();
+  P_.row(r1).swap(P_.row(r2));
+  P_.col(r1).swap(P_.col(r2));
+
+  // 3. Recompute delta and k from the new center_yaw
+  auto [new_k, new_delta] = decompose_yaw(new_center_yaw);
+  k_      = new_k;
+  last_k_ = k_;
+  x_(idx.DELTA()) = new_delta;
+
+  // 4. Inflate covariances to let UKF re-converge quickly:
+  //      DELTA  ×10
+  //      R1,R2  ×5
+  //      DZA    ×10
+  constexpr double kDelta = 10.0;
+  constexpr double kR     = 5.0;
+  constexpr double kDza   = 10.0;
+
+  int d_idx   = idx.DELTA();
+  int dza_idx = idx.DZA();
+
+  P_(d_idx, d_idx)     *= kDelta;
+  P_(r1, r1)           *= kR;
+  P_(r2, r2)           *= kR;
+  P_(dza_idx, dza_idx) *= kDza;
+
+  // Symmetry + positive-definiteness guard
+  P_ = 0.5 * (P_ + P_.transpose());
+  ensure_covariance_valid();
+
+  fprintf(stderr,
+      "[DualRadiusSpinUKF] apply_panel_correction: "
+      "new_center_yaw=%.4f k=%d delta=%.4f r1=%.4f r2=%.4f dza=%.4f\n",
+      new_center_yaw, k_, new_delta, x_(r1), x_(r2), x_(dza_idx));
+}
+
 bool DualRadiusSpinUKF::check_innovation_gate(
     const Eigen::VectorXd &innov, const Eigen::MatrixXd &z_pred_points,
     const Eigen::VectorXd &z_pred, const Eigen::MatrixXd &R,

@@ -93,6 +93,19 @@ class HeightIdentifier {
     panel_last_.reset();
   }
 
+  /**
+   * Reset history and seed it with a known-correct label.
+   * Called after panel_id correction so the next frames benefit from
+   * history-consistency (Mechanism 3) with the correct label.
+   *
+   * @param hint  Expected layer label for the corrected panel_id.
+   */
+  void reset_with_hint(HeightLabel hint) {
+    z_last_.reset();
+    label_last_ = hint;
+    panel_last_.reset();
+  }
+
  private:
   void update_history(double z, int panel_id, HeightLabel label) {
     z_last_ = z;

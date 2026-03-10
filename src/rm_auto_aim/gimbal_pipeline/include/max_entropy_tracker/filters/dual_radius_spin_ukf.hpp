@@ -63,10 +63,27 @@ class DualRadiusSpinUKF : public BaseUKF {
   const Eigen::VectorXd &last_innov_xyz() const { return last_innov_xyz_; }
   /// yaw innovation (single-obs only; 0 for dual-obs or no-update).
   double last_innov_yaw() const { return last_innov_yaw_; }
+  /// z-dimension innovation from the last single-obs update (innov(2)).
+  double last_z_innovation() const { return last_innov_xyz_.size() >= 3 ? last_innov_xyz_(2) : 0.0; }
   /// Normalized Innovation Squared (NIS); -1 = no update since last predict().
   double last_nis() const { return last_nis_; }
   /// Update type: 0=none, 1=single-observation, 2=dual-observation.
   int last_update_type() const { return last_update_type_; }
+
+  /* ---------- Panel mismatch correction ---------- */
+  /**
+   * Apply an in-place panel correction when a mismatch is detected.
+   *
+   * Actions taken:
+   *   1. Swap x_(R1) ↔ x_(R2) and the corresponding rows/cols of P
+   *      (because even panels use r1, odd panels use r2, and parity flipped).
+   *   2. Recompute k_ and x_(DELTA) from the new center_yaw.
+   *   3. Inflate the covariances of DELTA, R1, R2, DZA so the filter
+   *      can quickly re-converge after the correction.
+   *
+   * @param new_center_yaw  Recomputed center_yaw = armor_yaw - new_panel_id * π/2
+   */
+  void apply_panel_correction(double new_center_yaw);
 
  private:
   /* ---------- internal ---------- */

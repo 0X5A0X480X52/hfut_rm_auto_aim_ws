@@ -9,6 +9,7 @@
 #include "max_entropy_tracker/association/height_identifier.hpp"
 #include "max_entropy_tracker/association/oscillation_detector.hpp"
 #include "max_entropy_tracker/association/panel_associator.hpp"
+#include "max_entropy_tracker/association/panel_mismatch_detector.hpp"
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/filters/dual_radius_spin_ukf.hpp"
 #include "max_entropy_tracker/trackers/base_tracker.hpp"
@@ -57,16 +58,40 @@ class AdaptiveArmorTracker : public BaseTracker {
                                      const std::string &r_type) const;
   void reset_parameters();
 
+  /**
+   * Apply in-place panel_id correction (PATCH level).
+   * Swaps R1/R2 in UKF state, recomputes center_yaw, inflates covariances,
+   * resets HeightIdentifier and PanelAssociator history.
+   *
+   * @param new_panel_id   Corrected panel id (= old_panel_id ^ 1)
+   * @param armor_yaw      Observed armor yaw used to recompute center_yaw
+   */
+  void correct_panel_id(int new_panel_id, double armor_yaw);
+
+  /**
+   * Full re-initialization using the most recent observation.
+   * Loses velocity/acceleration estimates but completely resets panel binding.
+   *
+   * @param obs  The latest observation to seed the new tracker state
+   */
+  void reinitialize_tracker(const ObservationData &obs);
+
   UnifiedConfig config_;
   DualRadiusSpinUKF ukf_;
   PanelAssociator panel_associator_;
   HeightIdentifier height_identifier_;
   OscillationDetector osc_detector_;
+  PanelMismatchDetector mismatch_detector_;
 
   int current_panel_id_ = 0;
   std::optional<double> reference_center_yaw_;
   HeightLabel height_label_ = HeightLabel::UNKNOWN;
   double height_confidence_ = 0.0;
+
+  // Cached r1/r2 defaults for re-initialization
+  double default_r1_ = 0.15;
+  double default_r2_ = 0.20;
+  double default_dza_ = 0.0;
 
   ManeuverDetector maneuver_detector_;
 };

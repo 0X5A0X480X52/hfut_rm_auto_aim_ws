@@ -88,6 +88,14 @@ struct ConstraintParameters {
   double max_dz = 1.0;
 };
 
+struct PanelMismatchParameters {
+  bool   enable        = true;
+  int    window_size   = 8;       ///< rolling buffer length W (frames)
+  double threshold_t1  = 0.0009;  ///< dz² mean threshold below which z is OK (3cm²)
+  int    confirm_count = 3;       ///< consecutive suspect frames to trigger PATCH
+  int    reinit_count  = 5;       ///< consecutive suspect frames to trigger REINIT
+};
+
 struct ManeuverDetectionParameters {
   bool   enable                      = true;
   double nis_threshold_single        = 238.807;
@@ -116,6 +124,7 @@ struct UnifiedConfig {
   TrackerParameters tracker;
   ConstraintParameters constraints;
   ManeuverDetectionParameters maneuver;
+  PanelMismatchParameters panel_mismatch;
 
   static UnifiedConfig create_default() { return UnifiedConfig{}; }
 

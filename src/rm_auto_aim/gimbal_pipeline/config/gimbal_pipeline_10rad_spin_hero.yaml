@@ -70,6 +70,13 @@ gimbal_pipeline:
     constraints.min_dz: -1.0
     constraints.max_dz: 1.0
 
+    # Panel mismatch detection
+    panel_mismatch.enable: true
+    panel_mismatch.window_size: 8
+    panel_mismatch.threshold_t1: 0.0009
+    panel_mismatch.confirm_count: 3
+    panel_mismatch.reinit_count: 5
+
     # Output smoother (1-Euro filter + Robbins-Monro)
     smoother.enable: false
     smoother.enable_position_smooth: true
