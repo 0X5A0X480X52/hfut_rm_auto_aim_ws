@@ -28,6 +28,7 @@ from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 
 @dataclass
@@ -56,6 +57,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--event_dilate", type=int, default=2, help="Window size to dilate pseudo events (+/- frames)")
     p.add_argument("--label_column", default="", help="Optional ground-truth label column in CSV (0/1)")
     p.add_argument("--output_dir", default="", help="Directory for output summary files")
+    p.add_argument("--filter_mad", action="store_true", help="Apply MAD-based rolling outlier filter to nis and innov_norm before analysis")
+    p.add_argument("--mad_window", type=int, default=10, help="Window size for MAD filter")
+    p.add_argument("--mad_k", type=float, default=3.0, help="MAD multiplier for outlier detection")
     return p.parse_args()
 
 
@@ -73,6 +77,28 @@ def safe_dt_from_ns(ts_ns: np.ndarray) -> np.ndarray:
     fallback = float(np.median(positive)) if positive.size else 0.01
     dt[dt <= 1e-6] = fallback
     return dt
+
+
+def filter_outliers_mad(data: np.ndarray, window: int = 10, k: float = 3.0) -> np.ndarray:
+    """Simple rolling MAD filter that replaces outliers with the moving median.
+
+    ``window`` specifies the number of past samples (including current) to
+    consider.  ``k`` is the multiplier applied to the median absolute
+    deviation.  When MAD is zero the raw value is kept unchanged.
+    """
+    filtered = []
+    for i in range(len(data)):
+        start = max(0, i - window + 1)
+        window_data = data[start : i + 1]
+        med = np.median(window_data)
+        mad = np.median(np.abs(window_data - med))
+        if mad == 0:
+            filtered.append(data[i])
+        elif abs(data[i] - med) > k * mad:
+            filtered.append(med)
+        else:
+            filtered.append(data[i])
+    return np.array(filtered)
 
 
 def build_pseudo_events(df: pd.DataFrame, event_q: float, event_dilate: int) -> Tuple[np.ndarray, Dict[str, float]]:
@@ -162,9 +188,16 @@ def best_under_fpr(rows: list[EvalRow], fpr_target: float) -> EvalRow | None:
 
 
 def analyze_indicators(df: pd.DataFrame, y: np.ndarray, args: argparse.Namespace) -> Dict[str, dict]:
+    # if filtering produced an explicit innov_norm column then use it;
+    # otherwise compute from components on the fly (as before).
+    if "innov_norm" in df.columns:
+        innov_arr = df["innov_norm"].to_numpy(dtype=float)
+    else:
+        innov_arr = np.linalg.norm(df[["innov_x", "innov_y", "innov_z"]].to_numpy(dtype=float), axis=1)
+
     indicators = {
         "nis": df["nis"].to_numpy(dtype=float),
-        "innov_norm": np.linalg.norm(df[["innov_x", "innov_y", "innov_z"]].to_numpy(dtype=float), axis=1),
+        "innov_norm": innov_arr,
         "innov_yaw_abs": np.abs(df["innov_yaw"].to_numpy(dtype=float)),
         "accel_magnitude": df["accel_magnitude"].to_numpy(dtype=float),
         "yaw_vel_abs": np.abs(df["yaw_velocity"].to_numpy(dtype=float)),
@@ -291,6 +324,25 @@ def main() -> int:
     state_csv = args.state_csv or find_latest_state_csv(args.log_dir)
     df = pd.read_csv(state_csv).sort_values("timestamp_ns").reset_index(drop=True)
 
+    # optionally filter nis/innov_norm for outliers prior to anything else
+    if args.filter_mad:
+        # filter nis separately for each update_type, preserving unclassified rows
+        if "nis" in df.columns and "update_type" in df.columns:
+            nis_arr = df["nis"].to_numpy(dtype=float)
+            ut_arr = df["update_type"].to_numpy(dtype=int)
+            filtered_nis = nis_arr.copy()
+            for u in np.unique(ut_arr):
+                mask = ut_arr == u
+                if mask.any():
+                    filtered_nis[mask] = filter_outliers_mad(nis_arr[mask], window=args.mad_window, k=args.mad_k)
+            df["nis"] = filtered_nis
+        elif "nis" in df.columns:
+            # fallback if no update_type column
+            df["nis"] = filter_outliers_mad(df["nis"].to_numpy(dtype=float), window=args.mad_window, k=args.mad_k)
+        # compute innov_norm and filter it, store back to column (overwrite if exists)
+        innov = np.linalg.norm(df[["innov_x", "innov_y", "innov_z"]].to_numpy(dtype=float), axis=1)
+        df["innov_norm"] = filter_outliers_mad(innov, window=args.mad_window, k=args.mad_k)
+
     if args.label_column:
         if args.label_column not in df.columns:
             raise KeyError(f"label_column '{args.label_column}' not found in CSV")
@@ -369,7 +421,64 @@ def main() -> int:
         )
 
     print(f"\nSaved report: {out_json}")
+    # generate time-series visualizations for NIS and innov_norm
+    try:
+        plot_time_series(df, out_dir)
+    except Exception as e:
+        print(f"Warning: failed to produce plots: {e}")
     return 0
+
+
+def plot_time_series(df: pd.DataFrame, out_dir: str) -> None:
+    """Create vertical plots of nis (by update_type) and innov_norm versus time.
+
+    The first two subplots show nis for update_type 1 and 2 separately.  Percentile
+    lines (P25, P50, P75, P90, P95) are overlaid with dashed lines and annotated in the
+    legend.  The third subplot shows the innovation norm with its own percentile lines.
+    All plots share a common time axis in seconds (relative to the start of the log).
+    """
+    # convert timestamp to seconds relative to start
+    t_ns = df["timestamp_ns"].to_numpy(dtype=float)
+    if t_ns.size == 0:
+        return
+    t = (t_ns - t_ns[0]) * 1e-9
+
+    nis = df.get("nis").to_numpy(dtype=float) if "nis" in df.columns else np.zeros_like(t)
+    innov_norm = np.linalg.norm(df[["innov_x", "innov_y", "innov_z"]].to_numpy(dtype=float), axis=1)
+    ut = df.get("update_type").to_numpy(dtype=int) if "update_type" in df.columns else np.zeros_like(t, dtype=int)
+
+    def quantile_lines(arr: np.ndarray):
+        qs = [0.25, 0.50, 0.75, 0.90, 0.95]
+        return qs, np.quantile(arr, qs) if arr.size else (qs, np.zeros(len(qs)))
+
+    fig, axs = plt.subplots(3, 1, sharex=True, figsize=(10, 8))
+
+    for idx, u in enumerate([1, 2]):
+        mask = ut == u
+        ax = axs[idx]
+        ax.plot(t[mask], nis[mask], label=f"nis update_type {u}", color="C0", linewidth=0.5)
+        qs, vals = quantile_lines(nis[mask])
+        for q, v in zip(qs, vals):
+            ax.axhline(v, linestyle="--", label=f"P{int(q*100)}={v:.2f}")
+        ax.set_ylabel("nis")
+        ax.legend(fontsize="small", loc="upper right")
+        ax.grid(True)
+
+    ax = axs[2]
+    ax.plot(t, innov_norm, label="innov_norm", color="C1", linewidth=0.5)
+    qs, vals = quantile_lines(innov_norm)
+    for q, v in zip(qs, vals):
+        ax.axhline(v, linestyle="--", label=f"P{int(q*100)}={v:.2f}")
+    ax.set_ylabel("innov_norm")
+    ax.set_xlabel("time (s)")
+    ax.legend(fontsize="small", loc="upper right")
+    ax.grid(True)
+
+    fig.tight_layout()
+    fname = os.path.join(out_dir, "time_series_metrics.png")
+    fig.savefig(fname)
+    print(f"Saved time-series plot: {fname}")
+    plt.close(fig)
 
 
 if __name__ == "__main__":

@@ -94,6 +94,13 @@ struct ManeuverDetectionParameters {
   double nis_threshold_dual          = 4132.110;
   double innov_norm_threshold_single = 0.1279;
   double innov_norm_threshold_dual   = 0.0613;
+
+  // Optional MAD-based outlier filter applied before threshold comparison.
+  // When enabled, nis and innov_norm are each filtered through a rolling
+  // window of mad_window samples per update_type before the decision rule.
+  bool   mad_filter_enable = false;
+  int    mad_window        = 10;    ///< rolling window size (samples)
+  double mad_k             = 3.0;   ///< outlier threshold = mad_k * MAD
 };
 
 // ======================== Unified Config ========================

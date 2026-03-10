@@ -265,3 +265,9 @@ gimbal_pipeline:
     maneuver.innov_norm_threshold_single: 0.15
     maneuver.innov_norm_threshold_dual: 0.10
 
+    # Optional MAD-based outlier filter applied before threshold comparison.
+    # When enabled, nis and innov_norm are each filtered through a rolling
+    # window of mad_window samples per update_type before the decision rule.
+    maneuver.mad_filter_enable: false
+    maneuver.mad_window: 10
+    maneuver.mad_k: 3.0
