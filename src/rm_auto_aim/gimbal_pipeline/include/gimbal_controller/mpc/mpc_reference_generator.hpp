@@ -42,6 +42,16 @@ namespace mpc
  *   - ArmorSelector: 选板 (SelectionMethod 可配置)
  *   - LocalTrajectoryCompensator: 弹道解算
  */
+/**
+ * @brief 延时补偿配置
+ */
+struct DelayCompConfig
+{
+  double base_delay_s{0.0};     // processing_delay + controller_delay + prediction_delay
+  double ctrl_delay_s{0.0};     // 控制延迟 (秒), 用于延时感知选板和开火判断
+  int flight_time_iters{2};     // 飞行时间迭代次数
+};
+
 class MpcReferenceGenerator
 {
 public:
@@ -78,6 +88,30 @@ public:
     double current_pitch,
     int N,
     double dt) const;
+
+  /**
+   * @brief 生成带延时补偿的 N 步参考轨迹
+   *
+   * 在 generate() 基础上增加:
+   *   1. base_delay 偏移: 参考轨迹起点前移 base_delay 秒
+   *   2. 子弹飞行时间迭代补偿
+   *   3. 延时感知选板: 以延迟后的云台姿态作为选板参考
+   *
+   * @param target_robot 当前被跟踪目标状态
+   * @param current_yaw 当前云台 yaw (弧度)
+   * @param current_pitch 当前云台 pitch (弧度)
+   * @param N 预测步数
+   * @param dt 时间步长 (秒)
+   * @param delay_config 延时补偿配置
+   * @return X_ref (4N × 1) flatten 的参考状态序列
+   */
+  Eigen::VectorXd generateWithDelay(
+    const rm_interfaces::msg::TrackedRobot & target_robot,
+    double current_yaw,
+    double current_pitch,
+    int N,
+    double dt,
+    const DelayCompConfig & delay_config) const;
 
 private:
   /**

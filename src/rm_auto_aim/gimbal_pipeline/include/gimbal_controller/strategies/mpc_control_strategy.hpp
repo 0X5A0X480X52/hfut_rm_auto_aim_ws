@@ -62,6 +62,17 @@ public:
     double r_yaw, double r_pitch, double s_yaw, double s_pitch);
 
   /**
+   * @brief 设置延时补偿参数
+   * @param enable 是否启用延时补偿版本的参考轨迹生成
+   * @param prediction_delay_s 额外预测延迟 (秒)
+   * @param flight_time_iters 飞行时间迭代次数
+   * @param max_processing_delay_s 最大允许的 processing_delay 上限 (秒)，超出则被截断
+   */
+  void setDelayCompensation(
+    bool enable, double prediction_delay_s, int flight_time_iters,
+    double max_processing_delay_s);
+
+  /**
    * @brief 在 setComponents() 之后调用, 将组件注入到 MpcReferenceGenerator
    */
   void initReferenceGenerator();
@@ -103,6 +114,12 @@ private:
   double prev_yaw_{0.0};
   double prev_pitch_{0.0};
   bool has_prev_state_{false};
+
+  // 延时补偿参数
+  bool enable_delay_compensation_{false};
+  double prediction_delay_s_{0.0};
+  int flight_time_iters_{2};
+  double max_processing_delay_s_{0.5};  // processing_delay 上限 (秒)
 
   // 上一步求解结果 (warmstart)
   Eigen::VectorXd U_prev_;

@@ -230,6 +230,14 @@ gimbal_pipeline:
     controller.mpc.s_yaw: 0.001
     controller.mpc.s_pitch: 0.001
 
+    # MPC 延时补偿: 启用后参考轨迹生成考虑 processing_delay + controller_delay + prediction_delay
+    # 并对每步迭代补偿子弹飞行时间、选板时考虑延迟后的云台姿态
+    # enable_delay_compensation: false 时行为与原版完全一致
+    controller.mpc.enable_delay_compensation: true
+    controller.mpc.prediction_delay_s: 0.0      # 额外预测延迟 (秒), 叠加在 processing_delay 之上
+    controller.mpc.flight_time_iters: 2          # 飞行时间迭代补偿次数
+    controller.mpc.max_processing_delay_s: 0.5    # 最大处理延迟 clamp 上限 (秒)
+
     # ═══════════════════════════════════════════════════════════════
     # Prediction Logger — 预测准确率记录（可选）
     # ═══════════════════════════════════════════════════════════════

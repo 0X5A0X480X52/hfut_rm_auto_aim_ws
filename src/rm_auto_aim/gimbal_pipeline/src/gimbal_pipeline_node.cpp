@@ -507,6 +507,12 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.mpc.s_yaw", 5.0);
   declare_parameter("controller.mpc.s_pitch", 5.0);
 
+  // MPC delay compensation
+  declare_parameter("controller.mpc.enable_delay_compensation", false);
+  declare_parameter("controller.mpc.prediction_delay_s", 0.0);
+  declare_parameter("controller.mpc.flight_time_iters", 2);
+  declare_parameter("controller.mpc.max_processing_delay_s", 0.5);
+
   // ─── GimbalCmd 输出端保护滤波器 ──────────────────────────────
   // 0. Clamping — 绝对限幅
   declare_parameter("controller.output_filter.enable_clamping",         true);
@@ -1261,6 +1267,11 @@ void GimbalPipelineNode::initGimbalStrategies() {
     get_parameter("controller.mpc.r_pitch").as_double(),
     get_parameter("controller.mpc.s_yaw").as_double(),
     get_parameter("controller.mpc.s_pitch").as_double());
+  mpc_s->setDelayCompensation(
+    get_parameter("controller.mpc.enable_delay_compensation").as_bool(),
+    get_parameter("controller.mpc.prediction_delay_s").as_double(),
+    get_parameter("controller.mpc.flight_time_iters").as_int(),
+    get_parameter("controller.mpc.max_processing_delay_s").as_double());
   gimbal_strategies_["mpc"] = mpc_s;
 
   auto sm_s = std::make_shared<gimbal_controller::StateMachineStrategy>();

@@ -15,6 +15,7 @@
 #include "gimbal_controller/strategies/mpc_control_strategy.hpp"
 
 #include <angles/angles.h>
+#include <algorithm>
 #include <iostream>
 
 #include "gimbal_controller/fire_advisor.hpp"
@@ -52,6 +53,16 @@ void MpcControlStrategy::setMpcParameters(
 void MpcControlStrategy::initReferenceGenerator()
 {
   ref_generator_.setComponents(position_calculator_, armor_selector_, local_compensator_);
+}
+
+void MpcControlStrategy::setDelayCompensation(
+  bool enable, double prediction_delay_s, int flight_time_iters,
+  double max_processing_delay_s)
+{
+  enable_delay_compensation_ = enable;
+  prediction_delay_s_ = prediction_delay_s;
+  flight_time_iters_ = flight_time_iters;
+  max_processing_delay_s_ = max_processing_delay_s;
 }
 
 void MpcControlStrategy::rebuildMatrices()
@@ -112,8 +123,24 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   }
 
   // 4) 生成参考轨迹
-  Eigen::VectorXd X_ref = ref_generator_.generate(
-    context.target_robot, context.current_yaw, context.current_pitch, N_, dt_);
+  Eigen::VectorXd X_ref;
+  if (enable_delay_compensation_) {
+    // 计算处理延迟: 当前时间与 tracker 状态时间戳的差
+    double processing_delay = (context.current_time - context.target_stamp).seconds();
+    processing_delay = std::clamp(processing_delay, 0.0, max_processing_delay_s_);
+
+    mpc::DelayCompConfig delay_cfg;
+    delay_cfg.base_delay_s = processing_delay + control_delay_s_ + prediction_delay_s_;
+    delay_cfg.ctrl_delay_s = control_delay_s_;
+    delay_cfg.flight_time_iters = flight_time_iters_;
+
+    X_ref = ref_generator_.generateWithDelay(
+      context.target_robot, context.current_yaw, context.current_pitch,
+      N_, dt_, delay_cfg);
+  } else {
+    X_ref = ref_generator_.generate(
+      context.target_robot, context.current_yaw, context.current_pitch, N_, dt_);
+  }
 
   // 5) 构造 QP
   Eigen::MatrixXd H;
@@ -165,9 +192,19 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
 
   bool fire_advice = false;
   if (fire_advisor_) {
-    fire_advice = fire_advisor_->shouldFire(
-      context.current_yaw, context.current_pitch,
-      ref_yaw, ref_pitch, distance);
+    if (enable_delay_compensation_ && control_delay_s_ > 1e-6) {
+      // 延时补偿开火判断: 预测控制延迟后的云台姿态
+      double ref_yaw_dot = X_ref(2);
+      double ref_pitch_dot = X_ref(3);
+      double fire_yaw = context.current_yaw + ref_yaw_dot * control_delay_s_;
+      double fire_pitch = context.current_pitch + ref_pitch_dot * control_delay_s_;
+      fire_advice = fire_advisor_->shouldFire(
+        fire_yaw, fire_pitch, ref_yaw, ref_pitch, distance);
+    } else {
+      fire_advice = fire_advisor_->shouldFire(
+        context.current_yaw, context.current_pitch,
+        ref_yaw, ref_pitch, distance);
+    }
   }
 
   // 11) 填充 GimbalCmd (角度以度为单位)

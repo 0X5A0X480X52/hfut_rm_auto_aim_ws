@@ -14,6 +14,7 @@
 
 #include "gimbal_controller/mpc/mpc_reference_generator.hpp"
 
+#include <angles/angles.h>
 #include <cmath>
 #include <iostream>
 
@@ -145,6 +146,116 @@ rm_interfaces::msg::TrackedRobot MpcReferenceGenerator::propagateRobot(
   future.yaw_velocity += robot.yaw_acceleration * dt;
 
   return future;
+}
+
+Eigen::VectorXd MpcReferenceGenerator::generateWithDelay(
+  const rm_interfaces::msg::TrackedRobot & target_robot,
+  double current_yaw,
+  double current_pitch,
+  int N,
+  double dt,
+  const DelayCompConfig & delay_config) const
+{
+  const int nx = GimbalDynamicsModel::STATE_DIM;
+  Eigen::VectorXd X_ref(nx * N);
+  X_ref.setZero();
+
+  if (!position_calculator_ || !armor_selector_ || !local_compensator_) {
+    for (int k = 0; k < N; ++k) {
+      X_ref.segment(k * nx, nx) << current_yaw, current_pitch, 0.0, 0.0;
+    }
+    return X_ref;
+  }
+
+  double prev_yaw_ref = current_yaw;
+  double prev_pitch_ref = current_pitch;
+
+  for (int k = 0; k < N; ++k) {
+    double t_ahead = (k + 1) * dt;
+
+    // 1. 计算参考时间: base_delay (processing + controller + prediction) + t_ahead
+    double t_predict = delay_config.base_delay_s + t_ahead;
+
+    // 2. 传播目标状态到未来 t_predict 秒
+    auto future_robot = propagateRobot(target_robot, t_predict);
+
+    // 3. 子弹飞行时间迭代补偿
+    Eigen::Vector3d pred_center(
+      future_robot.center_position.x,
+      future_robot.center_position.y,
+      future_robot.center_position.z);
+
+    double t_flight = 0.0;
+    for (int iter = 0; iter < delay_config.flight_time_iters; ++iter) {
+      t_flight = local_compensator_->getFlyingTime(pred_center);
+      auto flight_robot = propagateRobot(target_robot, t_predict + t_flight);
+      pred_center = Eigen::Vector3d(
+        flight_robot.center_position.x,
+        flight_robot.center_position.y,
+        flight_robot.center_position.z);
+    }
+
+    // 用飞行时间补偿后的时刻重新传播整个机器人状态 (含 yaw)
+    auto compensated_robot = propagateRobot(target_robot, t_predict + t_flight);
+
+    // 4. 在补偿后位置计算装甲板坐标
+    auto armor_positions = position_calculator_->calculatePredicted(compensated_robot, 0.0);
+
+    if (armor_positions.empty()) {
+      X_ref.segment(k * nx, nx) << prev_yaw_ref, prev_pitch_ref, 0.0, 0.0;
+      continue;
+    }
+
+    // 5. 补偿后的目标中心
+    Eigen::Vector3d target_center(
+      compensated_robot.center_position.x,
+      compensated_robot.center_position.y,
+      compensated_robot.center_position.z);
+
+    // 6. 延迟感知选板: 遍历候选装甲板，选择延时补偿后误差最小的
+    double best_error = std::numeric_limits<double>::max();
+    double best_yaw_ref = prev_yaw_ref;
+    double best_pitch_ref = prev_pitch_ref;
+    double best_yaw_dot = 0.0;
+    double best_pitch_dot = 0.0;
+
+    for (size_t i = 0; i < armor_positions.size(); ++i) {
+      auto ballistic = local_compensator_->compensate(armor_positions[i]);
+      if (!ballistic.success) {
+        continue;
+      }
+
+      // 估计参考角速度
+      double yaw_dot_cand = (ballistic.yaw - prev_yaw_ref) / dt;
+      double pitch_dot_cand = (ballistic.pitch - prev_pitch_ref) / dt;
+
+      // 计算延迟补偿后的云台姿态 (控制指令在 ctrl_delay 后才执行)
+      double yaw_delayed = prev_yaw_ref + yaw_dot_cand * delay_config.ctrl_delay_s;
+      double pitch_delayed = prev_pitch_ref + pitch_dot_cand * delay_config.ctrl_delay_s;
+
+      // 与目标弹道的误差
+      double yaw_diff = angles::normalize_angle(ballistic.yaw - yaw_delayed);
+      double pitch_diff = ballistic.pitch - pitch_delayed;
+      double error = yaw_diff * yaw_diff + pitch_diff * pitch_diff;
+
+      if (error < best_error) {
+        best_error = error;
+        best_yaw_ref = ballistic.yaw;
+        best_pitch_ref = ballistic.pitch;
+        best_yaw_dot = yaw_dot_cand;
+        best_pitch_dot = pitch_dot_cand;
+      }
+    }
+
+    // 7. 填充参考轨迹
+    X_ref.segment(k * nx, nx) << best_yaw_ref, best_pitch_ref,
+                                  best_yaw_dot, best_pitch_dot;
+
+    prev_yaw_ref = best_yaw_ref;
+    prev_pitch_ref = best_pitch_ref;
+  }
+
+  return X_ref;
 }
 
 }  // namespace mpc
