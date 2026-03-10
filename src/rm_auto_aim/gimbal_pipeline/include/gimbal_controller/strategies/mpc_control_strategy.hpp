@@ -73,6 +73,22 @@ public:
     double max_processing_delay_s);
 
   /**
+   * @brief 设置 MPC 机动自适应权重衰减参数
+   *
+   * 启用后，每帧通过对 UKF center_velocity 做时间戳感知差分计算机动因子 alpha，
+   * 用 alpha 衰减远期 Q 权重并放大 R 正则项，在机动时减少控制量。
+   * 禁用时 (enable=false) 与原实现完全一致。
+   *
+   * @param enable   是否启用
+   * @param a_max    差分速度归一化上限 (m/s²)
+   * @param eta      alpha EMA 平滑系数 (0.1~0.3)
+   * @param tau      Q 衰减时间常数 (步数尺度)
+   * @param r_scale  R 放大系数
+   */
+  void setManeuverAdaptParameters(
+    bool enable, double a_max, double eta, double tau, double r_scale);
+
+  /**
    * @brief 在 setComponents() 之后调用, 将组件注入到 MpcReferenceGenerator
    */
   void initReferenceGenerator();
@@ -123,7 +139,20 @@ private:
 
   // 上一步求解结果 (warmstart)
   Eigen::VectorXd U_prev_;
+  // 机动自适应权重衰减参数
+  bool enable_maneuver_adapt_{false};
+  double a_max_{3.0};             // 差分速度归一化上限 (m/s²)
+  double eta_{0.2};               // EMA 平滑系数
+  double tau_{10.0};              // Q 衰减时间常数 (步数)
+  double r_scale_maneuver_{10.0}; // R 放大系数
 
+  // 机动 alpha EMA 状态
+  double alpha_ema_{0.0};
+
+  // 目标速度差分历史（时间戳感知）
+  Eigen::Vector3d prev_target_velocity_{Eigen::Vector3d::Zero()};
+  rclcpp::Time prev_target_stamp_{0, 0, RCL_ROS_TIME};
+  bool has_prev_velocity_{false};
   /**
    * @brief QP 求解失败时回退到直接瞄准参考轨迹首步
    */

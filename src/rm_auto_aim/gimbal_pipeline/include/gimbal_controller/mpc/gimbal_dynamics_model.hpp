@@ -291,6 +291,62 @@ public:
     return buildWeightR(N, s_yaw, s_pitch);  // same structure
   }
 
+  /**
+   * @brief 构建机动自适应的 block-diagonal 跟踪权重矩阵 Q_eff
+   *
+   * 每步 k 的权重按机动因子 alpha 衰减远期权重：
+   *   Q_k = diag(q) * (1 - alpha * (1 - exp(-k / tau)))
+   *
+   * - k=0: Q_0 = diag(q)（首步无衰减，保证近期精度）
+   * - k→∞: Q_k → diag(q) * (1 - alpha)（远期权重降低，减少超调追踪）
+   * - alpha=0: Q_k = diag(q)（退化为标准 buildWeightQ，无自适应）
+   *
+   * @param N           预测步数
+   * @param q_yaw       yaw 位置误差权重
+   * @param q_pitch     pitch 位置误差权重
+   * @param q_yaw_vel   yaw 速度误差权重
+   * @param q_pitch_vel pitch 速度误差权重
+   * @param alpha       机动因子 [0, 1]，由速度差分计算后 EMA 平滑得到
+   * @param tau         衰减时间常数（步数尺度，>0），控制远期衰减速度
+   * @return Q_eff (4N × 4N)
+   */
+  static Eigen::MatrixXd buildAdaptiveWeightQ(
+    int N, double q_yaw, double q_pitch, double q_yaw_vel, double q_pitch_vel,
+    double alpha, double tau)
+  {
+    const int nx = STATE_DIM;
+    Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(nx * N, nx * N);
+    Eigen::Vector4d diag_q(q_yaw, q_pitch, q_yaw_vel, q_pitch_vel);
+    for (int k = 0; k < N; ++k) {
+      double decay = 1.0 - std::exp(-static_cast<double>(k) / tau);
+      double scale = 1.0 - alpha * decay;
+      Q.block(k * nx, k * nx, nx, nx) = (scale * diag_q).asDiagonal();
+    }
+    return Q;
+  }
+
+  /**
+   * @brief 构建机动自适应的 diagonal 控制权重矩阵 R_eff
+   *
+   * 全步统一放大：R_eff = R * (1 + alpha * r_scale)
+   *
+   * - alpha=0: R_eff = R（退化为标准 buildWeightR，无自适应）
+   * - alpha=1: R_eff = R * (1 + r_scale)（最大控制抑制）
+   *
+   * @param N       预测步数
+   * @param r_yaw   yaw 控制权重（基准值）
+   * @param r_pitch pitch 控制权重（基准值）
+   * @param alpha   机动因子 [0, 1]
+   * @param r_scale R 放大系数（>=0）
+   * @return R_eff (2N × 2N)
+   */
+  static Eigen::MatrixXd buildAdaptiveWeightR(
+    int N, double r_yaw, double r_pitch, double alpha, double r_scale)
+  {
+    double scale = 1.0 + alpha * r_scale;
+    return buildWeightR(N, r_yaw * scale, r_pitch * scale);
+  }
+
 private:
   void buildMatrices()
   {

@@ -65,6 +65,19 @@ void MpcControlStrategy::setDelayCompensation(
   max_processing_delay_s_ = max_processing_delay_s;
 }
 
+void MpcControlStrategy::setManeuverAdaptParameters(
+  bool enable, double a_max, double eta, double tau, double r_scale)
+{
+  enable_maneuver_adapt_ = enable;
+  a_max_ = a_max;
+  eta_ = eta;
+  tau_ = tau;
+  r_scale_maneuver_ = r_scale;
+  // 切换启用状态时重置 EMA 状态
+  alpha_ema_ = 0.0;
+  has_prev_velocity_ = false;
+}
+
 void MpcControlStrategy::rebuildMatrices()
 {
   dynamics_model_.buildPredictionMatrices(N_, A_pred_, B_ctrl_);
@@ -99,6 +112,9 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     std::cout << "Target not in tracking/temp_lost state, skipping MPC control.  " << std::endl;
     has_prev_state_ = false;
     U_prev_.resize(0);
+    // 机动自适应状态重置：防止旧跟踪历史污染新跟踪
+    alpha_ema_ = 0.0;
+    has_prev_velocity_ = false;
     return createIdleCmd();
   }
 
@@ -143,6 +159,100 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   }
 
   // 5) 构造 QP
+  //    机动自适应模式: 通过对 UKF center_velocity 做时间戳感知差分计算机动因子 alpha,
+  //    用 alpha 衰减远期 Q 权重并放大 R 正则项。
+  //    如果禁用 (enable_maneuver_adapt_==false), 则与原实现完全一致。
+  if (enable_maneuver_adapt_) {
+    // 仅当 target_stamp 发生变化时才更新 alpha（tracker 20-30 Hz 更新，控制环 250 Hz）
+    const rclcpp::Time & cur_stamp = context.target_stamp;
+    if (has_prev_velocity_ && cur_stamp != prev_target_stamp_) {
+      double delta_t = (cur_stamp - prev_target_stamp_).seconds();
+      if (delta_t > 1e-6) {
+        Eigen::Vector3d vel_now(
+          context.target_robot.center_velocity.x,
+          context.target_robot.center_velocity.y,
+          context.target_robot.center_velocity.z);
+        double accel_est = (vel_now - prev_target_velocity_).norm() / delta_t;
+        double alpha_raw = std::clamp(accel_est / a_max_, 0.0, 1.0);
+        alpha_ema_ = eta_ * alpha_raw + (1.0 - eta_) * alpha_ema_;
+      }
+    }
+    // 更新历史状态（仅 stamp 变化时）
+    if (!has_prev_velocity_ || cur_stamp != prev_target_stamp_) {
+      prev_target_velocity_ = Eigen::Vector3d(
+        context.target_robot.center_velocity.x,
+        context.target_robot.center_velocity.y,
+        context.target_robot.center_velocity.z);
+      prev_target_stamp_ = cur_stamp;
+      has_prev_velocity_ = true;
+    }
+
+    // 构建自适应权重矩阵
+    Eigen::MatrixXd Q_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightQ(
+      N_, q_yaw_, q_pitch_, q_yaw_vel_, q_pitch_vel_, alpha_ema_, tau_);
+    Eigen::MatrixXd R_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightR(
+      N_, r_yaw_, r_pitch_, alpha_ema_, r_scale_maneuver_);
+
+    Eigen::MatrixXd H;
+    Eigen::VectorXd f;
+    mpc::GimbalDynamicsModel::buildQP(A_pred_, B_ctrl_, D_, Q_eff, R_eff, S_blk_, x0, X_ref, H, f);
+
+    // 6) 框约束
+    int n_vars = 2 * N_;
+    Eigen::VectorXd lb = Eigen::VectorXd::Constant(n_vars, -max_accel_);
+    Eigen::VectorXd ub = Eigen::VectorXd::Constant(n_vars, max_accel_);
+
+    // 7) 求解 QP
+    auto result = qp_solver_.solve(H, f, lb, ub);
+    if (!result.success) {
+      std::cout << "MPC QP solve failed (maneuver-adapt), fallback to direct aim.  " << std::endl;
+      return fallbackDirectAim(context, X_ref);
+    }
+
+    U_prev_ = result.U;
+
+    // 8) 提取首步控制量
+    mpc::GimbalDynamicsModel::ControlVector u_opt(result.U(0), result.U(1));
+    auto x_next = dynamics_model_.predict(x0, u_opt);
+    double cmd_yaw   = x_next(0);
+    double cmd_pitch = x_next(1);
+
+    double yaw_diff   = angles::normalize_angle(cmd_yaw   - context.current_yaw);
+    double pitch_diff = cmd_pitch - context.current_pitch;
+
+    double ref_yaw   = X_ref(0);
+    double ref_pitch = X_ref(1);
+    double distance  = std::sqrt(
+      context.target_robot.center_position.x * context.target_robot.center_position.x +
+      context.target_robot.center_position.y * context.target_robot.center_position.y +
+      context.target_robot.center_position.z * context.target_robot.center_position.z);
+
+    bool fire_advice = false;
+    if (fire_advisor_) {
+      if (enable_delay_compensation_ && control_delay_s_ > 1e-6) {
+        double ref_yaw_dot   = X_ref(2);
+        double ref_pitch_dot = X_ref(3);
+        double fire_yaw   = context.current_yaw   + ref_yaw_dot   * control_delay_s_;
+        double fire_pitch = context.current_pitch + ref_pitch_dot * control_delay_s_;
+        fire_advice = fire_advisor_->shouldFire(fire_yaw, fire_pitch, ref_yaw, ref_pitch, distance);
+      } else {
+        fire_advice = fire_advisor_->shouldFire(
+          context.current_yaw, context.current_pitch, ref_yaw, ref_pitch, distance);
+      }
+    }
+
+    rm_interfaces::msg::GimbalCmd cmd;
+    cmd.header     = context.target_robot.header;
+    cmd.yaw        = cmd_yaw   * 180.0 / M_PI;
+    cmd.pitch      = cmd_pitch * 180.0 / M_PI;
+    cmd.yaw_diff   = yaw_diff   * 180.0 / M_PI;
+    cmd.pitch_diff = pitch_diff * 180.0 / M_PI;
+    cmd.distance   = distance;
+    cmd.fire_advice = fire_advice;
+    return cmd;
+  }
+
+  // 禁用机动自适应时: 使用原有缓存的 Q_blk_, R_blk_
   Eigen::MatrixXd H;
   Eigen::VectorXd f;
   mpc::GimbalDynamicsModel::buildQP(A_pred_, B_ctrl_, D_, Q_blk_, R_blk_, S_blk_, x0, X_ref, H, f);

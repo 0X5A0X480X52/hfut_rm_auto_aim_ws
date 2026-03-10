@@ -230,6 +230,16 @@ gimbal_pipeline:
     controller.mpc.s_yaw: 0.001
     controller.mpc.s_pitch: 0.001
 
+    # MPC 机动自适应权重衰减（Maneuver-Adaptive MPC）
+    # 通过对 UKF center_velocity 做时间戳感知差分计算机动因子 α∈[0,1]
+    # α>0 时: 衰减远期 Q 权重（减少超调追踪）+ 放大 R 权重（抑制控制量）
+    # 禁用时 (enable: false) 与原实现完全一致，零改动
+    controller.mpc.maneuver_adapt.enable: false
+    controller.mpc.maneuver_adapt.a_max: 3.0       # 差分速度归一化上限 (m/s²)，目标机动峰值加速度经验值
+    controller.mpc.maneuver_adapt.eta: 0.2         # α EMA 平滑系数 (0.1~0.3)，防止瞬时 spike 过敏感
+    controller.mpc.maneuver_adapt.tau: 10.0        # Q 衰减时间常数 (步数尺度)，影响远期衰减速度
+    controller.mpc.maneuver_adapt.r_scale: 10.0    # R 放大系数；α=1 时 R_eff = R*(1+r_scale)
+
     # MPC 延时补偿: 启用后参考轨迹生成考虑 processing_delay + controller_delay + prediction_delay
     # 并对每步迭代补偿子弹飞行时间、选板时考虑延迟后的云台姿态
     # enable_delay_compensation: false 时行为与原版完全一致

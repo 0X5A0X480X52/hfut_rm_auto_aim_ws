@@ -513,6 +513,13 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.mpc.flight_time_iters", 2);
   declare_parameter("controller.mpc.max_processing_delay_s", 0.5);
 
+  // MPC 机动自适应权重衰减
+  declare_parameter("controller.mpc.maneuver_adapt.enable",  false);
+  declare_parameter("controller.mpc.maneuver_adapt.a_max",   3.0);
+  declare_parameter("controller.mpc.maneuver_adapt.eta",     0.2);
+  declare_parameter("controller.mpc.maneuver_adapt.tau",    10.0);
+  declare_parameter("controller.mpc.maneuver_adapt.r_scale", 10.0);
+
   // ─── GimbalCmd 输出端保护滤波器 ──────────────────────────────
   // 0. Clamping — 绝对限幅
   declare_parameter("controller.output_filter.enable_clamping",         true);
@@ -1272,6 +1279,12 @@ void GimbalPipelineNode::initGimbalStrategies() {
     get_parameter("controller.mpc.prediction_delay_s").as_double(),
     get_parameter("controller.mpc.flight_time_iters").as_int(),
     get_parameter("controller.mpc.max_processing_delay_s").as_double());
+  mpc_s->setManeuverAdaptParameters(
+    get_parameter("controller.mpc.maneuver_adapt.enable").as_bool(),
+    get_parameter("controller.mpc.maneuver_adapt.a_max").as_double(),
+    get_parameter("controller.mpc.maneuver_adapt.eta").as_double(),
+    get_parameter("controller.mpc.maneuver_adapt.tau").as_double(),
+    get_parameter("controller.mpc.maneuver_adapt.r_scale").as_double());
   gimbal_strategies_["mpc"] = mpc_s;
 
   auto sm_s = std::make_shared<gimbal_controller::StateMachineStrategy>();
