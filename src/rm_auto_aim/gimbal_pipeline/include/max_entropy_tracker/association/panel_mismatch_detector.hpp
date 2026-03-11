@@ -50,7 +50,7 @@ class PanelMismatchDetector {
    * @param enabled        Master enable flag
    */
   explicit PanelMismatchDetector(int window_size  = 8,
-                                 double threshold_t1 = 0.0009,
+                                 double threshold_t1 = 0.1,
                                  int confirm_count   = 3,
                                  int reinit_count    = 5,
                                  bool enabled        = true)

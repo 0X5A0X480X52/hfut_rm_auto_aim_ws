@@ -25,7 +25,7 @@
     # - 中帧率 (30fps): 平衡性能和稳定性
     # - 高帧率 (50fps+): 需要确保相机和USB带宽充足
     exposure_time: 2500.0  # Exposure time in microseconds (曝光时间)
-    gain: 16.0              # Gain value (0~16) (增益)
+    gain: 8.0              # Gain value (0~16) (增益)
     frame_rate: 250.0       # Frame rate in fps (帧率 - 建议从10开始)
     
     # Image processing
