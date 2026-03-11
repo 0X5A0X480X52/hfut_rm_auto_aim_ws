@@ -167,50 +167,21 @@
 #          0.0, 2592.831543, 466.790407, 0.0,
 #          0.0, 0.0, 1.0, 0.0]
 
-# # 16mm hik 相机
-# image_width: 1440
-# image_height: 1080
-# camera_name: narrow_stereo
-# camera_matrix:
-#   rows: 3
-#   cols: 3
-#   data: [4504.76723,    0.     ,  772.01116,
-#             0.     , 4505.17531,  589.76715,
-#             0.     ,    0.     ,    1.     ]
-# distortion_model: plumb_bob
-# distortion_coefficients:
-#   rows: 1
-#   cols: 5
-#   data: [0.051808, -2.629005, 0.002191, 0.000449, 0.000000]
-# rectification_matrix:
-#   rows: 3
-#   cols: 3
-#   data: [1., 0., 0.,
-#          0., 1., 0.,
-#          0., 0., 1.]
-# projection_matrix:
-#   rows: 3
-#   cols: 4
-#   data: [4499.64258,    0.     ,  771.85685,    0.     ,
-#             0.     , 4501.18506,  589.69534,    0.     ,
-#             0.     ,    0.     ,    1.     ,    0.     ]
-
-# 12mm 英雄
-
-image_width: 1280
-image_height: 1024
+# 16mm hik 相机
+image_width: 1440
+image_height: 1080
 camera_name: narrow_stereo
 camera_matrix:
   rows: 3
   cols: 3
-  data: [2969.93015,    0.     ,  628.4726 ,
-            0.     , 2967.94543,  507.14551,
+  data: [4504.76723,    0.     ,  772.01116,
+            0.     , 4505.17531,  589.76715,
             0.     ,    0.     ,    1.     ]
 distortion_model: plumb_bob
 distortion_coefficients:
   rows: 1
   cols: 5
-  data: [-0.072582, 0.422508, -0.001299, -0.003165, 0.000000]
+  data: [0.051808, -2.629005, 0.002191, 0.000449, 0.000000]
 rectification_matrix:
   rows: 3
   cols: 3
@@ -220,6 +191,35 @@ rectification_matrix:
 projection_matrix:
   rows: 3
   cols: 4
-  data: [2960.41748,    0.     ,  626.56375,    0.     ,
-            0.     , 2960.53491,  506.23922,    0.     ,
+  data: [4499.64258,    0.     ,  771.85685,    0.     ,
+            0.     , 4501.18506,  589.69534,    0.     ,
             0.     ,    0.     ,    1.     ,    0.     ]
+
+# 12mm 英雄
+
+# image_width: 1280
+# image_height: 1024
+# camera_name: narrow_stereo
+# camera_matrix:
+#   rows: 3
+#   cols: 3
+#   data: [2969.93015,    0.     ,  628.4726 ,
+#             0.     , 2967.94543,  507.14551,
+#             0.     ,    0.     ,    1.     ]
+# distortion_model: plumb_bob
+# distortion_coefficients:
+#   rows: 1
+#   cols: 5
+#   data: [-0.072582, 0.422508, -0.001299, -0.003165, 0.000000]
+# rectification_matrix:
+#   rows: 3
+#   cols: 3
+#   data: [1., 0., 0.,
+#          0., 1., 0.,
+#          0., 0., 1.]
+# projection_matrix:
+#   rows: 3
+#   cols: 4
+#   data: [2960.41748,    0.     ,  626.56375,    0.     ,
+#             0.     , 2960.53491,  506.23922,    0.     ,
+#             0.     ,    0.     ,    1.     ,    0.     ]

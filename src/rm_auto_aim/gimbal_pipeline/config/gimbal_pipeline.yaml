@@ -116,7 +116,8 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     # Gimbal controller parameters
     # ═══════════════════════════════════════════════════════════════
-    controller.bullet_speed: 11.5
+    # controller.bullet_speed: 11.5
+    controller.bullet_speed: 20.0
     controller.control_rate: 250.0
     controller.strategy: "mpc"    # "current" | "predicted" | "mpc" | "state_machine"
     controller.ballistic_mode: "local"  # "service" | "local"
@@ -134,8 +135,8 @@ gimbal_pipeline:
     controller.solver.iteration_times: 20
     controller.solver.pitch_offset: 0.0
     controller.solver.yaw_offset: 0.0
-    controller.solver.facing_enter_angle: 35.0
-    controller.solver.facing_exit_angle: 45.0
+    controller.solver.facing_enter_angle: 45.0
+    controller.solver.facing_exit_angle: 65.0
     # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
     # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
     # 若启用自适应 delay（adaptive_delay.enable=true），本值作为 delay 初始值。
@@ -244,14 +245,14 @@ gimbal_pipeline:
     controller.mpc.maneuver_adapt.enable: false
     controller.mpc.maneuver_adapt.a_max: 3.0       # 差分速度归一化上限 (m/s²)，目标机动峰值加速度经验值
     controller.mpc.maneuver_adapt.eta: 0.2         # α EMA 平滑系数 (0.1~0.3)，防止瞬时 spike 过敏感
-    controller.mpc.maneuver_adapt.tau: 10.0        # Q 衰减时间常数 (步数尺度)，影响远期衰减速度
-    controller.mpc.maneuver_adapt.r_scale: 10.0    # R 放大系数；α=1 时 R_eff = R*(1+r_scale)
+    controller.mpc.maneuver_adapt.tau: 1.0        # Q 衰减时间常数 (步数尺度)，影响远期衰减速度
+    controller.mpc.maneuver_adapt.r_scale: 1000.0    # R 放大系数；α=1 时 R_eff = R*(1+r_scale)
 
     # MPC 延时补偿: 启用后参考轨迹生成考虑 processing_delay + controller_delay + prediction_delay
     # 并对每步迭代补偿子弹飞行时间、选板时考虑延迟后的云台姿态
     # enable_delay_compensation: false 时行为与原版完全一致
     controller.mpc.enable_delay_compensation: true
-    controller.mpc.prediction_delay_s: 0.0      # 额外预测延迟 (秒), 叠加在 processing_delay 之上
+    controller.mpc.prediction_delay_s: 0.02      # 额外预测延迟 (秒), 叠加在 processing_delay 之上
     controller.mpc.flight_time_iters: 2          # 飞行时间迭代补偿次数
     controller.mpc.max_processing_delay_s: 0.5    # 最大处理延迟 clamp 上限 (秒)
 
@@ -277,8 +278,8 @@ gimbal_pipeline:
     # maneuver.innov_norm_threshold_single: 0.1279
     # maneuver.innov_norm_threshold_dual: 0.0613
 
-    maneuver.nis_threshold_single: 300.0
-    maneuver.nis_threshold_dual: 4500.0
+    maneuver.nis_threshold_single: 200.0
+    maneuver.nis_threshold_dual: 3500.0
     maneuver.innov_norm_threshold_single: 0.15
     maneuver.innov_norm_threshold_dual: 0.10
 
