@@ -212,47 +212,43 @@ Eigen::VectorXd MpcReferenceGenerator::generateWithDelay(
       compensated_robot.center_position.y,
       compensated_robot.center_position.z);
 
-    // 6. 延迟感知选板: 遍历候选装甲板，选择延时补偿后误差最小的
-    double best_error = std::numeric_limits<double>::max();
-    double best_yaw_ref = prev_yaw_ref;
-    double best_pitch_ref = prev_pitch_ref;
-    double best_yaw_dot = 0.0;
-    double best_pitch_dot = 0.0;
+    // 6. 选板逻辑: 使用最小移动加 facing 策略
+    auto selection = armor_selector_->selectByMinMovementWithFacing(
+      armor_positions,
+      target_center,
+      compensated_robot.yaw,
+      compensated_robot.num_armors,
+      current_yaw,
+      current_pitch);
 
-    for (size_t i = 0; i < armor_positions.size(); ++i) {
-      auto ballistic = local_compensator_->compensate(armor_positions[i]);
-      if (!ballistic.success) {
-        continue;
-      }
+    Eigen::Vector3d target_position = selection.is_center_fallback
+      ? target_center : selection.position;
 
-      // 估计参考角速度
-      double yaw_dot_cand = (ballistic.yaw - prev_yaw_ref) / dt;
-      double pitch_dot_cand = (ballistic.pitch - prev_pitch_ref) / dt;
+    // 7. 弹道解算
+    auto ballistic = local_compensator_->compensate(target_position);
 
-      // 计算延迟补偿后的云台姿态 (控制指令在 ctrl_delay 后才执行)
-      double yaw_delayed = prev_yaw_ref + yaw_dot_cand * delay_config.ctrl_delay_s;
-      double pitch_delayed = prev_pitch_ref + pitch_dot_cand * delay_config.ctrl_delay_s;
-
-      // 与目标弹道的误差
-      double yaw_diff = angles::normalize_angle(ballistic.yaw - yaw_delayed);
-      double pitch_diff = ballistic.pitch - pitch_delayed;
-      double error = yaw_diff * yaw_diff + pitch_diff * pitch_diff;
-
-      if (error < best_error) {
-        best_error = error;
-        best_yaw_ref = ballistic.yaw;
-        best_pitch_ref = ballistic.pitch;
-        best_yaw_dot = yaw_dot_cand;
-        best_pitch_dot = pitch_dot_cand;
-      }
+    double yaw_ref, pitch_ref;
+    if (ballistic.success) {
+      yaw_ref = ballistic.yaw;
+      pitch_ref = ballistic.pitch;
+    } else {
+      // fallback: 几何计算
+      double dist_xy = std::sqrt(
+        target_position.x() * target_position.x() +
+        target_position.y() * target_position.y());
+      yaw_ref = std::atan2(target_position.y(), target_position.x());
+      pitch_ref = std::atan2(target_position.z(), dist_xy);
     }
 
-    // 7. 填充参考轨迹
-    X_ref.segment(k * nx, nx) << best_yaw_ref, best_pitch_ref,
-                                  best_yaw_dot, best_pitch_dot;
+    // 8. 估计参考角速度
+    double yaw_dot_ref = (yaw_ref - prev_yaw_ref) / dt;
+    double pitch_dot_ref = (pitch_ref - prev_pitch_ref) / dt;
 
-    prev_yaw_ref = best_yaw_ref;
-    prev_pitch_ref = best_pitch_ref;
+    // 9. 填充参考轨迹
+    X_ref.segment(k * nx, nx) << yaw_ref, pitch_ref, yaw_dot_ref, pitch_dot_ref;
+
+    prev_yaw_ref = yaw_ref;
+    prev_pitch_ref = pitch_ref;
   }
 
   return X_ref;
