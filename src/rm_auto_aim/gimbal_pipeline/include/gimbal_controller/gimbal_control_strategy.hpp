@@ -49,6 +49,7 @@ struct GimbalControlContext
   rclcpp::Time target_stamp;                      // 目标时间戳
   bool is_tracking{false};                        // 是否正在跟踪 (TRACKING状态)
   bool is_temp_lost{false};                       // 目标暂时丢失 (TEMP_LOST状态)
+  bool is_maneuvering{false};                     // 目标正在机动 (来自 ManeuverDetector)
 };
 
 /**

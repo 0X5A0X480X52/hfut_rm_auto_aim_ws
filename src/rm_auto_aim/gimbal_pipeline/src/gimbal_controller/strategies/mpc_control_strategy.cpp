@@ -161,8 +161,8 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   // 5) 构造 QP
   //    机动自适应模式: 通过对 UKF center_velocity 做时间戳感知差分计算机动因子 alpha,
   //    用 alpha 衰减远期 Q 权重并放大 R 正则项。
-  //    如果禁用 (enable_maneuver_adapt_==false), 则与原实现完全一致。
-  if (enable_maneuver_adapt_) {
+  //    如果禁用 (enable_maneuver_adapt_==false) 或目标未机动, 则与原实现完全一致。
+  if (enable_maneuver_adapt_ && context.is_maneuvering) {
     // 仅当 target_stamp 发生变化时才更新 alpha（tracker 20-30 Hz 更新，控制环 250 Hz）
     const rclcpp::Time & cur_stamp = context.target_stamp;
     if (has_prev_velocity_ && cur_stamp != prev_target_stamp_) {
@@ -252,7 +252,9 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     return cmd;
   }
 
-  // 禁用机动自适应时: 使用原有缓存的 Q_blk_, R_blk_
+  // 禁用机动自适应或目标未机动时: 使用原有缓存的 Q_blk_, R_blk_
+  // 同时将 alpha_ema_ 归零，避免机动结束后残留高权重污染下一次跟踪
+  alpha_ema_ = 0.0;
   Eigen::MatrixXd H;
   Eigen::VectorXd f;
   mpc::GimbalDynamicsModel::buildQP(A_pred_, B_ctrl_, D_, Q_blk_, R_blk_, S_blk_, x0, X_ref, H, f);

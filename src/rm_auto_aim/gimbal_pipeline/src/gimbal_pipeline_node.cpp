@@ -1413,6 +1413,11 @@ void GimbalPipelineNode::timerCallback() {
           context.is_temp_lost =
               (robot.track_state ==
                    rm_interfaces::msg::TrackedRobot::TEMP_LOST);
+          {
+            auto *t = tracker_manager_->get(robot.robot_id);
+            context.is_maneuvering = (t && t->is_initialized()) ?
+                t->assess_maneuver().is_maneuvering : false;
+          }
           break;
         }
       }
@@ -1426,6 +1431,11 @@ void GimbalPipelineNode::timerCallback() {
       context.is_temp_lost =
           (context.target_robot.track_state ==
                rm_interfaces::msg::TrackedRobot::TEMP_LOST);
+      {
+        auto *t = tracker_manager_->get(context.target_robot.robot_id);
+        context.is_maneuvering = (t && t->is_initialized()) ?
+            t->assess_maneuver().is_maneuvering : false;
+      }
     }
   }
 
