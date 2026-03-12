@@ -268,6 +268,17 @@ gimbal_pipeline:
     controller.mpc.vel_clamp.max_linear_speed: 5.0   # 线速度标量上限 (m/s)
     controller.mpc.vel_clamp.max_v_yaw: 10.0         # yaw 角速度上限 (rad/s)
 
+    # MPC FOV 软约束: 防止云台输出将目标甩出视野
+    # enable: false 时不做任何处理，行为与原版完全一致
+    controller.mpc.fov_constraint.enable: false
+    controller.mpc.fov_constraint.margin: 0.05                     # FOV 边缘安全余量 (rad)
+    controller.mpc.fov_constraint.slack_weight: 1000.0             # 松弛变量惩罚权重
+    controller.mpc.fov_constraint.constraint_steps: 0              # 约束步数 (0 = 全部 N 步)
+    controller.mpc.fov_constraint.dynamic_margin.enable: false     # 动态余量: 目标速度越大余量越大
+    controller.mpc.fov_constraint.dynamic_margin.vel_scale: 0.01   # 动态余量系数
+    controller.mpc.fov_constraint.fallback_fov_yaw: 0.35           # 未收到 camera_info 时 yaw 半角 (rad)
+    controller.mpc.fov_constraint.fallback_fov_pitch: 0.26         # 未收到 camera_info 时 pitch 半角 (rad)
+
     # MPC 延时补偿: 启用后参考轨迹生成考虑 processing_delay + controller_delay + prediction_delay
     # 并对每步迭代补偿子弹飞行时间、选板时考虑延迟后的云台姿态
     # enable_delay_compensation: false 时行为与原版完全一致

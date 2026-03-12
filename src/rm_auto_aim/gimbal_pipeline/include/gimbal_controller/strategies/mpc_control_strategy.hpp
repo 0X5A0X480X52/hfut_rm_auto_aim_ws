@@ -89,6 +89,32 @@ public:
     bool enable, double a_max, double eta, double tau, double r_scale);
 
   /**
+   * @brief 设置 FOV 软约束参数
+   *
+   * 启用后，通过 slack 变量在 QP 中惩罚预测轨迹超出相机视场角范围的行为。
+   * FOV 半角通过 updateFov() 从 camera_info 动态获取，也可由 fallback 值提供。
+   * 禁用时 (enable=false) 与原实现完全一致。
+   *
+   * @param enable           是否启用 FOV 约束
+   * @param margin           静态安全裕度 (rad)
+   * @param slack_weight     slack 惩罚权重
+   * @param constraint_steps 约束步数 (0 表示约束全部 N 步)
+   * @param dynamic_margin_enable  是否启用动态 margin
+   * @param margin_vel_scale       速度→margin 缩放系数
+   * @param fallback_fov_yaw       camera_info 未收到时的 fallback yaw FOV 半角 (rad)
+   * @param fallback_fov_pitch     camera_info 未收到时的 fallback pitch FOV 半角 (rad)
+   */
+  void setFovConstraintParameters(
+    bool enable, double margin, double slack_weight, int constraint_steps,
+    bool dynamic_margin_enable, double margin_vel_scale,
+    double fallback_fov_yaw, double fallback_fov_pitch);
+
+  /**
+   * @brief 从 camera_info 回调更新 FOV 半角
+   */
+  void updateFov(double fov_half_yaw, double fov_half_pitch);
+
+  /**
    * @brief 在 setComponents() 之后调用, 将组件注入到 MpcReferenceGenerator
    */
   void initReferenceGenerator();
@@ -161,6 +187,34 @@ private:
   Eigen::Vector3d prev_target_velocity_{Eigen::Vector3d::Zero()};
   rclcpp::Time prev_target_stamp_{0, 0, RCL_ROS_TIME};
   bool has_prev_velocity_{false};
+  // FOV 软约束参数
+  bool enable_fov_constraint_{false};
+  double fov_half_yaw_{0.35};         // 视场半角 yaw (rad) — 从 camera_info 或 fallback 获取
+  double fov_half_pitch_{0.26};       // 视场半角 pitch (rad)
+  double fov_margin_{0.05};           // 静态安全裕度 (rad)
+  double fov_slack_weight_{1000.0};   // slack 惩罚权重
+  int fov_constraint_steps_{0};       // 约束步数 (0 = 全部 N 步)
+  bool enable_dynamic_margin_{false}; // 动态 margin
+  double margin_vel_scale_{0.01};     // 速度→margin 缩放
+  double fallback_fov_yaw_{0.35};     // camera_info 未收到时的 fallback
+  double fallback_fov_pitch_{0.26};
+  bool camera_info_received_{false};  // 是否已收到 camera_info
+
+  // FOV 约束 QP 扩展专用求解器（维度不同于原始 QP，需独立实例）
+  mpc::QPSolver qp_solver_fov_;
+
+  /**
+   * @brief 构建 FOV 软约束扩展 QP 并求解, 返回原始控制变量维度的结果
+   */
+  mpc::QPResult solveFovConstrainedQP(
+    const Eigen::MatrixXd & H,
+    const Eigen::VectorXd & f,
+    const Eigen::VectorXd & lb,
+    const Eigen::VectorXd & ub,
+    const mpc::GimbalDynamicsModel::StateVector & x0,
+    const Eigen::VectorXd & X_ref,
+    const GimbalControlContext & context);
+
   /**
    * @brief QP 求解失败时回退到直接瞄准参考轨迹首步
    */

@@ -347,6 +347,133 @@ public:
     return buildWeightR(N, r_yaw * scale, r_pitch * scale);
   }
 
+  /**
+   * @brief 构建 FOV 软约束扩展 QP
+   *
+   * 将原始 QP (决策变量 U ∈ R^{2N}) 扩展为带 slack 变量的 QP
+   * (决策变量 Z = [U; s] ∈ R^{2N + 2K}, K 为约束步数):
+   *
+   *   min  0.5 Z^T H_ext Z + f_ext^T Z
+   *   s.t. lb_ext <= Z <= ub_ext       (box 约束)
+   *        lbA    <= A_con Z <= ubA    (FOV 线性约束)
+   *
+   * FOV 约束: 对每个约束步 k (k = 0..K-1):
+   *   e_yaw_k   = Sel_yaw_k (A_pred x0 + B_ctrl U) - X_ref_yaw_k
+   *   e_pitch_k = Sel_pitch_k (A_pred x0 + B_ctrl U) - X_ref_pitch_k
+   *
+   *   e_yaw_k   - s_yaw_k   <= fov_yaw - margin     (上界)
+   *   -e_yaw_k  - s_yaw_k   <= fov_yaw - margin     (下界, 等价 e >= -(fov-margin)+s)
+   *   e_pitch_k - s_pitch_k <= fov_pitch - margin
+   *   -e_pitch_k - s_pitch_k <= fov_pitch - margin
+   *
+   * s >= 0, slack 惩罚: w_slack * sum(s_k^2)
+   *
+   * @param H_orig         原始 Hessian (2N × 2N)
+   * @param f_orig         原始梯度 (2N)
+   * @param A_pred         预测状态矩阵 (4N × 4)
+   * @param B_ctrl         控制矩阵 (4N × 2N)
+   * @param x0             当前状态 (4)
+   * @param X_ref          参考轨迹 (4N)
+   * @param N              总预测步数
+   * @param K              约束步数 (K <= N, 仅对前 K 步施加 FOV 约束)
+   * @param fov_half_yaw   camera yaw 视场半角 (rad)
+   * @param fov_half_pitch camera pitch 视场半角 (rad)
+   * @param margin         安全裕度 (rad)
+   * @param slack_weight   slack 惩罚权重
+   * @param[out] H_ext     扩展 Hessian (2N+2K × 2N+2K)
+   * @param[out] f_ext     扩展梯度 (2N+2K)
+   * @param[out] A_con     约束矩阵 (4K × 2N+2K)
+   * @param[out] lbA       约束下界 (4K)
+   * @param[out] ubA       约束上界 (4K)
+   */
+  static void buildFovSoftConstraintQP(
+    const Eigen::MatrixXd & H_orig,
+    const Eigen::VectorXd & f_orig,
+    const Eigen::MatrixXd & A_pred,
+    const Eigen::MatrixXd & B_ctrl,
+    const StateVector & x0,
+    const Eigen::VectorXd & X_ref,
+    int N, int K,
+    double fov_half_yaw,
+    double fov_half_pitch,
+    double margin,
+    double slack_weight,
+    Eigen::MatrixXd & H_ext,
+    Eigen::VectorXd & f_ext,
+    Eigen::MatrixXd & A_con,
+    Eigen::VectorXd & lbA,
+    Eigen::VectorXd & ubA)
+  {
+    const int nx = STATE_DIM;
+    const int nu = CONTROL_DIM;
+    const int n_u = nu * N;        // 原始控制变量维度
+    const int n_s = nu * K;        // slack 变量维度 (2 per step: yaw + pitch)
+    const int n_z = n_u + n_s;     // 扩展决策变量 Z = [U; s]
+    const int n_con = 2 * nu * K;  // 约束数: 4K (K步 × 2轴 × 上下界)
+
+    // ── 1. 扩展 Hessian: [[H, 0]; [0, 2*w*I]] ──
+    H_ext = Eigen::MatrixXd::Zero(n_z, n_z);
+    H_ext.topLeftCorner(n_u, n_u) = H_orig;
+    for (int i = 0; i < n_s; ++i) {
+      H_ext(n_u + i, n_u + i) = 2.0 * slack_weight;
+    }
+
+    // ── 2. 扩展梯度: [f; 0] ──
+    f_ext = Eigen::VectorXd::Zero(n_z);
+    f_ext.head(n_u) = f_orig;
+
+    // ── 3. 预计算预测误差的自由响应部分 ──
+    // X_free = A_pred * x0, X_forced = B_ctrl * U
+    // e_k = (X_free + X_forced)_k - X_ref_k (分 yaw/pitch)
+    Eigen::VectorXd X_free = A_pred * x0;
+
+    // ── 4. 构建约束矩阵 A_con 和边界 ──
+    // 约束排列: [yaw_upper_0, yaw_lower_0, pitch_upper_0, pitch_lower_0,
+    //            yaw_upper_1, yaw_lower_1, pitch_upper_1, pitch_lower_1, ...]
+    A_con = Eigen::MatrixXd::Zero(n_con, n_z);
+    ubA = Eigen::VectorXd::Zero(n_con);
+    lbA = Eigen::VectorXd::Constant(n_con, -1e20);  // 单侧约束
+
+    double bound_yaw = fov_half_yaw - margin;
+    double bound_pitch = fov_half_pitch - margin;
+    if (bound_yaw < 0.0) bound_yaw = 0.0;
+    if (bound_pitch < 0.0) bound_pitch = 0.0;
+
+    for (int k = 0; k < K; ++k) {
+      // 从 B_ctrl 提取第 k 步的 yaw 行 (行索引 k*nx + 0) 和 pitch 行 (行索引 k*nx + 1)
+      Eigen::RowVectorXd B_yaw_k   = B_ctrl.row(k * nx + 0);   // (1 × 2N)
+      Eigen::RowVectorXd B_pitch_k = B_ctrl.row(k * nx + 1);   // (1 × 2N)
+
+      // 自由响应分量
+      double free_yaw_k   = X_free(k * nx + 0) - X_ref(k * nx + 0);
+      double free_pitch_k = X_free(k * nx + 1) - X_ref(k * nx + 1);
+
+      int row_base = k * 4;  // 每步 4 个约束
+      int s_yaw_idx   = n_u + k * nu + 0;  // slack yaw 在 Z 中的索引
+      int s_pitch_idx = n_u + k * nu + 1;  // slack pitch 在 Z 中的索引
+
+      // yaw 上界: B_yaw_k * U - s_yaw_k <= bound_yaw - free_yaw_k
+      A_con.block(row_base + 0, 0, 1, n_u) = B_yaw_k;
+      A_con(row_base + 0, s_yaw_idx) = -1.0;
+      ubA(row_base + 0) = bound_yaw - free_yaw_k;
+
+      // yaw 下界: -B_yaw_k * U - s_yaw_k <= bound_yaw + free_yaw_k
+      A_con.block(row_base + 1, 0, 1, n_u) = -B_yaw_k;
+      A_con(row_base + 1, s_yaw_idx) = -1.0;
+      ubA(row_base + 1) = bound_yaw + free_yaw_k;
+
+      // pitch 上界: B_pitch_k * U - s_pitch_k <= bound_pitch - free_pitch_k
+      A_con.block(row_base + 2, 0, 1, n_u) = B_pitch_k;
+      A_con(row_base + 2, s_pitch_idx) = -1.0;
+      ubA(row_base + 2) = bound_pitch - free_pitch_k;
+
+      // pitch 下界: -B_pitch_k * U - s_pitch_k <= bound_pitch + free_pitch_k
+      A_con.block(row_base + 3, 0, 1, n_u) = -B_pitch_k;
+      A_con(row_base + 3, s_pitch_idx) = -1.0;
+      ubA(row_base + 3) = bound_pitch + free_pitch_k;
+    }
+  }
+
 private:
   void buildMatrices()
   {

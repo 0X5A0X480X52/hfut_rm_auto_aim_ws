@@ -277,6 +277,12 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       std::bind(&GimbalPipelineNode::jointStateCallback, this,
                 std::placeholders::_1));
 
+  // Subscribe: camera_info (for FOV soft constraint)
+  camera_info_sub_ = create_subscription<sensor_msgs::msg::CameraInfo>(
+      "camera_info", rclcpp::SensorDataQoS(),
+      std::bind(&GimbalPipelineNode::cameraInfoCallback, this,
+                std::placeholders::_1));
+
   // Publish: cmd_gimbal (output to serial driver)
   gimbal_cmd_pub_ = create_publisher<rm_interfaces::msg::GimbalCmd>(
       "cmd_gimbal", rclcpp::SensorDataQoS());
@@ -540,6 +546,16 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.mpc.vel_clamp.enable",          false);
   declare_parameter("controller.mpc.vel_clamp.max_linear_speed", 5.0);
   declare_parameter("controller.mpc.vel_clamp.max_v_yaw",        10.0);
+
+  // MPC FOV 软约束
+  declare_parameter("controller.mpc.fov_constraint.enable",                  false);
+  declare_parameter("controller.mpc.fov_constraint.margin",                  0.05);
+  declare_parameter("controller.mpc.fov_constraint.slack_weight",            1000.0);
+  declare_parameter("controller.mpc.fov_constraint.constraint_steps",        0);
+  declare_parameter("controller.mpc.fov_constraint.dynamic_margin.enable",   false);
+  declare_parameter("controller.mpc.fov_constraint.dynamic_margin.vel_scale",0.01);
+  declare_parameter("controller.mpc.fov_constraint.fallback_fov_yaw",        0.35);
+  declare_parameter("controller.mpc.fov_constraint.fallback_fov_pitch",      0.26);
 
   // ─── GimbalCmd 输出端保护滤波器 ──────────────────────────────
   // 0. Clamping — 绝对限幅
@@ -1388,6 +1404,15 @@ void GimbalPipelineNode::initGimbalStrategies() {
       get_parameter("controller.mpc.vel_clamp.max_v_yaw").as_double();
     mpc_s->setVelocityClamp(vel_clamp_cfg);
   }
+  mpc_s->setFovConstraintParameters(
+    get_parameter("controller.mpc.fov_constraint.enable").as_bool(),
+    get_parameter("controller.mpc.fov_constraint.margin").as_double(),
+    get_parameter("controller.mpc.fov_constraint.slack_weight").as_double(),
+    get_parameter("controller.mpc.fov_constraint.constraint_steps").as_int(),
+    get_parameter("controller.mpc.fov_constraint.dynamic_margin.enable").as_bool(),
+    get_parameter("controller.mpc.fov_constraint.dynamic_margin.vel_scale").as_double(),
+    get_parameter("controller.mpc.fov_constraint.fallback_fov_yaw").as_double(),
+    get_parameter("controller.mpc.fov_constraint.fallback_fov_pitch").as_double());
   gimbal_strategies_["mpc"] = mpc_s;
 
   auto sm_s = std::make_shared<gimbal_controller::StateMachineStrategy>();
@@ -1408,6 +1433,32 @@ void GimbalPipelineNode::jointStateCallback(
     else if (msg->name[i] == "pitch_joint")
       current_pitch_ = msg->position[i];
   }
+}
+
+void GimbalPipelineNode::cameraInfoCallback(
+    const sensor_msgs::msg::CameraInfo::SharedPtr msg) {
+  if (msg->k[0] < 1e-6 || msg->k[4] < 1e-6 || msg->width == 0 || msg->height == 0) {
+    return;  // 无效的相机内参
+  }
+  double fx = msg->k[0];
+  double fy = msg->k[4];
+  double fov_half_yaw = std::atan(static_cast<double>(msg->width) / (2.0 * fx));
+  double fov_half_pitch = std::atan(static_cast<double>(msg->height) / (2.0 * fy));
+
+  // 更新 MPC 策略的 FOV
+  auto mpc_it = gimbal_strategies_.find("mpc");
+  if (mpc_it != gimbal_strategies_.end()) {
+    auto mpc_s = std::dynamic_pointer_cast<gimbal_controller::MpcControlStrategy>(
+        mpc_it->second);
+    if (mpc_s) {
+      mpc_s->updateFov(fov_half_yaw, fov_half_pitch);
+    }
+  }
+
+  RCLCPP_INFO_ONCE(get_logger(),
+      "[FOV] camera_info received: fov_yaw=%.1f° fov_pitch=%.1f° (fx=%.1f fy=%.1f %dx%d)",
+      fov_half_yaw * 2.0 * 180.0 / M_PI, fov_half_pitch * 2.0 * 180.0 / M_PI,
+      fx, fy, msg->width, msg->height);
 }
 
 void GimbalPipelineNode::updateGimbalState() {

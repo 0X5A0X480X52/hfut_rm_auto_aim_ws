@@ -14,6 +14,7 @@
 #include <vector>
 
 #include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
@@ -105,6 +106,7 @@ class GimbalPipelineNode : public rclcpp::Node {
   void initGimbalComponents();
   void initGimbalStrategies();
   void jointStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg);
+  void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg);
   void updateGimbalState();
   void timerCallback();
   void setModeCallback(
@@ -195,6 +197,7 @@ class GimbalPipelineNode : public rclcpp::Node {
   message_filters::Subscriber<rm_interfaces::msg::Armors> armors_sub_;
   std::shared_ptr<tf2_armor_filter> tf2_filter_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub_;
 
   // Publishers
   rclcpp::Publisher<rm_interfaces::msg::GimbalCmd>::SharedPtr gimbal_cmd_pub_;

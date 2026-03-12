@@ -78,6 +78,33 @@ void MpcControlStrategy::setManeuverAdaptParameters(
   has_prev_velocity_ = false;
 }
 
+void MpcControlStrategy::setFovConstraintParameters(
+  bool enable, double margin, double slack_weight, int constraint_steps,
+  bool dynamic_margin_enable, double margin_vel_scale,
+  double fallback_fov_yaw, double fallback_fov_pitch)
+{
+  enable_fov_constraint_ = enable;
+  fov_margin_ = margin;
+  fov_slack_weight_ = slack_weight;
+  fov_constraint_steps_ = constraint_steps;
+  enable_dynamic_margin_ = dynamic_margin_enable;
+  margin_vel_scale_ = margin_vel_scale;
+  fallback_fov_yaw_ = fallback_fov_yaw;
+  fallback_fov_pitch_ = fallback_fov_pitch;
+  // 初始化 FOV 为 fallback 值，收到 camera_info 后会被覆盖
+  if (!camera_info_received_) {
+    fov_half_yaw_ = fallback_fov_yaw;
+    fov_half_pitch_ = fallback_fov_pitch;
+  }
+}
+
+void MpcControlStrategy::updateFov(double fov_half_yaw, double fov_half_pitch)
+{
+  fov_half_yaw_ = fov_half_yaw;
+  fov_half_pitch_ = fov_half_pitch;
+  camera_info_received_ = true;
+}
+
 void MpcControlStrategy::rebuildMatrices()
 {
   dynamics_model_.buildPredictionMatrices(N_, A_pred_, B_ctrl_);
@@ -197,13 +224,18 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     Eigen::VectorXd f;
     mpc::GimbalDynamicsModel::buildQP(A_pred_, B_ctrl_, D_, Q_eff, R_eff, S_blk_, x0, X_ref, H, f);
 
-    // 6) 框约束
+    // 6) 框约束 + 可选 FOV 软约束
     int n_vars = 2 * N_;
     Eigen::VectorXd lb = Eigen::VectorXd::Constant(n_vars, -max_accel_);
     Eigen::VectorXd ub = Eigen::VectorXd::Constant(n_vars, max_accel_);
 
     // 7) 求解 QP
-    auto result = qp_solver_.solve(H, f, lb, ub);
+    mpc::QPResult result;
+    if (enable_fov_constraint_) {
+      result = solveFovConstrainedQP(H, f, lb, ub, x0, X_ref, context);
+    } else {
+      result = qp_solver_.solve(H, f, lb, ub);
+    }
     if (!result.success) {
       std::cout << "MPC QP solve failed (maneuver-adapt), fallback to direct aim.  " << std::endl;
       return fallbackDirectAim(context, X_ref);
@@ -214,7 +246,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     // 8) 提取首步控制量
     mpc::GimbalDynamicsModel::ControlVector u_opt(result.U(0), result.U(1));
     auto x_next = dynamics_model_.predict(x0, u_opt);
-    double cmd_yaw   = x_next(0);
+    double cmd_yaw   = angles::normalize_angle(x_next(0));
     double cmd_pitch = x_next(1);
 
     double yaw_diff   = angles::normalize_angle(cmd_yaw   - context.current_yaw);
@@ -259,13 +291,18 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   Eigen::VectorXd f;
   mpc::GimbalDynamicsModel::buildQP(A_pred_, B_ctrl_, D_, Q_blk_, R_blk_, S_blk_, x0, X_ref, H, f);
 
-  // 6) 框约束
+  // 6) 框约束 + 可选 FOV 软约束
   int n_vars = 2 * N_;
   Eigen::VectorXd lb = Eigen::VectorXd::Constant(n_vars, -max_accel_);
   Eigen::VectorXd ub = Eigen::VectorXd::Constant(n_vars, max_accel_);
 
   // 7) 求解 QP
-  auto result = qp_solver_.solve(H, f, lb, ub);
+  mpc::QPResult result;
+  if (enable_fov_constraint_) {
+    result = solveFovConstrainedQP(H, f, lb, ub, x0, X_ref, context);
+  } else {
+    result = qp_solver_.solve(H, f, lb, ub);
+  }
   if (!result.success) {
     // QP 求解失败: 回退到弹道直瞄
     std::cout << "MPC QP solve failed, fallback to direct aim.  " << std::endl;
@@ -279,7 +316,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   mpc::GimbalDynamicsModel::ControlVector u_opt(result.U(0), result.U(1));
   auto x_next = dynamics_model_.predict(x0, u_opt);
 
-  double cmd_yaw = x_next(0);
+  double cmd_yaw = angles::normalize_angle(x_next(0));
   double cmd_pitch = x_next(1);
 
   // std::cout << "MPC optimal control: yaw_accel=" << u_opt(0) << " rad/s^2, pitch_accel=" << u_opt(1)
@@ -330,6 +367,64 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   cmd.fire_advice = fire_advice;
 
   return cmd;
+}
+
+mpc::QPResult MpcControlStrategy::solveFovConstrainedQP(
+  const Eigen::MatrixXd & H,
+  const Eigen::VectorXd & f,
+  const Eigen::VectorXd & lb,
+  const Eigen::VectorXd & ub,
+  const mpc::GimbalDynamicsModel::StateVector & x0,
+  const Eigen::VectorXd & X_ref,
+  const GimbalControlContext & context)
+{
+  const int n_u = 2 * N_;
+
+  // 确定约束步数 K
+  int K = (fov_constraint_steps_ > 0 && fov_constraint_steps_ < N_)
+    ? fov_constraint_steps_ : N_;
+
+  // 计算有效 margin（可选动态调整）
+  double margin_eff = fov_margin_;
+  if (enable_dynamic_margin_) {
+    double v_target = std::sqrt(
+      context.target_robot.center_velocity.x * context.target_robot.center_velocity.x +
+      context.target_robot.center_velocity.y * context.target_robot.center_velocity.y +
+      context.target_robot.center_velocity.z * context.target_robot.center_velocity.z);
+    margin_eff += margin_vel_scale_ * v_target;
+  }
+
+  // 构建 FOV 软约束扩展 QP
+  Eigen::MatrixXd H_ext, A_con;
+  Eigen::VectorXd f_ext, lbA, ubA;
+
+  mpc::GimbalDynamicsModel::buildFovSoftConstraintQP(
+    H, f, A_pred_, B_ctrl_, x0, X_ref,
+    N_, K,
+    fov_half_yaw_, fov_half_pitch_, margin_eff, fov_slack_weight_,
+    H_ext, f_ext, A_con, lbA, ubA);
+
+  // 扩展 box 约束: [U bounds; slack >= 0]
+  const int n_s = 2 * K;
+  const int n_z = n_u + n_s;
+  Eigen::VectorXd lb_ext(n_z), ub_ext(n_z);
+  lb_ext.head(n_u) = lb;
+  lb_ext.tail(n_s) = Eigen::VectorXd::Zero(n_s);          // slack >= 0
+  ub_ext.head(n_u) = ub;
+  ub_ext.tail(n_s) = Eigen::VectorXd::Constant(n_s, 1e6); // slack 上界
+
+  // 求解扩展 QP（使用独立求解器实例，因为维度不同于原始 QP）
+  auto result_ext = qp_solver_fov_.solve(H_ext, f_ext, lb_ext, ub_ext, A_con, lbA, ubA);
+
+  // 提取原始控制变量部分
+  mpc::QPResult result;
+  result.success = result_ext.success;
+  result.num_iterations = result_ext.num_iterations;
+  result.cost = result_ext.cost;
+  if (result_ext.success) {
+    result.U = result_ext.U.head(n_u);
+  }
+  return result;
 }
 
 rm_interfaces::msg::GimbalCmd MpcControlStrategy::fallbackDirectAim(

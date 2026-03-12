@@ -104,12 +104,15 @@ Eigen::VectorXd MpcReferenceGenerator::generate(
     }
 
     // 6. 估计参考角速度 (数值微分)
-    double yaw_dot_ref = (yaw_ref - prev_yaw_ref) / dt;
+    //    对 yaw 做 unwrap 避免 ±π 跳变导致 yaw_dot 爆炸
+    double yaw_ref_unwrapped = prev_yaw_ref +
+      angles::shortest_angular_distance(prev_yaw_ref, yaw_ref);
+    double yaw_dot_ref = (yaw_ref_unwrapped - prev_yaw_ref) / dt;
     double pitch_dot_ref = (pitch_ref - prev_pitch_ref) / dt;
 
-    X_ref.segment(k * nx, nx) << yaw_ref, pitch_ref, yaw_dot_ref, pitch_dot_ref;
+    X_ref.segment(k * nx, nx) << yaw_ref_unwrapped, pitch_ref, yaw_dot_ref, pitch_dot_ref;
 
-    prev_yaw_ref = yaw_ref;
+    prev_yaw_ref = yaw_ref_unwrapped;
     prev_pitch_ref = pitch_ref;
 
     // Debug 输出
@@ -247,13 +250,16 @@ Eigen::VectorXd MpcReferenceGenerator::generateWithDelay(
     }
 
     // 8. 估计参考角速度
-    double yaw_dot_ref = (yaw_ref - prev_yaw_ref) / dt;
+    //    对 yaw 做 unwrap 避免 ±π 跳变导致 yaw_dot 爆炸
+    double yaw_ref_unwrapped = prev_yaw_ref +
+      angles::shortest_angular_distance(prev_yaw_ref, yaw_ref);
+    double yaw_dot_ref = (yaw_ref_unwrapped - prev_yaw_ref) / dt;
     double pitch_dot_ref = (pitch_ref - prev_pitch_ref) / dt;
 
     // 9. 填充参考轨迹
-    X_ref.segment(k * nx, nx) << yaw_ref, pitch_ref, yaw_dot_ref, pitch_dot_ref;
+    X_ref.segment(k * nx, nx) << yaw_ref_unwrapped, pitch_ref, yaw_dot_ref, pitch_dot_ref;
 
-    prev_yaw_ref = yaw_ref;
+    prev_yaw_ref = yaw_ref_unwrapped;
     prev_pitch_ref = pitch_ref;
   }
 
