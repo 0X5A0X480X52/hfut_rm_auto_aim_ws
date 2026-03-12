@@ -279,7 +279,8 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     cmd.pitch      = cmd_pitch * 180.0 / M_PI;
     cmd.yaw_diff   = yaw_diff   * 180.0 / M_PI;
     cmd.pitch_diff = pitch_diff * 180.0 / M_PI;
-    cmd.distance   = distance;
+    // TEMP_LOST 时无 detector 实际观测，distance 输出 -1 以示无有效测量
+    cmd.distance   = context.is_temp_lost ? -1.0 : distance;
     cmd.fire_advice = fire_advice;
     return cmd;
   }
@@ -363,7 +364,8 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   cmd.pitch = cmd_pitch * 180.0 / M_PI;
   cmd.yaw_diff = yaw_diff * 180.0 / M_PI;
   cmd.pitch_diff = pitch_diff * 180.0 / M_PI;
-  cmd.distance = distance;
+  // TEMP_LOST 时无 detector 实际观测，distance 输出 -1 以示无有效测量
+  cmd.distance = context.is_temp_lost ? -1.0 : distance;
   cmd.fire_advice = fire_advice;
 
   return cmd;
@@ -456,7 +458,8 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::fallbackDirectAim(
   cmd.pitch = ref_pitch * 180.0 / M_PI;
   cmd.yaw_diff = yaw_diff * 180.0 / M_PI;
   cmd.pitch_diff = pitch_diff * 180.0 / M_PI;
-  cmd.distance = distance;
+  // TEMP_LOST 时无 detector 实际观测，distance 输出 -1 以示无有效测量
+  cmd.distance = context.is_temp_lost ? -1.0 : distance;
   cmd.fire_advice = fire_advice;
 
   return cmd;
