@@ -34,6 +34,9 @@ Eigen::VectorXd MpcReferenceGenerator::generate(
   Eigen::VectorXd X_ref(nx * N);
   X_ref.setZero();
 
+  // 轨迹生成前对速度和 yaw_velocity 执行 clamp
+  const auto clamped_robot = applyVelocityClamp(target_robot);
+
   if (!position_calculator_ || !armor_selector_ || !local_compensator_) {
     // 组件未初始化，返回当前位置作为参考
     for (int k = 0; k < N; ++k) {
@@ -49,7 +52,7 @@ Eigen::VectorXd MpcReferenceGenerator::generate(
     double t_ahead = (k + 1) * dt;
 
     // 1. 传播目标状态到未来 t_ahead 秒
-    auto future_robot = propagateRobot(target_robot, t_ahead);
+    auto future_robot = propagateRobot(clamped_robot, t_ahead);
 
     // 2. 在预测位置计算装甲板坐标
     auto armor_positions = position_calculator_->calculatePredicted(future_robot, 0.0);
@@ -160,6 +163,9 @@ Eigen::VectorXd MpcReferenceGenerator::generateWithDelay(
   Eigen::VectorXd X_ref(nx * N);
   X_ref.setZero();
 
+  // 轨迹生成前对速度和 yaw_velocity 执行 clamp
+  const auto clamped_robot = applyVelocityClamp(target_robot);
+
   if (!position_calculator_ || !armor_selector_ || !local_compensator_) {
     for (int k = 0; k < N; ++k) {
       X_ref.segment(k * nx, nx) << current_yaw, current_pitch, 0.0, 0.0;
@@ -177,7 +183,7 @@ Eigen::VectorXd MpcReferenceGenerator::generateWithDelay(
     double t_predict = delay_config.base_delay_s + t_ahead;
 
     // 2. 传播目标状态到未来 t_predict 秒
-    auto future_robot = propagateRobot(target_robot, t_predict);
+    auto future_robot = propagateRobot(clamped_robot, t_predict);
 
     // 3. 子弹飞行时间迭代补偿
     Eigen::Vector3d pred_center(
@@ -188,7 +194,7 @@ Eigen::VectorXd MpcReferenceGenerator::generateWithDelay(
     double t_flight = 0.0;
     for (int iter = 0; iter < delay_config.flight_time_iters; ++iter) {
       t_flight = local_compensator_->getFlyingTime(pred_center);
-      auto flight_robot = propagateRobot(target_robot, t_predict + t_flight);
+      auto flight_robot = propagateRobot(clamped_robot, t_predict + t_flight);
       pred_center = Eigen::Vector3d(
         flight_robot.center_position.x,
         flight_robot.center_position.y,
@@ -196,7 +202,7 @@ Eigen::VectorXd MpcReferenceGenerator::generateWithDelay(
     }
 
     // 用飞行时间补偿后的时刻重新传播整个机器人状态 (含 yaw)
-    auto compensated_robot = propagateRobot(target_robot, t_predict + t_flight);
+    auto compensated_robot = propagateRobot(clamped_robot, t_predict + t_flight);
 
     // 4. 在补偿后位置计算装甲板坐标
     auto armor_positions = position_calculator_->calculatePredicted(compensated_robot, 0.0);
@@ -252,6 +258,36 @@ Eigen::VectorXd MpcReferenceGenerator::generateWithDelay(
   }
 
   return X_ref;
+}
+
+rm_interfaces::msg::TrackedRobot MpcReferenceGenerator::applyVelocityClamp(
+  const rm_interfaces::msg::TrackedRobot & robot) const
+{
+  if (!vel_clamp_config_.enable) {
+    return robot;
+  }
+
+  auto result = robot;
+
+  // 线速度: 保持方向不变，对标量限幅
+  const double vx = robot.center_velocity.x;
+  const double vy = robot.center_velocity.y;
+  const double vz = robot.center_velocity.z;
+  const double speed = std::sqrt(vx * vx + vy * vy + vz * vz);
+  if (speed > vel_clamp_config_.max_linear_speed && speed > 1e-9) {
+    const double scale = vel_clamp_config_.max_linear_speed / speed;
+    result.center_velocity.x = vx * scale;
+    result.center_velocity.y = vy * scale;
+    result.center_velocity.z = vz * scale;
+  }
+
+  // yaw 角速度: 直接限幅
+  result.yaw_velocity = std::clamp(
+    robot.yaw_velocity,
+    -vel_clamp_config_.max_v_yaw,
+    vel_clamp_config_.max_v_yaw);
+
+  return result;
 }
 
 }  // namespace mpc

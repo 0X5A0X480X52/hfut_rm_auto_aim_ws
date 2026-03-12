@@ -52,11 +52,33 @@ struct DelayCompConfig
   int flight_time_iters{2};     // 飞行时间迭代次数
 };
 
+/**
+ * @brief 轨迹生成前的速度 clamp 配置
+ *
+ * 对传入的 TrackedRobot 状态执行限幅:
+ *   - center_velocity: 对速度标量限幅并保持方向不变
+ *   - yaw_velocity:    直接限幅到 [-max_v_yaw, +max_v_yaw]
+ */
+struct VelocityClampConfig
+{
+  bool   enable{false};          // 是否启用
+  double max_linear_speed{5.0};  // 线速度标量上限 (m/s)
+  double max_v_yaw{10.0};        // yaw 角速度上限 (rad/s)
+};
+
 class MpcReferenceGenerator
 {
 public:
   MpcReferenceGenerator() = default;
   ~MpcReferenceGenerator() = default;
+
+  /**
+   * @brief 设置速度 clamp 配置
+   */
+  void setVelocityClamp(const VelocityClampConfig & cfg)
+  {
+    vel_clamp_config_ = cfg;
+  }
 
   /**
    * @brief 注入组件依赖
@@ -122,9 +144,18 @@ private:
     const rm_interfaces::msg::TrackedRobot & robot,
     double dt);
 
+  /**
+   * @brief 对 TrackedRobot 的速度分量执行 clamp
+   * 线速度保持方向不变，仅对标量限幅；yaw_velocity 直接 clamp
+   */
+  rm_interfaces::msg::TrackedRobot applyVelocityClamp(
+    const rm_interfaces::msg::TrackedRobot & robot) const;
+
   std::shared_ptr<ArmorPositionCalculator> position_calculator_;
   std::shared_ptr<ArmorSelector> armor_selector_;
   std::shared_ptr<LocalTrajectoryCompensator> local_compensator_;
+
+  VelocityClampConfig vel_clamp_config_{};
 };
 
 }  // namespace mpc

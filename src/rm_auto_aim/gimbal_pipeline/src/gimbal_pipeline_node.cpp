@@ -536,6 +536,11 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.mpc.maneuver_adapt.tau",    10.0);
   declare_parameter("controller.mpc.maneuver_adapt.r_scale", 10.0);
 
+  // MPC 轨迹生成前速度 clamp
+  declare_parameter("controller.mpc.vel_clamp.enable",          false);
+  declare_parameter("controller.mpc.vel_clamp.max_linear_speed", 5.0);
+  declare_parameter("controller.mpc.vel_clamp.max_v_yaw",        10.0);
+
   // ─── GimbalCmd 输出端保护滤波器 ──────────────────────────────
   // 0. Clamping — 绝对限幅
   declare_parameter("controller.output_filter.enable_clamping",         true);
@@ -1373,6 +1378,16 @@ void GimbalPipelineNode::initGimbalStrategies() {
     get_parameter("controller.mpc.maneuver_adapt.eta").as_double(),
     get_parameter("controller.mpc.maneuver_adapt.tau").as_double(),
     get_parameter("controller.mpc.maneuver_adapt.r_scale").as_double());
+  {
+    gimbal_controller::mpc::VelocityClampConfig vel_clamp_cfg;
+    vel_clamp_cfg.enable =
+      get_parameter("controller.mpc.vel_clamp.enable").as_bool();
+    vel_clamp_cfg.max_linear_speed =
+      get_parameter("controller.mpc.vel_clamp.max_linear_speed").as_double();
+    vel_clamp_cfg.max_v_yaw =
+      get_parameter("controller.mpc.vel_clamp.max_v_yaw").as_double();
+    mpc_s->setVelocityClamp(vel_clamp_cfg);
+  }
   gimbal_strategies_["mpc"] = mpc_s;
 
   auto sm_s = std::make_shared<gimbal_controller::StateMachineStrategy>();

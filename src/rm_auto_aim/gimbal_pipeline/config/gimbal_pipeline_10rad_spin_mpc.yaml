@@ -258,6 +258,15 @@ gimbal_pipeline:
     controller.mpc.maneuver_adapt.tau: 10.0        # Q 衰减时间常数 (步数尺度)，影响远期衰减速度
     controller.mpc.maneuver_adapt.r_scale: 10.0    # R 放大系数；α=1 时 R_eff = R*(1+r_scale)
 
+    # MPC 轨迹生成前速度 clamp
+    # 在轨迹生成之前对目标速度进行限幅，防止极端高速状态导致参考轨迹发散:
+    #   center_velocity: 保持方向不变，对速度标量 clamp 到 max_linear_speed
+    #   yaw_velocity:    直接 clamp 到 [-max_v_yaw, +max_v_yaw]
+    # enable: false 时不做任何处理，行为与原版完全一致
+    controller.mpc.vel_clamp.enable: false
+    controller.mpc.vel_clamp.max_linear_speed: 5.0   # 线速度标量上限 (m/s)
+    controller.mpc.vel_clamp.max_v_yaw: 10.0         # yaw 角速度上限 (rad/s)
+
     # MPC 延时补偿: 启用后参考轨迹生成考虑 processing_delay + controller_delay + prediction_delay
     # 并对每步迭代补偿子弹飞行时间、选板时考虑延迟后的云台姿态
     # enable_delay_compensation: false 时行为与原版完全一致

@@ -93,6 +93,14 @@ public:
    */
   void initReferenceGenerator();
 
+  /**
+   * @brief 设置轨迹生成前的速度 clamp 参数
+   */
+  void setVelocityClamp(const mpc::VelocityClampConfig & cfg)
+  {
+    ref_generator_.setVelocityClamp(cfg);
+  }
+
 private:
   // MPC 核心模块
   mpc::GimbalDynamicsModel dynamics_model_;
