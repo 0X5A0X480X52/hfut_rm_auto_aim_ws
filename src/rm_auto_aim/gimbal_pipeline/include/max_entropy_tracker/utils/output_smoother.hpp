@@ -77,6 +77,17 @@ struct SmootherConfig {
 
   // Default sampling frequency
   double default_freq = 30.0;
+
+  // ---- Outlier filter (independent of smoother.enable) ----
+  // Sits between UKF output and smooth(); when outlier is detected the
+  // last valid SmoothedOutput is held (held-frame strategy).
+  bool        enable_outlier_filter{false};
+  std::string outlier_method{"mad"};      // "mad" | "iqr" | "mahalanobis"
+  int         outlier_window_size{10};    // rolling window length
+  int         outlier_min_samples{5};     // start filtering after N samples
+  double      outlier_mad_k{3.5};         // MAD threshold multiplier
+  double      outlier_iqr_k{1.5};         // IQR threshold multiplier
+  double      outlier_mahal_threshold{9.21}; // chi²(3) threshold
 };
 
 // ──────────────────────────────────────────────────────────

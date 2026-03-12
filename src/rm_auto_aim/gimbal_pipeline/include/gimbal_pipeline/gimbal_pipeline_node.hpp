@@ -38,6 +38,7 @@
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/tf_handler.hpp"
 #include "max_entropy_tracker/tracker_manager.hpp"
+#include "max_entropy_tracker/utils/observation_outlier_filter.hpp"
 #include "max_entropy_tracker/utils/output_smoother.hpp"
 
 // ─── target_selector internals ────────────────────────────────
@@ -139,6 +140,11 @@ class GimbalPipelineNode : public rclcpp::Node {
   std::unordered_map<std::string, OutputSmoother> smoothers_;
   std::unordered_map<std::string, int> last_obs_counts_;
   std::unordered_map<std::string, bool> last_dual_obs_;
+
+  // Outlier filter (per-robot, pre-smoother; independent of smoother.enable)
+  std::unordered_map<std::string, ObservationOutlierFilter> outlier_filters_;
+  // Last valid smoothed output cache — used by hold strategy on outlier frames
+  std::unordered_map<std::string, SmoothedOutput> last_smoothed_outputs_;
 
   /* ================================================================ */
   /*  Target selector state (from TargetSelectorNode)                 */

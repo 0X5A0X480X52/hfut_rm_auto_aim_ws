@@ -103,6 +103,17 @@ gimbal_pipeline:
     smoother.rm_convergence_eps: 0.0001
     smoother.default_freq: 30.0
 
+    # ---- Outlier filter (pre-smoother, independent of smoother.enable) ----
+    # When an outlier is detected the last valid SmoothedOutput is held
+    # (held-frame strategy) so One-Euro filter state is not corrupted.
+    smoother.enable_outlier_filter: false
+    smoother.outlier_method: "mad"        # "mad" | "iqr" | "mahalanobis"
+    smoother.outlier_window_size: 10      # rolling window length
+    smoother.outlier_min_samples: 5       # start filtering after N samples
+    smoother.outlier_mad_k: 3.5           # MAD: |val - median| > k * MAD
+    smoother.outlier_iqr_k: 1.5           # IQR: |val - median| > k * IQR
+    smoother.outlier_mahal_threshold: 9.21  # Mahalanobis: d2 > threshold
+
     # ═══════════════════════════════════════════════════════════════
     # Target selector parameters
     # ═══════════════════════════════════════════════════════════════

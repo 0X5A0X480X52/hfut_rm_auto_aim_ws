@@ -443,6 +443,15 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("smoother.rm_max_dz", 1.0);
   declare_parameter("smoother.rm_convergence_eps", 1e-4);
   declare_parameter("smoother.default_freq", 30.0);
+
+  // Outlier filter (independent of smoother.enable)
+  declare_parameter("smoother.enable_outlier_filter",    false);
+  declare_parameter("smoother.outlier_method",           std::string("mad"));
+  declare_parameter("smoother.outlier_window_size",      10);
+  declare_parameter("smoother.outlier_min_samples",      5);
+  declare_parameter("smoother.outlier_mad_k",            3.5);
+  declare_parameter("smoother.outlier_iqr_k",            1.5);
+  declare_parameter("smoother.outlier_mahal_threshold",  9.21);
 }
 
 void GimbalPipelineNode::declareTargetSelectorParameters() {
@@ -691,8 +700,27 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
   smoother_config_.default_freq =
       get_parameter("smoother.default_freq").as_double();
 
-  RCLCPP_INFO(get_logger(), "Tracker parameters applied (smoother %s)",
-              smoother_config_.enable ? "ON" : "OFF");
+  // Outlier filter parameters
+  smoother_config_.enable_outlier_filter =
+      get_parameter("smoother.enable_outlier_filter").as_bool();
+  smoother_config_.outlier_method =
+      get_parameter("smoother.outlier_method").as_string();
+  smoother_config_.outlier_window_size =
+      get_parameter("smoother.outlier_window_size").as_int();
+  smoother_config_.outlier_min_samples =
+      get_parameter("smoother.outlier_min_samples").as_int();
+  smoother_config_.outlier_mad_k =
+      get_parameter("smoother.outlier_mad_k").as_double();
+  smoother_config_.outlier_iqr_k =
+      get_parameter("smoother.outlier_iqr_k").as_double();
+  smoother_config_.outlier_mahal_threshold =
+      get_parameter("smoother.outlier_mahal_threshold").as_double();
+
+  RCLCPP_INFO(get_logger(),
+              "Tracker parameters applied (smoother %s, outlier_filter %s [%s])",
+              smoother_config_.enable ? "ON" : "OFF",
+              smoother_config_.enable_outlier_filter ? "ON" : "OFF",
+              smoother_config_.outlier_method.c_str());
 }
 
 /* ================================================================ */
@@ -778,6 +806,17 @@ void GimbalPipelineNode::armorsCallback(
         double dza = t->get_dza();
         sm.initialize(r1, r2, dza);
         smoothers_.emplace(rid, std::move(sm));
+
+        // Co-initialise outlier filter for this robot
+        OutlierFilterConfig ocfg;
+        ocfg.enable          = smoother_config_.enable_outlier_filter;
+        ocfg.method          = smoother_config_.outlier_method;
+        ocfg.window_size     = smoother_config_.outlier_window_size;
+        ocfg.min_samples     = smoother_config_.outlier_min_samples;
+        ocfg.mad_k           = smoother_config_.outlier_mad_k;
+        ocfg.iqr_k           = smoother_config_.outlier_iqr_k;
+        ocfg.mahal_threshold = smoother_config_.outlier_mahal_threshold;
+        outlier_filters_.emplace(rid, ObservationOutlierFilter(ocfg));
       }
     }
   }
@@ -786,6 +825,8 @@ void GimbalPipelineNode::armorsCallback(
   for (const auto &rid : removed) {
     smoothers_.erase(rid);
     last_dual_obs_.erase(rid);
+    outlier_filters_.erase(rid);
+    last_smoothed_outputs_.erase(rid);
   }
 
   // ── Step 3.5: Notify trackers that did NOT receive observations this frame ──
@@ -959,30 +1000,59 @@ rm_interfaces::msg::TrackedRobots GimbalPipelineNode::buildTrackedRobotsMsg(
     auto *tracker = tracker_manager_->get(rid);
     if (!tracker || (!tracker->is_tracking() && !tracker->is_temp_lost())) continue;
 
-    // Apply output smoothing
-    SmoothedOutput smoothed;
-    bool has_smoothed = false;
-    auto sm_it = smoothers_.find(rid);
-    if (sm_it != smoothers_.end() && smoother_config_.enable) {
-      auto pos = tracker->get_center_position();
-      auto idx = tracker->ukf().state_idx();
-      const auto &x = tracker->ukf().x();
-      Eigen::Vector3d vel(x(idx.VX()), x(idx.VY()), x(idx.VZ()));
-      double yaw = tracker->get_yaw();
-      double v_yaw = x(idx.DELTA_RATE());
-      auto [r1, r2] = tracker->get_radii();
-      double dza = tracker->get_dza();
+    // ── Extract raw tracker state ─────────────────────────────────
+    const auto pos  = tracker->get_center_position();
+    const auto idx  = tracker->ukf().state_idx();
+    const auto &x   = tracker->ukf().x();
+    const Eigen::Vector3d vel(x(idx.VX()), x(idx.VY()), x(idx.VZ()));
+    const double yaw   = tracker->get_yaw();
+    const double v_yaw = x(idx.DELTA_RATE());
+    const auto [r1, r2] = tracker->get_radii();
+    const double dza  = tracker->get_dza();
 
-      bool is_dual = false;
+    bool is_dual = false;
+    {
       auto dual_it = last_dual_obs_.find(rid);
       if (dual_it != last_dual_obs_.end()) is_dual = dual_it->second;
+    }
+    const rclcpp::Time stamp(header.stamp);
+    const double ts = stamp.seconds();
 
-      rclcpp::Time stamp(header.stamp);
-      double ts = stamp.seconds();
+    // ── Stage 1: Outlier detection (independent of smoother.enable) ──
+    // If an outlier is detected, hold the last valid SmoothedOutput so
+    // the One-Euro filter internal state is never corrupted by a jump.
+    SmoothedOutput smoothed;
+    bool has_smoothed = false;
+    bool is_outlier   = false;
 
-      smoothed = sm_it->second.smooth(pos, yaw, vel, v_yaw, r1, r2, dza,
-                                       is_dual, ts);
-      has_smoothed = true;
+    if (smoother_config_.enable_outlier_filter) {
+      auto of_it = outlier_filters_.find(rid);
+      if (of_it != outlier_filters_.end()) {
+        is_outlier = of_it->second.update(pos, yaw);
+      }
+    }
+
+    if (is_outlier) {
+      // Hold strategy: reuse last valid smoothed output
+      auto prev_it = last_smoothed_outputs_.find(rid);
+      if (prev_it != last_smoothed_outputs_.end()) {
+        smoothed     = prev_it->second;
+        has_smoothed = true;
+      }
+      // If no previous smoothed output exists (outlier on very first frame)
+      // fall through with has_smoothed = false → raw output is used downstream
+    } else {
+      // ── Stage 2: Output smoothing (independent switch) ────────────
+      auto sm_it = smoothers_.find(rid);
+      if (sm_it != smoothers_.end() && smoother_config_.enable) {
+        smoothed = sm_it->second.smooth(pos, yaw, vel, v_yaw, r1, r2, dza,
+                                         is_dual, ts);
+        has_smoothed = true;
+      }
+      // Update hold-cache with valid (non-outlier) smoothed result
+      if (has_smoothed) {
+        last_smoothed_outputs_[rid] = smoothed;
+      }
     }
 
     // Publish target for debug

@@ -149,8 +149,8 @@ bool AdaptiveArmorTracker::update(const std::vector<ObservationData> &obs) {
 
 bool AdaptiveArmorTracker::update_single(const ObservationData &obs,
                                          double override_pos_confidence) {
-  std::cout << "Updating with single observation: x=" << obs.x << " y=" << obs.y
-            << " z=" << obs.z << " yaw=" << obs.yaw << std::endl;
+  // std::cout << "Updating with single observation: x=" << obs.x << " y=" << obs.y
+  //           << " z=" << obs.z << " yaw=" << obs.yaw << std::endl;
   auto idx = ukf_.state_idx();
 
   auto [panel_id, center_yaw, matching_error] =
@@ -183,7 +183,13 @@ bool AdaptiveArmorTracker::update_single(const ObservationData &obs,
 
   bool ok = ukf_.update({obs}, {r_type}, {armor_layer}, h_conf, pos_conf,
                         panel_angle);
-  if (!ok) return false;
+  if (!ok) {
+    std::cerr << "[adaptive_tracker::update_single] ukf_.update failed "
+              << "panel_id=" << panel_id << " r_type=" << r_type
+              << " armor_layer=" << armor_layer << " h_conf=" << h_conf
+              << " pos_conf=" << pos_conf << std::endl;
+    return false;
+  }
 
   // ── Post-update mismatch detection ──
   // Run only when the filter has had a chance to estimate dza (dza_converged).
@@ -219,16 +225,16 @@ bool AdaptiveArmorTracker::update_single(const ObservationData &obs,
 
 bool AdaptiveArmorTracker::update_dual(const ObservationData &obs1,
                                        const ObservationData &obs2) {
-  std::cout << "Updating with dual observations:\n"
-            << "  obs1: x=" << obs1.x << " y=" << obs1.y << " z=" << obs1.z
-            << " yaw=" << obs1.yaw << "\n"
-            << "  obs2: x=" << obs2.x << " y=" << obs2.y << " z=" << obs2.z
-            << " yaw=" << obs2.yaw << std::endl;
+  // std::cout << "Updating with dual observations:\n"
+  //           << "  obs1: x=" << obs1.x << " y=" << obs1.y << " z=" << obs1.z
+  //           << " yaw=" << obs1.yaw << "\n"
+  //           << "  obs2: x=" << obs2.x << " y=" << obs2.y << " z=" << obs2.z
+  //           << " yaw=" << obs2.yaw << std::endl;
 
   // First: single update on obs1 with full position confidence
   bool single_ok = update_single(obs1, 1.0);
   if (!single_ok) {
-    std::cout << "[adaptive_tracker::update_dual] update_single(obs1) failed\n";
+    std::cerr << "[adaptive_tracker::update_dual] update_single(obs1) failed\n";
     return false;
   }
 
@@ -246,14 +252,14 @@ bool AdaptiveArmorTracker::update_dual(const ObservationData &obs1,
   std::string rt1 = PanelAssociator::get_r_type(pid1);
   std::string rt2 = PanelAssociator::get_r_type(pid2);
 
-  std::cout << "identify_dual" << std::endl;
+  // std::cout << "identify_dual" << std::endl;
   auto [l1, l2, h_conf] = height_identifier_.identify_dual(obs1.z, obs2.z);
-  std::cout << "identify_dual" << std::endl;
+  // std::cout << "identify_dual" << std::endl;
   height_confidence_ = h_conf;
 
   bool dual_ok = ukf_.update({obs1, obs2}, {rt1, rt2}, {l1, l2}, h_conf);
   if (!dual_ok) {
-    std::cout << "[adaptive_tracker::update_dual] ukf_.update(dual) failed "  \
+    std::cerr << "[adaptive_tracker::update_dual] ukf_.update(dual) failed "  \
       "rt1=" << rt1 << " rt2=" << rt2 << " l1=" << l1 << " l2=" << l2 << " h_conf=" << h_conf << std::endl;
   }
   return dual_ok;
