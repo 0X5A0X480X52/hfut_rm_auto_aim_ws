@@ -137,7 +137,7 @@ gimbal_pipeline:
     controller.solver.shooting_range_height: 0.135
     controller.solver.side_angle: 15.0
     controller.solver.min_switching_v_yaw: 0.0
-    controller.solver.prediction_delay: 0.100
+    controller.solver.prediction_delay: 0.00
     controller.solver.max_prediction_time: 0.500
     controller.solver.max_tracking_v_yaw: 12.0
     controller.solver.transfer_thresh: 5

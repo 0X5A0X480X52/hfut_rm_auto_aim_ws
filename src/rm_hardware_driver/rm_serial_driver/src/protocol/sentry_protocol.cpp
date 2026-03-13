@@ -137,6 +137,8 @@ bool ProtocolSentry::receive(rm_interfaces::msg::SerialReceiveData &data) {
     packet.unloadData(data.whether2cruise,20);
     packet.unloadData(data.outpost_hp,21);
 
+    data.pitch = -data.pitch;
+
     //////////////////  added and change here //////////////////////
     /////navigation data
     // packet.unloadData(data.progress, 14);
