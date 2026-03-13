@@ -5,3 +5,4 @@ float64 yaw_diff
 float64 pitch_diff
 float64 distance
 bool fire_advice
+string target_id
