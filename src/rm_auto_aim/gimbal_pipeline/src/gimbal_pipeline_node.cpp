@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <limits>
+#include <rm_utils/heartbeat.hpp>
 #include <set>
 #include <sstream>
 
@@ -336,6 +337,9 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     RCLCPP_INFO(get_logger(), "PredictionLogger enabled, output: %s",
                 get_parameter("logging.output_dir").as_string().c_str());
   }
+
+  // ── 6. Heartbeat ──
+  heartbeat_ = HeartBeatPublisher::create(this);
 
   RCLCPP_INFO(get_logger(),
               "GimbalPipelineNode initialized: target_frame=%s, "

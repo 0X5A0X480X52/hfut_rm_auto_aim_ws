@@ -130,7 +130,7 @@ gimbal_pipeline:
     # controller.bullet_speed: 11.5
     controller.bullet_speed: 24.0
     controller.control_rate: 250.0
-    controller.strategy: "predicted"    # "current" | "predicted" | "mpc" | "state_machine"
+    controller.strategy: "mpc"    # "current" | "predicted" | "mpc" | "state_machine"
     controller.ballistic_mode: "local"  # "service" | "local"
 
     controller.solver.shooting_range_width: 0.135
@@ -196,7 +196,7 @@ gimbal_pipeline:
     controller.output_filter.max_pitch_rate: 3.0   # 每帧最大变化量 (度/帧 @ 250Hz)
 
     # 3. EMA 平滑（默认关闭；开启会引入 1~2 帧延迟）
-    controller.output_filter.enable_ema: false
+    controller.output_filter.enable_ema: true
     controller.output_filter.ema_alpha: 0.7         # (0,1]，越大越跟随，越小越平滑
 
     # 4. 1-Euro 自适应低通滤波（默认关闭；运动快时自动减弱平滑，适合高速目标）
@@ -236,7 +236,7 @@ gimbal_pipeline:
     # controller.mpc.s_yaw: 0.001
     # controller.mpc.s_pitch: 0.001
 
-    controller.mpc.N: 5
+    controller.mpc.N: 20
     controller.mpc.dt: 0.02
     controller.mpc.control_delay_s: 0.00 # 
     controller.mpc.max_accel: 30.0
