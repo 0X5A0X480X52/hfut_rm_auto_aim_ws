@@ -7,7 +7,7 @@
 namespace: ''
 
 # image_source: (video | mindvision | hik)
-image_source: 'hik'
+image_source: 'mindvision'
 
 # true: 虚拟下位机 false: 实车
 virtual_serial: false
