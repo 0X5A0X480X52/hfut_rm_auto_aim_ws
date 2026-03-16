@@ -10,5 +10,5 @@ uint16 blood
 uint8 fire_count_enough
 uint8 whether2cruise
 int16 outpost_hp
+uint16 friend_average_blood
 OperatorCommand operator_command
-JudgeSystemData judge_system_data

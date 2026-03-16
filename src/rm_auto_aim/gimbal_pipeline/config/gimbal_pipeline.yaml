@@ -40,7 +40,7 @@ gimbal_pipeline:
     motion.cv_process_noise_vel: 1.00
     motion.ca_process_noise_acc: 0.01
     motion.singer_alpha: 0.5
-    motion.singer_sigma: 0.05
+    motion.singer_sigma: 0.1
     motion.process_noise_r: 0.00002
     motion.process_noise_dz: 0.00005
 
@@ -128,7 +128,7 @@ gimbal_pipeline:
     # Gimbal controller parameters
     # ═══════════════════════════════════════════════════════════════
     # controller.bullet_speed: 11.5
-    controller.bullet_speed: 24.0
+    controller.bullet_speed: 25.0
     controller.control_rate: 250.0
     controller.strategy: "mpc"    # "current" | "predicted" | "mpc" | "state_machine"
     controller.ballistic_mode: "local"  # "service" | "local"
@@ -146,8 +146,8 @@ gimbal_pipeline:
     controller.solver.iteration_times: 20
     controller.solver.pitch_offset: 0.0
     controller.solver.yaw_offset: 0.0
-    controller.solver.facing_enter_angle: 55.0
-    controller.solver.facing_exit_angle: 75.0
+    controller.solver.facing_enter_angle: 45.0
+    controller.solver.facing_exit_angle: 55.0
     # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
     # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
     # 若启用自适应 delay（adaptive_delay.enable=true），本值作为 delay 初始值。
@@ -237,8 +237,8 @@ gimbal_pipeline:
     # controller.mpc.s_pitch: 0.001
 
     controller.mpc.N: 20
-    controller.mpc.dt: 0.02
-    controller.mpc.control_delay_s: 0.00 # 
+    controller.mpc.dt: 0.025
+    controller.mpc.control_delay_s: 0.005 # 
     controller.mpc.max_accel: 30.0
     controller.mpc.q_yaw: 100.0
     controller.mpc.q_pitch: 100.0
@@ -283,7 +283,7 @@ gimbal_pipeline:
     # 并对每步迭代补偿子弹飞行时间、选板时考虑延迟后的云台姿态
     # enable_delay_compensation: false 时行为与原版完全一致
     controller.mpc.enable_delay_compensation: true
-    controller.mpc.prediction_delay_s: 0.0      # 额外预测延迟 (秒), 叠加在 processing_delay 之上
+    controller.mpc.prediction_delay_s: 0.2      # 额外预测延迟 (秒), 叠加在 processing_delay 之上
     controller.mpc.flight_time_iters: 2          # 飞行时间迭代补偿次数
     controller.mpc.max_processing_delay_s: 0.5    # 最大处理延迟 clamp 上限 (秒)
 
