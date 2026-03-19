@@ -15,7 +15,7 @@
 
 #include "rm_serial_driver/protocol/sentry_protocol.hpp"
 #include <stdlib.h>
-
+g
 namespace fyt::serial_driver::protocol {
 ProtocolSentry::ProtocolSentry(std::string_view port_name, bool enable_data_print) {
   auto uart_transporter = std::make_shared<UartTransporter>(std::string(port_name));
@@ -94,6 +94,7 @@ void ProtocolSentry::send(const geometry_msgs::msg::Twist &data) {
   // packet_.loadData<float>(0, 12);
   // chassis control
   // linear x
+  packet.loadData<uint8_t>(1<<2, 1);
   packet.loadData<float>(data.linear.x, 34);
   // linear y
   packet.loadData<float>(data.linear.y, 38);
@@ -101,6 +102,8 @@ void ProtocolSentry::send(const geometry_msgs::msg::Twist &data) {
   packet.loadData<float>(data.angular.z, 42);
 
   packet_tool_->sendPacket(packet);
+
+  //printf("wtf!");
 }
 
 void ProtocolSentry::send(const std_msgs::msg::Float64 &data) {
@@ -147,7 +150,7 @@ bool ProtocolSentry::receive(rm_interfaces::msg::SerialReceiveData &data) {
     data.pitch = -data.pitch;
 
     //////////////////  added and change here //////////////////////
-    /////navigation data
+    /////navigation datag
     // packet.unloadData(data.progress, 14);
     // packet.unloadData(data.outpostHp, 15);
     // packet.unloadData(data.targetX, 17);
@@ -168,7 +171,7 @@ std::vector<rclcpp::SubscriptionBase::SharedPtr> ProtocolSentry::getSubscription
     [this](const rm_interfaces::msg::GimbalCmd::SharedPtr msg) { this->send(*msg); });
   //////////////////  added and change here //////////////////////
   auto sub3 = node->create_subscription<geometry_msgs::msg::Twist>(
-    "/cmd_vel",
+    "/cmd_vel_chassis",
     rclcpp::SensorDataQoS(),
     [this](const geometry_msgs::msg::Twist::SharedPtr msg) { this->send(*msg); });
   /*auto sub2 = node->create_subscription<rm_interfaces::msg::Blind>(

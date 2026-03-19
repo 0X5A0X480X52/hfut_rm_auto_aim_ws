@@ -19,6 +19,8 @@
 // std
 #include <chrono>
 #include <cstdint>
+#include <geometry_msgs/msg/detail/twist__struct.hpp>
+#include <geometry_msgs/msg/detail/twist_stamped__struct.hpp>
 #include <memory>
 #include <thread>
 // ros2
@@ -63,7 +65,10 @@ void SerialDriverNode::init() {
   // Publisher
   serial_receive_data_pub_ = this->create_publisher<rm_interfaces::msg::SerialReceiveData>(
     "serial/receive", rclcpp::SensorDataQoS());
-
+  wheel_pub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("wheel_odom", 100);
+  hp_publisher_ = this->create_publisher<std_msgs::msg::Int32>("/current_hp", 100);
+  bullet_publisher_ = this->create_publisher<std_msgs::msg::Int32>("/bullet_remain", 100);
+  time_remain_publisher_ = this->create_publisher<std_msgs::msg::Int32>("/time_remain", 100);
   // TF broadcaster
   timestamp_offset_ = this->declare_parameter("timestamp_offset", 0.0);
   tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
@@ -75,7 +80,7 @@ void SerialDriverNode::init() {
     FYT_INFO("serial_driver", "Create client for service: {}", name);
   }
 
-  // Heartbeat
+  // Heartbeatg
   heartbeat_ = HeartBeatPublisher::create(this);
 
   FYT_INFO("serial_driver", "SerialDriverNode has been initialized!");
@@ -98,9 +103,41 @@ void SerialDriverNode::listenLoop() {
   rm_interfaces::msg::SerialReceiveData receive_data;
   while (rclcpp::ok()) {
     if (protocol_->receive(receive_data)) {
-      receive_data.header.stamp = this->now() + rclcpp::Duration::from_seconds(timestamp_offset_);
+      auto time = this->now() + rclcpp::Duration::from_seconds(timestamp_offset_);
+      receive_data.header.stamp = time;
       receive_data.header.frame_id = target_frame_;
       serial_receive_data_pub_->publish(receive_data);
+      
+      geometry_msgs::msg::TwistStamped twist;
+      twist.header.stamp = time;
+      twist.header.frame_id = target_frame_;
+      twist.twist.linear.x = receive_data.chassis_vx;
+      twist.twist.linear.y = receive_data.chassis_vy;
+      twist.twist.angular.z = receive_data.chassis_wz;
+      
+      std_msgs::msg::Int32 hp_msg;
+      hp_msg.data = receive_data.blood;
+      hp_publisher_->publish(hp_msg);
+
+      std_msgs::msg::Int32 bullet_msg;
+      bullet_msg.data = receive_data.blood;
+      bullet_publisher_->publish(bullet_msg);
+
+      wheel_pub_->publish(twist);
+
+      if(time_publish_counter_>=1000)
+      {
+        std_msgs::msg::Int32 time_remain_msg;
+        time_remain_msg.data = receive_data.remaining_time;
+        time_remain_publisher_->publish(time_remain_msg);
+        time_publish_counter_ = 0;
+      }
+      else
+      {
+        time_publish_counter_++;
+      }
+
+
 
       for (auto &[service_name, client] : set_mode_clients_) {
         if (client.mode.load() != receive_data.mode && !client.on_waiting.load()) {
