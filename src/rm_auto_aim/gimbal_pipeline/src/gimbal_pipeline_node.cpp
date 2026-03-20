@@ -232,6 +232,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     fcfg.enable_rate_limiter         = get_parameter("controller.output_filter.enable_rate_limiter").as_bool();
     fcfg.max_yaw_rate                = get_parameter("controller.output_filter.max_yaw_rate").as_double();
     fcfg.max_pitch_rate              = get_parameter("controller.output_filter.max_pitch_rate").as_double();
+    fcfg.enable_moving_average       = get_parameter("controller.output_filter.enable_moving_average").as_bool();
+    fcfg.moving_average_window_size  = get_parameter("controller.output_filter.moving_average_window_size").as_int();
     fcfg.enable_ema                  = get_parameter("controller.output_filter.enable_ema").as_bool();
     fcfg.ema_alpha                   = get_parameter("controller.output_filter.ema_alpha").as_double();
     fcfg.enable_one_euro             = get_parameter("controller.output_filter.enable_one_euro").as_bool();
@@ -242,11 +244,12 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     cmd_filter_.setConfig(fcfg);
     RCLCPP_INFO(get_logger(),
       "[GimbalCmdFilter] clamp=%s(%.1f°,%.1f°) outlier=%s(%.1f°,%.1f°,max%d)"
-      " rate=%s(%.1f°,%.1f°) ema=%s(a=%.2f) 1euro=%s(f=%.0f,mc=%.2f,b=%.4f)",
+      " rate=%s(%.1f°,%.1f°) mean=%s(win=%d) ema=%s(a=%.2f) 1euro=%s(f=%.0f,mc=%.2f,b=%.4f)",
       fcfg.enable_clamping ? "ON" : "off", fcfg.max_yaw_diff, fcfg.max_pitch_diff,
       fcfg.enable_outlier_rejection ? "ON" : "off",
       fcfg.outlier_threshold_yaw, fcfg.outlier_threshold_pitch, fcfg.max_outlier_count,
       fcfg.enable_rate_limiter ? "ON" : "off", fcfg.max_yaw_rate, fcfg.max_pitch_rate,
+      fcfg.enable_moving_average ? "ON" : "off", fcfg.moving_average_window_size,
       fcfg.enable_ema ? "ON" : "off", fcfg.ema_alpha,
       fcfg.enable_one_euro ? "ON" : "off",
       fcfg.one_euro_freq, fcfg.one_euro_min_cutoff, fcfg.one_euro_beta);
@@ -326,6 +329,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       std::bind(&GimbalPipelineNode::timerCallback, this));
 
   if (debug_mode_) initMarkers();
+
+  heartbeat_ = HeartBeatPublisher::create(this);
 
   // ─── Prediction logger ────────────────────────────────────────
   if (get_parameter("logging.enable").as_bool()) {
@@ -534,6 +539,7 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.mpc.prediction_delay_s", 0.0);
   declare_parameter("controller.mpc.flight_time_iters", 2);
   declare_parameter("controller.mpc.max_processing_delay_s", 0.5);
+  declare_parameter("controller.mpc.yaw_feedforward_k_s", 0.0);
 
   // MPC 机动自适应权重衰减
   declare_parameter("controller.mpc.maneuver_adapt.enable",  false);
@@ -571,10 +577,13 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.output_filter.enable_rate_limiter",     true);
   declare_parameter("controller.output_filter.max_yaw_rate",            5.0);
   declare_parameter("controller.output_filter.max_pitch_rate",          3.0);
-  // 3. EMA
+  // 3. 滑动窗口均值
+  declare_parameter("controller.output_filter.enable_moving_average",   false);
+  declare_parameter("controller.output_filter.moving_average_window_size", 3);
+  // 4. EMA
   declare_parameter("controller.output_filter.enable_ema",              false);
   declare_parameter("controller.output_filter.ema_alpha",               0.7);
-  // 4. 1-Euro 自适应滤波
+  // 5. 1-Euro 自适应滤波
   declare_parameter("controller.output_filter.enable_one_euro",         false);
   declare_parameter("controller.output_filter.one_euro_freq",           250.0);
   declare_parameter("controller.output_filter.one_euro_min_cutoff",     1.0);
@@ -1388,6 +1397,8 @@ void GimbalPipelineNode::initGimbalStrategies() {
     get_parameter("controller.mpc.prediction_delay_s").as_double(),
     get_parameter("controller.mpc.flight_time_iters").as_int(),
     get_parameter("controller.mpc.max_processing_delay_s").as_double());
+  mpc_s->setYawFeedforward(
+    get_parameter("controller.mpc.yaw_feedforward_k_s").as_double());
   mpc_s->setManeuverAdaptParameters(
     get_parameter("controller.mpc.maneuver_adapt.enable").as_bool(),
     get_parameter("controller.mpc.maneuver_adapt.a_max").as_double(),

@@ -4,4 +4,6 @@ float64 yaw
 float64 yaw_diff
 float64 pitch_diff
 float64 distance
+float64 yaw_v
+float64 pitch_v
 bool fire_advice

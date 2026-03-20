@@ -18,21 +18,23 @@
 namespace fyt::serial_driver::protocol {
 ProtocolInfantry::ProtocolInfantry(std::string_view port_name, bool enable_data_print) {
   auto uart_transporter = std::make_shared<UartTransporter>(std::string(port_name));
-  packet_tool_ = std::make_shared<FixedPacketTool<16>>(uart_transporter);
+  packet_tool_ = std::make_shared<FixedPacketTool<24>>(uart_transporter);
   packet_tool_->enbaleDataPrint(enable_data_print);
 }
 
 void ProtocolInfantry::send(const rm_interfaces::msg::GimbalCmd &data) {
-  FixedPacket<16> packet;
+  FixedPacket<24> packet;
   packet.loadData<unsigned char>(data.fire_advice ? FireState::Fire : FireState::NotFire, 1);
   packet.loadData<float>(static_cast<float>(data.pitch), 2);
   packet.loadData<float>(static_cast<float>(data.yaw), 6);
   packet.loadData<float>(static_cast<float>(data.distance), 10);
+  packet.loadData<float>(static_cast<float>(data.pitch_v), 14);
+  packet.loadData<float>(static_cast<float>(data.yaw_v), 18);
   packet_tool_->sendPacket(packet);
 }
 
 bool ProtocolInfantry::receive(rm_interfaces::msg::SerialReceiveData &data) {
-  FixedPacket<16> packet;
+  FixedPacket<24> packet;
   if (packet_tool_->recvPacket(packet)) {
     packet.unloadData(data.mode, 1);
     packet.unloadData(data.roll, 2);

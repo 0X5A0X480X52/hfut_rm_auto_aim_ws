@@ -65,6 +65,11 @@ void MpcControlStrategy::setDelayCompensation(
   max_processing_delay_s_ = max_processing_delay_s;
 }
 
+void MpcControlStrategy::setYawFeedforward(double yaw_feedforward_k_s)
+{
+  yaw_feedforward_k_s_ = yaw_feedforward_k_s;
+}
+
 void MpcControlStrategy::setManeuverAdaptParameters(
   bool enable, double a_max, double eta, double tau, double r_scale)
 {
@@ -166,14 +171,24 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   }
 
   // 4) 生成参考轨迹
+  const double yaw_feedforward_s =
+    std::clamp(yaw_feedforward_k_s_, 0.0, max_yaw_feedforward_s_);
+  const bool use_delayed_reference =
+    enable_delay_compensation_ || (yaw_feedforward_s > 1e-6);
+
   Eigen::VectorXd X_ref;
-  if (enable_delay_compensation_) {
-    // 计算处理延迟: 当前时间与 tracker 状态时间戳的差
-    double processing_delay = (context.current_time - context.target_stamp).seconds();
-    processing_delay = std::clamp(processing_delay, 0.0, max_processing_delay_s_);
+  if (use_delayed_reference) {
+    // 仅在启用 delay compensation 时使用 processing_delay。
+    // 当仅启用 yaw 前馈时保持 processing_delay=0，避免改变原有处理延迟语义。
+    double processing_delay = 0.0;
+    if (enable_delay_compensation_) {
+      processing_delay = (context.current_time - context.target_stamp).seconds();
+      processing_delay = std::clamp(processing_delay, 0.0, max_processing_delay_s_);
+    }
 
     mpc::DelayCompConfig delay_cfg;
-    delay_cfg.base_delay_s = processing_delay + control_delay_s_ + prediction_delay_s_;
+    delay_cfg.base_delay_s =
+      processing_delay + control_delay_s_ + prediction_delay_s_ + yaw_feedforward_s;
     delay_cfg.ctrl_delay_s = control_delay_s_;
     delay_cfg.flight_time_iters = flight_time_iters_;
 
@@ -279,6 +294,8 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     cmd.pitch      = cmd_pitch * 180.0 / M_PI;
     cmd.yaw_diff   = yaw_diff   * 180.0 / M_PI;
     cmd.pitch_diff = pitch_diff * 180.0 / M_PI;
+    cmd.yaw_v      = x_next(2) * 180.0 / M_PI;
+    cmd.pitch_v    = x_next(3) * 180.0 / M_PI;
     // TEMP_LOST 时无 detector 实际观测，distance 输出 -1 以示无有效测量
     cmd.distance   = context.is_temp_lost ? -1.0 : distance;
     cmd.fire_advice = fire_advice;
@@ -364,6 +381,8 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   cmd.pitch = cmd_pitch * 180.0 / M_PI;
   cmd.yaw_diff = yaw_diff * 180.0 / M_PI;
   cmd.pitch_diff = pitch_diff * 180.0 / M_PI;
+  cmd.yaw_v = x_next(2) * 180.0 / M_PI;
+  cmd.pitch_v = x_next(3) * 180.0 / M_PI;
   // TEMP_LOST 时无 detector 实际观测，distance 输出 -1 以示无有效测量
   cmd.distance = context.is_temp_lost ? -1.0 : distance;
   cmd.fire_advice = fire_advice;
@@ -458,6 +477,8 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::fallbackDirectAim(
   cmd.pitch = ref_pitch * 180.0 / M_PI;
   cmd.yaw_diff = yaw_diff * 180.0 / M_PI;
   cmd.pitch_diff = pitch_diff * 180.0 / M_PI;
+  cmd.yaw_v = 0.0;
+  cmd.pitch_v = 0.0;
   // TEMP_LOST 时无 detector 实际观测，distance 输出 -1 以示无有效测量
   cmd.distance = context.is_temp_lost ? -1.0 : distance;
   cmd.fire_advice = fire_advice;

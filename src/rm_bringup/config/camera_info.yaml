@@ -135,37 +135,37 @@
 #             0.     ,    0.     ,    1.     ,    0.     ]
 
 
-# 6mm hik 相机
-image_width: 1280
-image_height: 1024
-camera_name: narrow_stereo
+# # 6mm hik 相机
+# image_width: 1280
+# image_height: 1024
+# camera_name: narrow_stereo
 
-camera_matrix:
-  rows: 3
-  cols: 3
-  data: [2592.977456, 0.0, 633.735437,
-         0.0, 2592.005825, 467.765781,
-         0.0, 0.0, 1.0]
+# camera_matrix:
+#   rows: 3
+#   cols: 3
+#   data: [2592.977456, 0.0, 633.735437,
+#          0.0, 2592.005825, 467.765781,
+#          0.0, 0.0, 1.0]
 
-distortion_model: plumb_bob
-distortion_coefficients:
-  rows: 1
-  cols: 5
-  data: [-0.035736, 0.488035, -0.001600, 0.000045, 0.0]
+# distortion_model: plumb_bob
+# distortion_coefficients:
+#   rows: 1
+#   cols: 5
+#   data: [-0.035736, 0.488035, -0.001600, 0.000045, 0.0]
 
-rectification_matrix:
-  rows: 3
-  cols: 3
-  data: [1.0, 0.0, 0.0,
-         0.0, 1.0, 0.0,
-         0.0, 0.0, 1.0]
+# rectification_matrix:
+#   rows: 3
+#   cols: 3
+#   data: [1.0, 0.0, 0.0,
+#          0.0, 1.0, 0.0,
+#          0.0, 0.0, 1.0]
 
-projection_matrix:
-  rows: 3
-  cols: 4
-  data: [2594.798340, 0.0, 633.306653, 0.0,
-         0.0, 2592.831543, 466.790407, 0.0,
-         0.0, 0.0, 1.0, 0.0]
+# projection_matrix:
+#   rows: 3
+#   cols: 4
+#   data: [2594.798340, 0.0, 633.306653, 0.0,
+#          0.0, 2592.831543, 466.790407, 0.0,
+#          0.0, 0.0, 1.0, 0.0]
 
 # # 16mm hik 相机
 # image_width: 1440
@@ -223,3 +223,32 @@ projection_matrix:
 #   data: [2960.41748,    0.     ,  626.56375,    0.     ,
 #             0.     , 2960.53491,  506.23922,    0.     ,
 #             0.     ,    0.     ,    1.     ,    0.     ]
+
+# 12mm hik 相机
+
+image_width: 1280    # 原始标定的宽度是1280，不是示例里的1440，已按真实值修正
+image_height: 1024   # 原始标定的高度是1024，不是示例里的1080，已按真实值修正
+camera_name: narrow_stereo
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [3006.138965, 0.0, 651.265836,
+         0.0, 3003.750935, 526.881281,
+         0.0, 0.0, 1.0]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [-0.081293, 0.190310, -0.002555, 0.000844, 0.0]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1.0, 0.0, 0.0,
+         0.0, 1.0, 0.0,
+         0.0, 0.0, 1.0]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [2994.072510, 0.0, 651.177090, 0.0,
+         0.0, 2994.369629, 525.754528, 0.0,
+         0.0, 0.0, 1.0, 0.0]

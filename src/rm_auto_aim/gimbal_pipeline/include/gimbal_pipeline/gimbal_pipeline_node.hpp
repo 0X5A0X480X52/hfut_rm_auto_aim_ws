@@ -58,6 +58,9 @@
 #include "gimbal_controller/gimbal_control_strategy.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
 
+// ─── heartbeat 
+#include "rm_utils/heartbeat.hpp"
+
 namespace fyt::auto_aim {
 
 using tf2_armor_filter = tf2_ros::MessageFilter<rm_interfaces::msg::Armors>;
@@ -124,6 +127,9 @@ class GimbalPipelineNode : public rclcpp::Node {
       const rm_interfaces::msg::GimbalCmd &cmd);
   void publishManeuverMarkers(const std_msgs::msg::Header &header);
   std::array<float, 4> hsvToRgb(float h, float s, float v);
+
+  // Heartbeat
+  HeartBeatPublisher::SharedPtr heartbeat_;
 
   /* ================================================================ */
   /*  Tracker state (from MaxEntropyTrackerNode)                      */

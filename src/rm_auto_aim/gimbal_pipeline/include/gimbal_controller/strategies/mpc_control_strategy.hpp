@@ -73,6 +73,16 @@ public:
     double max_processing_delay_s);
 
   /**
+   * @brief 设置 yaw 速度前馈参数
+   *
+   * 前馈以“等效额外前瞻时间”注入参考轨迹生成, 单位为秒。
+   * k=0 时与原实现一致。
+   *
+   * @param yaw_feedforward_k_s 额外前瞻时间 (秒)
+   */
+  void setYawFeedforward(double yaw_feedforward_k_s);
+
+  /**
    * @brief 设置 MPC 机动自适应权重衰减参数
    *
    * 启用后，每帧通过对 UKF center_velocity 做时间戳感知差分计算机动因子 alpha，
@@ -170,6 +180,8 @@ private:
   double prediction_delay_s_{0.0};
   int flight_time_iters_{2};
   double max_processing_delay_s_{0.5};  // processing_delay 上限 (秒)
+  double yaw_feedforward_k_s_{0.0};     // yaw 速度前馈等效前瞻时间 (秒)
+  double max_yaw_feedforward_s_{0.12};  // yaw 前馈上限 (秒)
 
   // 上一步求解结果 (warmstart)
   Eigen::VectorXd U_prev_;

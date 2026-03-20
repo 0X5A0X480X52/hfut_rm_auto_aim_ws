@@ -8,8 +8,9 @@
 //   0. 绝对限幅 (Clamping)        — 硬上限，防止极端值
 //   1. 外点检测 (Outlier Reject)  — 帧间突变超阈值时 hold 上帧
 //   2. 变化率限制 (Rate Limiter)  — 限制每帧变化量
-//   3. EMA 平滑                   — 指数移动平均
-//   4. 1-Euro 自适应滤波           — 速度自适应低通
+//   3. 滑动窗口均值               — 抑制高频振荡
+//   4. EMA 平滑                   — 指数移动平均
+//   5. 1-Euro 自适应滤波           — 速度自适应低通
 //
 // 各级独立可开关（通过 GimbalCmdFilterConfig 中 enable_* 字段控制）。
 // 目标切换或从 idle 恢复时须调用 reset() 以清空历史状态。
@@ -19,6 +20,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <deque>
 #include <string>
 
 #include <rm_interfaces/msg/gimbal_cmd.hpp>
@@ -47,11 +49,15 @@ struct GimbalCmdFilterConfig {
   double max_yaw_rate{5.0};    // 每帧最大变化量 (度/帧)
   double max_pitch_rate{3.0};  // 每帧最大变化量 (度/帧)
 
-  // ── 3. EMA 平滑 ──
+  // ── 3. 滑动窗口均值 ──
+  bool enable_moving_average{false};
+  int  moving_average_window_size{3};  // >=1
+
+  // ── 4. EMA 平滑 ──
   bool   enable_ema{false};
   double ema_alpha{0.7};  // (0, 1]，越大越跟随
 
-  // ── 4. 1-Euro 自适应滤波 ──
+  // ── 5. 1-Euro 自适应滤波 ──
   bool   enable_one_euro{false};
   double one_euro_freq{250.0};       // 采样频率 Hz（应与 control_rate 一致）
   double one_euro_min_cutoff{1.0};   // 最小截止频率
@@ -81,6 +87,8 @@ class GimbalCmdFilter {
     pitch_euro_.set_min_cutoff(cfg_.one_euro_min_cutoff);
     pitch_euro_.set_beta(cfg_.one_euro_beta);
     pitch_euro_.set_d_cutoff(cfg_.one_euro_d_cutoff);
+
+    resetMovingAverageState();
   }
 
   /// 重置所有内部状态（目标切换 / idle→tracking 时调用）
@@ -90,6 +98,7 @@ class GimbalCmdFilter {
     outlier_pitch_count_ = 0;
     yaw_euro_.reset();
     pitch_euro_.reset();
+    resetMovingAverageState();
     prev_cmd_ = rm_interfaces::msg::GimbalCmd{};
   }
 
@@ -160,14 +169,19 @@ class GimbalCmdFilter {
       cmd.pitch_diff = prev_cmd_.pitch_diff + delta_pitch;
     }
 
-    // ── 3. EMA ──
+    // ── 3. 滑动窗口均值 ──
+    if (cfg_.enable_moving_average) {
+      applyMovingAverage(cmd.yaw_diff, cmd.pitch_diff);
+    }
+
+    // ── 4. EMA ──
     if (cfg_.enable_ema) {
       double a = cfg_.ema_alpha;
       cmd.yaw_diff   = a * cmd.yaw_diff   + (1.0 - a) * prev_cmd_.yaw_diff;
       cmd.pitch_diff = a * cmd.pitch_diff + (1.0 - a) * prev_cmd_.pitch_diff;
     }
 
-    // ── 4. 1-Euro ──
+    // ── 5. 1-Euro ──
     if (cfg_.enable_one_euro) {
       cmd.yaw_diff   = yaw_euro_.filter(cmd.yaw_diff);
       cmd.pitch_diff = pitch_euro_.filter(cmd.pitch_diff);
@@ -177,6 +191,37 @@ class GimbalCmdFilter {
   }
 
  private:
+  static int normalizeWindowSize(int w) {
+    return std::max(1, w);
+  }
+
+  static void updateAxisMovingAverage(
+    double &value, std::deque<double> &window, double &sum, std::size_t max_window_size)
+  {
+    window.push_back(value);
+    sum += value;
+
+    while (window.size() > max_window_size) {
+      sum -= window.front();
+      window.pop_front();
+    }
+
+    value = sum / static_cast<double>(window.size());
+  }
+
+  void applyMovingAverage(double &yaw_diff, double &pitch_diff) {
+    const std::size_t win = static_cast<std::size_t>(normalizeWindowSize(cfg_.moving_average_window_size));
+    updateAxisMovingAverage(yaw_diff, yaw_window_, yaw_window_sum_, win);
+    updateAxisMovingAverage(pitch_diff, pitch_window_, pitch_window_sum_, win);
+  }
+
+  void resetMovingAverageState() {
+    yaw_window_.clear();
+    pitch_window_.clear();
+    yaw_window_sum_ = 0.0;
+    pitch_window_sum_ = 0.0;
+  }
+
   void savePrev(const rm_interfaces::msg::GimbalCmd &cmd) {
     prev_cmd_ = cmd;
   }
@@ -189,6 +234,12 @@ class GimbalCmdFilter {
   // 外点连续计数器
   int outlier_yaw_count_{0};
   int outlier_pitch_count_{0};
+
+  // 滑动窗口均值状态
+  std::deque<double> yaw_window_{};
+  std::deque<double> pitch_window_{};
+  double yaw_window_sum_{0.0};
+  double pitch_window_sum_{0.0};
 
   // 1-Euro filters
   ::fyt::auto_aim::OneEuroFilter yaw_euro_{250.0, 1.0, 0.007, 1.0};

@@ -44,6 +44,8 @@ rm_interfaces::msg::GimbalCmd GimbalControlStrategy::createIdleCmd() const
   cmd.yaw_diff = 0;
   cmd.pitch_diff = 0;
   cmd.distance = -1;
+  cmd.yaw_v = 0;
+  cmd.pitch_v = 0;
   cmd.fire_advice = false;
   return cmd;
 }
