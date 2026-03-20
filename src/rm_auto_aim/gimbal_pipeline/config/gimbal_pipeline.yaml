@@ -355,9 +355,9 @@ gimbal_pipeline:
     ukf.alpha: 0.001
     ukf.beta: 2.0
     ukf.kappa: 0.0
-    ukf.obs_noise_pos: 0.008
+    ukf.obs_noise_pos: 0.08
     ukf.obs_noise_yaw: 0.05
-    ukf.dual_obs_noise_pos: 0.001
+    ukf.dual_obs_noise_pos: 0.01
     ukf.dual_obs_noise_yaw: 0.03
     ukf.dual_obs_geometry_noise_scale: 0.002
     ukf.single_obs_update_weight_pos: 5.0
