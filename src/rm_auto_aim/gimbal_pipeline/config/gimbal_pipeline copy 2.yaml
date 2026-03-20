@@ -40,7 +40,7 @@ gimbal_pipeline:
     motion.cv_process_noise_vel: 1.00
     motion.ca_process_noise_acc: 0.01
     motion.singer_alpha: 0.5
-    motion.singer_sigma: 0.01
+    motion.singer_sigma: 0.5
     motion.process_noise_r: 0.00002
     motion.process_noise_dz: 0.00005
 
@@ -128,7 +128,7 @@ gimbal_pipeline:
     # Gimbal controller parameters
     # ═══════════════════════════════════════════════════════════════
     # controller.bullet_speed: 11.5
-    controller.bullet_speed: 22.80
+    controller.bullet_speed: 23.0
     controller.control_rate: 250.0
     controller.strategy: "mpc"    # "current" | "predicted" | "mpc" | "state_machine"
     controller.ballistic_mode: "local"  # "service" | "local"
@@ -146,8 +146,8 @@ gimbal_pipeline:
     controller.solver.iteration_times: 20
     controller.solver.pitch_offset: 0.0
     controller.solver.yaw_offset: 0.0
-    controller.solver.facing_enter_angle: 45.0
-    controller.solver.facing_exit_angle: 55.0
+    controller.solver.facing_enter_angle: 40.0
+    controller.solver.facing_exit_angle: 45.0
     # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
     # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
     # 若启用自适应 delay（adaptive_delay.enable=true），本值作为 delay 初始值。
@@ -236,18 +236,18 @@ gimbal_pipeline:
     # controller.mpc.s_yaw: 0.001
     # controller.mpc.s_pitch: 0.001
 
-    controller.mpc.N: 50
-    controller.mpc.dt: 0.025
-    controller.mpc.control_delay_s: 0.0000 # 
+    controller.mpc.N: 10
+    controller.mpc.dt: 0.03
+    controller.mpc.control_delay_s: 0.002000 # 
     controller.mpc.max_accel: 30.0
     controller.mpc.q_yaw: 10000.0
     controller.mpc.q_pitch: 1000.0
-    controller.mpc.q_yaw_vel: 0.0
-    controller.mpc.q_pitch_vel: 0.0
-    controller.mpc.r_yaw: 0.0001
-    controller.mpc.r_pitch: 0.001
-    controller.mpc.s_yaw: 0.0001
-    controller.mpc.s_pitch: 0.001
+    controller.mpc.q_yaw_vel: 10.0
+    controller.mpc.q_pitch_vel: 10.0
+    controller.mpc.r_yaw: 0.00001
+    controller.mpc.r_pitch: 0.0001
+    controller.mpc.s_yaw: 0.000001
+    controller.mpc.s_pitch: 0.0001
 
     # MPC 机动自适应权重衰减（Maneuver-Adaptive MPC）
     # 通过对 UKF center_velocity 做时间戳感知差分计算机动因子 α∈[0,1]

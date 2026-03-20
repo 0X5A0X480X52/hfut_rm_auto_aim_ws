@@ -57,20 +57,47 @@
 #             0.     ,    0.     ,    1.     ,    0.     ]
 
 # 12mm hik
+# image_width: 1440
+# image_height: 1080
+# camera_name: narrow_stereo
+# camera_matrix:
+#   rows: 3
+#   cols: 3
+#   data: [3580.1337 ,    0.     ,  707.19373,
+#             0.     , 3578.83514,  553.23612,
+#             0.     ,    0.     ,    1.     ]
+# distortion_model: plumb_bob
+# distortion_coefficients:
+#   rows: 1
+#   cols: 5
+#   data: [-0.053283, 0.874982, -0.000922, -0.002470, 0.000000]
+# rectification_matrix:
+#   rows: 3
+#   cols: 3
+#   data: [1., 0., 0.,
+#          0., 1., 0.,
+#          0., 0., 1.]
+# projection_matrix:
+#   rows: 3
+#   cols: 4
+#   data: [3581.63453,    0.     ,  705.97884,    0.     ,
+#             0.     , 3582.53412,  552.85171,    0.     ,
+#             0.     ,    0.     ,    1.     ,    0.     ]
+
 image_width: 1440
 image_height: 1080
 camera_name: narrow_stereo
 camera_matrix:
   rows: 3
   cols: 3
-  data: [3580.1337 ,    0.     ,  707.19373,
-            0.     , 3578.83514,  553.23612,
+  data: [1760.83283,    0.     ,  721.45229,
+            0.     , 1761.55588,  573.26155,
             0.     ,    0.     ,    1.     ]
 distortion_model: plumb_bob
 distortion_coefficients:
   rows: 1
   cols: 5
-  data: [-0.053283, 0.874982, -0.000922, -0.002470, 0.000000]
+  data: [-0.071801, 0.029372, 0.000757, 0.001503, 0.000000]
 rectification_matrix:
   rows: 3
   cols: 3
@@ -80,6 +107,6 @@ rectification_matrix:
 projection_matrix:
   rows: 3
   cols: 4
-  data: [3581.63453,    0.     ,  705.97884,    0.     ,
-            0.     , 3582.53412,  552.85171,    0.     ,
+  data: [1740.61486,    0.     ,  722.88231,    0.     ,
+            0.     , 1749.70488,  574.07648,    0.     ,
             0.     ,    0.     ,    1.     ,    0.     ]
