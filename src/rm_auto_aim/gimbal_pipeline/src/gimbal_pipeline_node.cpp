@@ -337,6 +337,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
                 get_parameter("logging.output_dir").as_string().c_str());
   }
 
+  heartbeat_ = HeartBeatPublisher::create(this);
+
   RCLCPP_INFO(get_logger(),
               "GimbalPipelineNode initialized: target_frame=%s, "
               "control_rate=%.0f Hz, strategy=%s, ballistic=%s",

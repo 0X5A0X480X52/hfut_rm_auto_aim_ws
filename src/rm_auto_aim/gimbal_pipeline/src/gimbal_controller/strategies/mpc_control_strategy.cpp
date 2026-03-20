@@ -173,7 +173,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     processing_delay = std::clamp(processing_delay, 0.0, max_processing_delay_s_);
 
     mpc::DelayCompConfig delay_cfg;
-    delay_cfg.base_delay_s = processing_delay + control_delay_s_ + prediction_delay_s_;
+    delay_cfg.base_delay_s = processing_delay + prediction_delay_s_;
     delay_cfg.ctrl_delay_s = control_delay_s_;
     delay_cfg.flight_time_iters = flight_time_iters_;
 

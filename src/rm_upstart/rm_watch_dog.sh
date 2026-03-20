@@ -4,7 +4,7 @@
 TIMEOUT=10  # 设定超时时间为10秒
 NAMESPACE="" # 命名空间 例如 "/infantry_3" 注意要有"/"
 # NODE_NAMES=("armor_detector" "armor_solver" "serial_driver" "camera_driver")  # 列出所有需要监控的节点名称，注意是用空格分隔
-NODE_NAMES=("armor_detector" "armor_solver" "serial_driver")  # 列出所有需要监控的节点名称，注意是用空格分隔
+NODE_NAMES=("armor_detector" "serial_driver")  # 列出所有需要监控的节点名称，注意是用空格分隔
 USER="$(whoami)" #用户名
 HOME_DIR=$(eval echo ~$USER)
 WORKING_DIR="$HOME_DIR/hfut_rm_auto_aim_ws/" # 代码目录 
@@ -40,7 +40,12 @@ fi
 function bringup() {
     source /opt/ros/humble/setup.bash
     source $WORKING_DIR/install/setup.bash
-    nohup ros2 launch $LAUNCH_FILE > "$OUTPUT_FILE" 2>&1 &
+
+    source /opt/MVS/bin/set_env_path.sh
+    echo "MVCAM_COMMON_RUNENV=$MVCAM_COMMON_RUNENV" >> "$OUTPUT_FILE"
+    echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> "$OUTPUT_FILE"
+
+    ros2 launch $LAUNCH_FILE > "$OUTPUT_FILE" 2>&1 &
 }
 
 function restart() {

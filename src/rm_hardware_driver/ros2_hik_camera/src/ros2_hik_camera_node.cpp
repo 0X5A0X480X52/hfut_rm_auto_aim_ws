@@ -146,6 +146,8 @@ HikCameraNode::HikCameraNode(const rclcpp::NodeOptions & options)
 {
   RCLCPP_INFO(this->get_logger(), "Starting HikCameraNode!");
 
+  RCLCPP_INFO(this->get_logger(), "MV env: %s", getenv("MVCAM_COMMON_RUNENV") ? getenv("MVCAM_COMMON_RUNENV") : "null");
+
   // Initialize HIKVision SDK
   // Enumerate devices
   memset(&device_list_, 0, sizeof(MV_CC_DEVICE_INFO_LIST));
