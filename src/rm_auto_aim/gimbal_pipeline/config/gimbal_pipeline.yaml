@@ -26,11 +26,11 @@ gimbal_pipeline:
     ukf.alpha: 0.001
     ukf.beta: 2.0
     ukf.kappa: 0.0
-    ukf.obs_noise_pos: 0.0008
+    ukf.obs_noise_pos: 0.008
     ukf.obs_noise_yaw: 0.05
-    ukf.dual_obs_noise_pos: 0.0001
+    ukf.dual_obs_noise_pos: 0.001
     ukf.dual_obs_noise_yaw: 0.03
-    ukf.dual_obs_geometry_noise_scale: 0.002
+    ukf.dual_obs_geometry_noise_scale: 0.02
     ukf.single_obs_update_weight_pos: 5.0
     ukf.enable_innovation_gating: false
     ukf.innovation_gate_chi2_threshold: 9.49
@@ -41,7 +41,7 @@ gimbal_pipeline:
     motion.ca_process_noise_acc: 0.01
     motion.singer_alpha: 0.5
     motion.singer_sigma: 0.010
-    motion.process_noise_r: 0.00002
+    motion.process_noise_r: 0.002
     motion.process_noise_dz: 0.00005
 
     # Spin model
@@ -79,17 +79,17 @@ gimbal_pipeline:
 
     # Output smoother (1-Euro filter + Robbins-Monro)
     smoother.enable: true
-    smoother.enable_position_smooth: false
+    smoother.enable_position_smooth: true
     smoother.enable_yaw_smooth: false
     smoother.enable_velocity_smooth: true
-    smoother.enable_structural_convergence: false
+    smoother.enable_structural_convergence: true
     smoother.pos_min_cutoff: 1.0
     smoother.pos_beta: 0.01
     smoother.pos_d_cutoff: 1.0
     smoother.yaw_min_cutoff: 1.0
     smoother.yaw_beta: 0.005
     smoother.yaw_d_cutoff: 1.0
-    smoother.vel_min_cutoff: 2.0
+    smoother.vel_min_cutoff: 0.10
     smoother.vel_beta: 0.01
     smoother.vel_d_cutoff: 1.0
     smoother.rm_initial_step: 0.5
@@ -145,8 +145,21 @@ gimbal_pipeline:
     controller.solver.iteration_times: 20
     controller.solver.pitch_offset: 0.0
     controller.solver.yaw_offset: 0.0
-    controller.solver.facing_enter_angle: 35.0
-    controller.solver.facing_exit_angle: 55.0
+    controller.solver.facing_enter_angle: 15.0
+    controller.solver.facing_exit_angle: 20.0
+    # 径向选板动态阈值（仅对 min_movement_with_radial 生效）
+    # 角度单位: 度；角速度单位: rad/s
+    # |v_yaw| 越大，径向过滤阈值越小：
+    #   th_dyn = max(th_base * (1 - shrink_ratio * clamp(|v_yaw|/v_yaw_ref,0,1)), min_angle_deg)
+    controller.solver.radial_dynamic.enable: true
+    controller.solver.radial_dynamic.v_yaw_ref: 60.0
+    controller.solver.radial_dynamic.shrink_ratio: 60.0
+    controller.solver.radial_dynamic.min_angle_deg: 5.0
+    # 角平分线偏移（度）：|v_yaw| 越大，中心线偏移越大，且受上限约束。
+    # 约定: v_yaw > 0 向左(逆时针, +yaw)偏移；v_yaw < 0 向右偏移。
+    # bias_deg = sign(v_yaw) * min(bias_gain_deg * clamp(|v_yaw|/v_yaw_ref,0,1), max_bias_deg)
+    controller.solver.radial_dynamic.bias_gain_deg: 60.0
+    controller.solver.radial_dynamic.max_bias_deg: 50.0
     # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
     # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
     # 若启用自适应 delay（adaptive_delay.enable=true），本值作为 delay 初始值。
@@ -212,9 +225,10 @@ gimbal_pipeline:
 
     # selection_method: 选板算法
     #   min_movement_with_facing  — 最小运动量 + 正面朝向 Hysteresis 过滤（默认）
+    #   min_movement_with_radial  — 过滤后按机器人中心径向夹角最小选板
     #   min_movement              — 纯最小运动量，无朝向过滤
     #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
-    controller.solver.selection_method: "min_movement_with_facing"
+    controller.solver.selection_method: "min_movement_with_radial"
 
     controller.state_machine.facing_enter_angle: 40.0
     controller.state_machine.facing_exit_angle: 55.0
@@ -242,9 +256,9 @@ gimbal_pipeline:
 
     controller.mpc.N: 50
     controller.mpc.dt: 0.05
-    controller.mpc.control_delay_s: 0.16
+    controller.mpc.control_delay_s: 0.08
     controller.mpc.max_accel: 30.0
-    controller.mpc.q_yaw: 100000.0
+    controller.mpc.q_yaw: 1000.0
     controller.mpc.q_pitch: 1000.0
     controller.mpc.q_yaw_vel: 100.0
     controller.mpc.q_pitch_vel: 1.0

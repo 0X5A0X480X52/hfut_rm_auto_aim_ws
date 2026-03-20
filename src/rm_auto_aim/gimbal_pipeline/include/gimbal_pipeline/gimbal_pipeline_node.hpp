@@ -181,6 +181,17 @@ class GimbalPipelineNode : public rclcpp::Node {
   double control_rate_{250.0};
   std::string ballistic_mode_{"service"};
   bool enable_{true};
+    bool radial_selection_enabled_{false};
+
+    // Cached selector parameters for marker visualization
+    double facing_enter_angle_deg_{40.0};
+    double facing_exit_angle_deg_{55.0};
+    bool radial_dynamic_enable_{false};
+    double radial_dynamic_v_yaw_ref_{8.0};
+    double radial_dynamic_shrink_ratio_{0.6};
+    double radial_dynamic_min_angle_deg_{5.0};
+    double radial_dynamic_bias_gain_deg_{0.0};
+    double radial_dynamic_max_bias_deg_{0.0};
 
   // GimbalCmd 输出端保护滤波器
   gimbal_controller::GimbalCmdFilter cmd_filter_;
@@ -247,6 +258,8 @@ class GimbalPipelineNode : public rclcpp::Node {
   visualization_msgs::msg::Marker selection_marker_;
   visualization_msgs::msg::Marker predicted_marker_;
   visualization_msgs::msg::Marker trajectory_marker_;
+    visualization_msgs::msg::Marker radial_allowed_arc_marker_;
+    visualization_msgs::msg::Marker radial_allowed_bounds_marker_;
   std::vector<std::array<float, 4>> color_palette_;
 };
 

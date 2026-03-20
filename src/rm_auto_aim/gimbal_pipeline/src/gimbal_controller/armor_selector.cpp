@@ -36,6 +36,10 @@ ArmorSelectionResult ArmorSelector::selectBest(
     case SelectionMethod::MIN_MOVEMENT:
       return selectByMinMovement(armor_positions, current_yaw, current_pitch);
 
+    case SelectionMethod::MIN_MOVEMENT_WITH_RADIAL:
+      return selectByMinMovementWithRadial(
+        armor_positions, target_center, target_v_yaw, current_yaw, current_pitch);
+
     case SelectionMethod::DECISION_ANGLE: {
       int idx = selectByDecisionAngle(armor_positions, target_center, target_yaw, target_v_yaw);
       ArmorSelectionResult result;
@@ -75,6 +79,22 @@ void ArmorSelector::setFacingParameters(double enter_angle, double exit_angle)
 {
   facing_enter_angle_ = enter_angle;
   facing_exit_angle_ = exit_angle;
+}
+
+void ArmorSelector::setRadialDynamicParameters(
+  bool enable,
+  double v_yaw_ref,
+  double shrink_ratio,
+  double min_angle_deg,
+  double bias_gain_deg,
+  double max_bias_deg)
+{
+  radial_dynamic_enable_ = enable;
+  radial_dynamic_v_yaw_ref_ = std::max(v_yaw_ref, 1e-6);
+  radial_dynamic_shrink_ratio_ = std::clamp(shrink_ratio, 0.0, 1.0);
+  radial_dynamic_min_angle_deg_ = std::max(min_angle_deg, 0.0);
+  radial_dynamic_bias_gain_deg_ = std::max(bias_gain_deg, 0.0);
+  radial_dynamic_max_bias_deg_ = std::max(max_bias_deg, 0.0);
 }
 
 void ArmorSelector::resetState()
@@ -246,6 +266,50 @@ std::vector<double> ArmorSelector::computeFacingAngles(
   return facing_angles;
 }
 
+std::vector<double> ArmorSelector::computeRadialAngles(
+  const std::vector<Eigen::Vector3d> & armor_positions,
+  const Eigen::Vector3d & target_center,
+  double centerline_bias_rad)
+{
+  std::vector<double> radial_angles;
+  radial_angles.reserve(armor_positions.size());
+
+  // 机器人中心->云台原点 (工作空间默认云台原点位于世界坐标原点)
+  Eigen::Vector2d center_to_gimbal(-target_center.x(), -target_center.y());
+  if (std::abs(centerline_bias_rad) > 1e-9) {
+    const double c = std::cos(centerline_bias_rad);
+    const double s = std::sin(centerline_bias_rad);
+    Eigen::Vector2d rotated;
+    rotated.x() = c * center_to_gimbal.x() - s * center_to_gimbal.y();
+    rotated.y() = s * center_to_gimbal.x() + c * center_to_gimbal.y();
+    center_to_gimbal = rotated;
+  }
+  const double center_to_gimbal_norm = center_to_gimbal.norm();
+
+  constexpr double kEps = 1e-6;
+  if (center_to_gimbal_norm < kEps) {
+    radial_angles.assign(armor_positions.size(), M_PI);
+    return radial_angles;
+  }
+
+  for (const auto & pos : armor_positions) {
+    // 机器人中心->装甲板 (径向方向)
+    Eigen::Vector2d radial(pos.x() - target_center.x(), pos.y() - target_center.y());
+    const double radial_norm = radial.norm();
+
+    if (radial_norm < kEps) {
+      radial_angles.push_back(M_PI);
+      continue;
+    }
+
+    double cos_theta = radial.dot(center_to_gimbal) / (radial_norm * center_to_gimbal_norm);
+    cos_theta = std::max(-1.0, std::min(1.0, cos_theta));
+    radial_angles.push_back(std::acos(cos_theta));
+  }
+
+  return radial_angles;
+}
+
 ArmorSelectionResult ArmorSelector::selectByMinMovementWithFacing(
   const std::vector<Eigen::Vector3d> & armor_positions,
   const Eigen::Vector3d & target_center,
@@ -326,6 +390,118 @@ ArmorSelectionResult ArmorSelector::selectByMinMovementWithFacing(
       result.gimbal_movement = movement;
       result.distance = distance;
       result.facing_angle = facing_angles[idx];
+    }
+  }
+
+  // 更新记忆
+  last_selected_index_ = result.selected_index;
+
+  return result;
+}
+
+ArmorSelectionResult ArmorSelector::selectByMinMovementWithRadial(
+  const std::vector<Eigen::Vector3d> & armor_positions,
+  const Eigen::Vector3d & target_center,
+  double target_v_yaw,
+  double current_yaw,
+  double current_pitch)
+{
+  ArmorSelectionResult result;
+  result.selected_index = -1;
+  result.gimbal_movement = std::numeric_limits<double>::max();
+  result.distance = std::numeric_limits<double>::max();
+  result.facing_angle = 0.0;
+  result.is_center_fallback = false;
+
+  if (armor_positions.empty()) {
+    result.position = target_center;
+    result.is_center_fallback = true;
+    result.distance = target_center.norm();
+    last_selected_index_ = -1;
+    return result;
+  }
+
+  // 1. 距离过滤 (排除最远板)
+  auto dist_valid_indices = filterByDistance(armor_positions);
+
+  double speed_norm = 0.0;
+  if (radial_dynamic_enable_) {
+    speed_norm = std::clamp(
+      std::abs(target_v_yaw) / radial_dynamic_v_yaw_ref_, 0.0, 1.0);
+  }
+
+  // 2. 计算径向夹角（允许角平分线随角速度偏移）
+  // 约定: target_v_yaw > 0 时角平分线向左(逆时针, +yaw)偏移。
+  const double bias_mag_deg = std::min(
+    radial_dynamic_bias_gain_deg_ * speed_norm,
+    radial_dynamic_max_bias_deg_);
+  const double bias_deg = (target_v_yaw >= 0.0 ? 1.0 : -1.0) * bias_mag_deg;
+  const double bias_rad = bias_deg * M_PI / 180.0;
+  auto radial_angles = computeRadialAngles(armor_positions, target_center, bias_rad);
+
+  // 3. 径向夹角过滤 (Hysteresis 双阈值)
+  // 角速度越大，阈值越小；角度单位为度，角速度单位为 rad/s。
+  double enter_deg = facing_enter_angle_;
+  double exit_deg = facing_exit_angle_;
+  if (radial_dynamic_enable_) {
+    const double scale = 1.0 - radial_dynamic_shrink_ratio_ * speed_norm;
+    enter_deg = std::max(enter_deg * scale, radial_dynamic_min_angle_deg_);
+    exit_deg = std::max(exit_deg * scale, radial_dynamic_min_angle_deg_);
+  }
+  double enter_rad = enter_deg * M_PI / 180.0;
+  double exit_rad = exit_deg * M_PI / 180.0;
+
+  std::vector<int> radial_valid_indices;
+  for (int idx : dist_valid_indices) {
+    double ra = radial_angles[idx];
+    if (idx == last_selected_index_) {
+      if (ra <= exit_rad) {
+        radial_valid_indices.push_back(idx);
+      }
+    } else {
+      if (ra <= enter_rad) {
+        radial_valid_indices.push_back(idx);
+      }
+    }
+  }
+
+  // 4. 如果过滤后为空, fallback 到目标中心
+  if (radial_valid_indices.empty()) {
+    result.position = target_center;
+    result.is_center_fallback = true;
+    result.distance = target_center.norm();
+    last_selected_index_ = -1;
+    return result;
+  }
+
+  // 5. 在通过径向过滤的装甲板中, 选择径向夹角最小的
+  double best_radial_angle = std::numeric_limits<double>::max();
+  constexpr double kAngleEps = 1e-6;
+  for (int idx : radial_valid_indices) {
+    const auto & pos = armor_positions[idx];
+
+    double yaw, pitch;
+    calculateYawPitch(pos, current_yaw, yaw, pitch);
+
+    double yaw_diff = angles::normalize_angle(yaw - current_yaw);
+    double pitch_diff = pitch - current_pitch;
+
+    double movement = yaw_diff * yaw_diff + pitch_diff * pitch_diff;
+    double distance = pos.norm();
+
+    const double radial_angle = radial_angles[idx];
+
+    if (radial_angle + kAngleEps < best_radial_angle ||
+        (std::abs(radial_angle - best_radial_angle) <= kAngleEps &&
+         (movement < result.gimbal_movement ||
+          (std::abs(movement - result.gimbal_movement) < 0.01 && distance < result.distance))))
+    {
+      best_radial_angle = radial_angle;
+      result.selected_index = idx;
+      result.position = pos;
+      result.gimbal_movement = movement;
+      result.distance = distance;
+      result.facing_angle = radial_angle;
     }
   }
 

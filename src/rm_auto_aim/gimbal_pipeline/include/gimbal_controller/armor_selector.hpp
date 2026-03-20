@@ -51,6 +51,7 @@ public:
   /**
    * @brief 选板策略枚举
    *  - MIN_MOVEMENT_WITH_FACING : 最小运动量 + 正面朝向 Hysteresis 过滤 (默认)
+   *  - MIN_MOVEMENT_WITH_RADIAL : 径向夹角过滤后按最小径向夹角选板
    *  - MIN_MOVEMENT             : 最小运动量，无朝向过滤
    *  - DECISION_ANGLE           : 传统决策角算法 (与 armor_solver 原版一致)
    */
@@ -59,6 +60,7 @@ public:
     MIN_MOVEMENT_WITH_FACING = 0,
     MIN_MOVEMENT             = 1,
     DECISION_ANGLE           = 2,
+    MIN_MOVEMENT_WITH_RADIAL = 3,
   };
 
   ArmorSelector() = default;
@@ -106,6 +108,23 @@ public:
   void setFacingParameters(double enter_angle, double exit_angle);
 
   /**
+   * @brief 设置径向选板动态阈值参数
+   * @param enable 是否启用动态阈值
+   * @param v_yaw_ref 归一化参考角速度 (rad/s)
+   * @param shrink_ratio 最大收缩比例 [0, 1]
+   * @param min_angle_deg 动态收缩后的角度下限 (度)
+   * @param bias_gain_deg 角平分线偏移增益 (度, 随速度线性增长)
+   * @param max_bias_deg 角平分线偏移上限 (度)
+   */
+  void setRadialDynamicParameters(
+    bool enable,
+    double v_yaw_ref,
+    double shrink_ratio,
+    double min_angle_deg,
+    double bias_gain_deg,
+    double max_bias_deg);
+
+  /**
    * @brief 重置内部记忆状态 (目标丢失时调用)
    */
   void resetState();
@@ -143,6 +162,20 @@ public:
     const Eigen::Vector3d & target_center,
     double target_yaw,
     int num_armors,
+    double current_yaw,
+    double current_pitch);
+
+  /**
+   * @brief 选择最佳装甲板 (径向夹角过滤 + Hysteresis + 最小径向夹角)
+   *
+   * 径向夹角定义为: (机器人中心->装甲板) 与 (机器人中心->云台原点) 的夹角。
+   * 先使用双阈值做 hysteresis 过滤，再在候选中选径向夹角最小的装甲板。
+   * 若过滤后为空，则 fallback 到目标中心。
+   */
+  ArmorSelectionResult selectByMinMovementWithRadial(
+    const std::vector<Eigen::Vector3d> & armor_positions,
+    const Eigen::Vector3d & target_center,
+    double target_v_yaw,
     double current_yaw,
     double current_pitch);
 
@@ -193,6 +226,17 @@ public:
     double target_yaw,
     int num_armors);
 
+  /**
+   * @brief 计算每个装甲板的径向夹角
+   * @param armor_positions 各装甲板位置
+   * @param target_center 目标机器人中心位置
+   * @return 每个装甲板的径向夹角 (弧度, 0=最径向对齐)
+   */
+  static std::vector<double> computeRadialAngles(
+    const std::vector<Eigen::Vector3d> & armor_positions,
+    const Eigen::Vector3d & target_center,
+    double centerline_bias_rad = 0.0);
+
 private:
   double side_angle_{15.0};           // 侧向角度阈值 (度)
   double min_switching_v_yaw_{1.0};   // 最小切换角速度阈值
@@ -200,6 +244,14 @@ private:
   // Facing hysteresis 参数
   double facing_enter_angle_{40.0};   // 进入阈值 (度)
   double facing_exit_angle_{55.0};    // 退出阈值 (度)
+
+  // 径向选板动态阈值参数 (角度单位: 度, 角速度单位: rad/s)
+  bool radial_dynamic_enable_{false};
+  double radial_dynamic_v_yaw_ref_{8.0};
+  double radial_dynamic_shrink_ratio_{0.6};
+  double radial_dynamic_min_angle_deg_{5.0};
+  double radial_dynamic_bias_gain_deg_{0.0};
+  double radial_dynamic_max_bias_deg_{0.0};
 
   // 选板策略
   SelectionMethod selection_method_{SelectionMethod::MIN_MOVEMENT_WITH_FACING};

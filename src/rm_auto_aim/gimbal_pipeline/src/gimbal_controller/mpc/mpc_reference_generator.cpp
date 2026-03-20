@@ -221,12 +221,13 @@ Eigen::VectorXd MpcReferenceGenerator::generateWithDelay(
       compensated_robot.center_position.y,
       compensated_robot.center_position.z);
 
-    // 6. 选板逻辑: 使用最小移动加 facing 策略
-    auto selection = armor_selector_->selectByMinMovementWithFacing(
+    // 6. 选板逻辑: 统一走 ArmorSelector 配置策略
+    auto selection = armor_selector_->selectBest(
       armor_positions,
       target_center,
       compensated_robot.yaw,
       compensated_robot.num_armors,
+      compensated_robot.yaw_velocity,
       current_yaw,
       current_pitch);
 

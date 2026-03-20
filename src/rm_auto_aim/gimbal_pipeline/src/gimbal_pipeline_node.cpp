@@ -124,21 +124,47 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   double yaw_offset = get_parameter("controller.solver.yaw_offset").as_double();
   double facing_enter_angle = get_parameter("controller.solver.facing_enter_angle").as_double();
   double facing_exit_angle = get_parameter("controller.solver.facing_exit_angle").as_double();
+  bool radial_dynamic_enable = get_parameter("controller.solver.radial_dynamic.enable").as_bool();
+  double radial_dynamic_v_yaw_ref = get_parameter("controller.solver.radial_dynamic.v_yaw_ref").as_double();
+  double radial_dynamic_shrink_ratio = get_parameter("controller.solver.radial_dynamic.shrink_ratio").as_double();
+  double radial_dynamic_min_angle_deg = get_parameter("controller.solver.radial_dynamic.min_angle_deg").as_double();
+  double radial_dynamic_bias_gain_deg = get_parameter("controller.solver.radial_dynamic.bias_gain_deg").as_double();
+  double radial_dynamic_max_bias_deg = get_parameter("controller.solver.radial_dynamic.max_bias_deg").as_double();
   double controller_delay = get_parameter("controller.solver.controller_delay").as_double();
   std::string selection_method_str = get_parameter("controller.solver.selection_method").as_string();
 
+  facing_enter_angle_deg_ = facing_enter_angle;
+  facing_exit_angle_deg_ = facing_exit_angle;
+  radial_dynamic_enable_ = radial_dynamic_enable;
+  radial_dynamic_v_yaw_ref_ = std::max(radial_dynamic_v_yaw_ref, 1e-6);
+  radial_dynamic_shrink_ratio_ = std::clamp(radial_dynamic_shrink_ratio, 0.0, 1.0);
+  radial_dynamic_min_angle_deg_ = std::max(radial_dynamic_min_angle_deg, 0.0);
+  radial_dynamic_bias_gain_deg_ = std::max(radial_dynamic_bias_gain_deg, 0.0);
+  radial_dynamic_max_bias_deg_ = std::max(radial_dynamic_max_bias_deg, 0.0);
+
   armor_selector_->setParameters(side_angle, min_switching_v_yaw);
   armor_selector_->setFacingParameters(facing_enter_angle, facing_exit_angle);
+  armor_selector_->setRadialDynamicParameters(
+    radial_dynamic_enable,
+    radial_dynamic_v_yaw_ref,
+    radial_dynamic_shrink_ratio,
+    radial_dynamic_min_angle_deg,
+    radial_dynamic_bias_gain_deg,
+    radial_dynamic_max_bias_deg);
 
   // 配置选板策略
   gimbal_controller::ArmorSelector::SelectionMethod sel_method =
     gimbal_controller::ArmorSelector::SelectionMethod::MIN_MOVEMENT_WITH_FACING;
   if (selection_method_str == "min_movement") {
     sel_method = gimbal_controller::ArmorSelector::SelectionMethod::MIN_MOVEMENT;
+  } else if (selection_method_str == "min_movement_with_radial") {
+    sel_method = gimbal_controller::ArmorSelector::SelectionMethod::MIN_MOVEMENT_WITH_RADIAL;
   } else if (selection_method_str == "decision_angle") {
     sel_method = gimbal_controller::ArmorSelector::SelectionMethod::DECISION_ANGLE;
   }
   armor_selector_->setSelectionMethod(sel_method);
+  radial_selection_enabled_ =
+    (sel_method == gimbal_controller::ArmorSelector::SelectionMethod::MIN_MOVEMENT_WITH_RADIAL);
   RCLCPP_INFO(get_logger(), "[GimbalController] selection_method: %s", selection_method_str.c_str());
 
   fire_advisor_->setParameters(shooting_range_w, shooting_range_h);
@@ -496,6 +522,12 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.solver.yaw_offset", 0.0);
   declare_parameter("controller.solver.facing_enter_angle", 40.0);
   declare_parameter("controller.solver.facing_exit_angle", 55.0);
+  declare_parameter("controller.solver.radial_dynamic.enable", false);
+  declare_parameter("controller.solver.radial_dynamic.v_yaw_ref", 8.0);
+  declare_parameter("controller.solver.radial_dynamic.shrink_ratio", 0.6);
+  declare_parameter("controller.solver.radial_dynamic.min_angle_deg", 5.0);
+  declare_parameter("controller.solver.radial_dynamic.bias_gain_deg", 0.0);
+  declare_parameter("controller.solver.radial_dynamic.max_bias_deg", 0.0);
   declare_parameter("controller.solver.controller_delay", 0.0);
   declare_parameter("controller.solver.selection_method", std::string("min_movement_with_facing"));
 
@@ -1679,6 +1711,22 @@ void GimbalPipelineNode::initMarkers() {
   trajectory_marker_.color.g = 0.75;
   trajectory_marker_.color.b = 0.79;
 
+  radial_allowed_arc_marker_.ns = "radial_allowed_arc";
+  radial_allowed_arc_marker_.type = visualization_msgs::msg::Marker::LINE_STRIP;
+  radial_allowed_arc_marker_.scale.x = 0.018;
+  radial_allowed_arc_marker_.color.a = 0.95;
+  radial_allowed_arc_marker_.color.r = 1.0;
+  radial_allowed_arc_marker_.color.g = 0.6;
+  radial_allowed_arc_marker_.color.b = 0.0;
+
+  radial_allowed_bounds_marker_.ns = "radial_allowed_bounds";
+  radial_allowed_bounds_marker_.type = visualization_msgs::msg::Marker::LINE_LIST;
+  radial_allowed_bounds_marker_.scale.x = 0.012;
+  radial_allowed_bounds_marker_.color.a = 0.95;
+  radial_allowed_bounds_marker_.color.r = 1.0;
+  radial_allowed_bounds_marker_.color.g = 0.85;
+  radial_allowed_bounds_marker_.color.b = 0.2;
+
   color_palette_.clear();
   for (int i = 0; i < 10; ++i) {
     float hue = i * 36.0f;
@@ -1743,6 +1791,91 @@ void GimbalPipelineNode::publishGimbalMarkers(
       armor_marker.pose.orientation.w = q.w();
       marker_array.markers.push_back(armor_marker);
     }
+  }
+
+  // Allowed radial selection range marker (for min_movement_with_radial)
+  if (radial_selection_enabled_ && armor_selector_ && target_robot.num_armors > 0) {
+    const double center_x = target_robot.center_position.x;
+    const double center_y = target_robot.center_position.y;
+    const double center_z = target_robot.center_position.z;
+
+    // Direction from robot center to our gimbal origin (world origin approximation).
+    double axis_yaw = std::atan2(-center_y, -center_x);
+
+    double enter_deg = facing_enter_angle_deg_;
+    double speed_norm = 0.0;
+    double bias_deg = 0.0;
+    if (radial_dynamic_enable_) {
+      speed_norm = std::clamp(
+        std::abs(target_robot.yaw_velocity) / radial_dynamic_v_yaw_ref_, 0.0, 1.0);
+      const double scale = 1.0 - radial_dynamic_shrink_ratio_ * speed_norm;
+      enter_deg = std::max(enter_deg * scale, radial_dynamic_min_angle_deg_);
+      const double bias_mag = std::min(
+        radial_dynamic_bias_gain_deg_ * speed_norm,
+        radial_dynamic_max_bias_deg_);
+      bias_deg = (target_robot.yaw_velocity >= 0.0 ? 1.0 : -1.0) * bias_mag;
+      axis_yaw += bias_deg * M_PI / 180.0;
+    }
+    const double enter_rad = enter_deg * M_PI / 180.0;
+
+    double radius = 0.25;
+    for (const auto & offset : target_robot.armors_offset) {
+      const double r = std::hypot(offset.position.x, offset.position.y);
+      if (r > radius) {
+        radius = r;
+      }
+    }
+    radius = std::clamp(radius * 1.2, 0.2, 0.8);
+
+    radial_allowed_arc_marker_.header = target_robot.header;
+    radial_allowed_arc_marker_.id = 100;
+    radial_allowed_arc_marker_.action = visualization_msgs::msg::Marker::ADD;
+    radial_allowed_arc_marker_.points.clear();
+
+    constexpr int kArcSamples = 48;
+    for (int i = 0; i <= kArcSamples; ++i) {
+      const double t = static_cast<double>(i) / static_cast<double>(kArcSamples);
+      const double yaw = axis_yaw - enter_rad + 2.0 * enter_rad * t;
+      geometry_msgs::msg::Point p;
+      p.x = center_x + radius * std::cos(yaw);
+      p.y = center_y + radius * std::sin(yaw);
+      p.z = center_z + 0.08;
+      radial_allowed_arc_marker_.points.push_back(p);
+    }
+    marker_array.markers.push_back(radial_allowed_arc_marker_);
+
+    radial_allowed_bounds_marker_.header = target_robot.header;
+    radial_allowed_bounds_marker_.id = 101;
+    radial_allowed_bounds_marker_.action = visualization_msgs::msg::Marker::ADD;
+    radial_allowed_bounds_marker_.points.clear();
+
+    geometry_msgs::msg::Point c;
+    c.x = center_x;
+    c.y = center_y;
+    c.z = center_z + 0.08;
+
+    geometry_msgs::msg::Point p_min;
+    p_min.x = center_x + radius * std::cos(axis_yaw - enter_rad);
+    p_min.y = center_y + radius * std::sin(axis_yaw - enter_rad);
+    p_min.z = center_z + 0.08;
+
+    geometry_msgs::msg::Point p_max;
+    p_max.x = center_x + radius * std::cos(axis_yaw + enter_rad);
+    p_max.y = center_y + radius * std::sin(axis_yaw + enter_rad);
+    p_max.z = center_z + 0.08;
+
+    geometry_msgs::msg::Point p_axis;
+    p_axis.x = center_x + radius * std::cos(axis_yaw);
+    p_axis.y = center_y + radius * std::sin(axis_yaw);
+    p_axis.z = center_z + 0.08;
+
+    radial_allowed_bounds_marker_.points.push_back(c);
+    radial_allowed_bounds_marker_.points.push_back(p_min);
+    radial_allowed_bounds_marker_.points.push_back(c);
+    radial_allowed_bounds_marker_.points.push_back(p_max);
+    radial_allowed_bounds_marker_.points.push_back(c);
+    radial_allowed_bounds_marker_.points.push_back(p_axis);
+    marker_array.markers.push_back(radial_allowed_bounds_marker_);
   }
 
   // Selection target
