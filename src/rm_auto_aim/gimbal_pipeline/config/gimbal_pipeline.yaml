@@ -26,9 +26,9 @@ gimbal_pipeline:
     ukf.alpha: 0.001
     ukf.beta: 2.0
     ukf.kappa: 0.0
-    ukf.obs_noise_pos: 0.008
+    ukf.obs_noise_pos: 0.08
     ukf.obs_noise_yaw: 0.05
-    ukf.dual_obs_noise_pos: 0.001
+    ukf.dual_obs_noise_pos: 0.01
     ukf.dual_obs_noise_yaw: 0.03
     ukf.dual_obs_geometry_noise_scale: 0.002
     ukf.single_obs_update_weight_pos: 5.0
@@ -236,7 +236,7 @@ gimbal_pipeline:
     # controller.mpc.s_yaw: 0.001
     # controller.mpc.s_pitch: 0.001
 
-    controller.mpc.N: 50
+    controller.mpc.N: 40
     controller.mpc.dt: 0.025
     controller.mpc.control_delay_s: 0.0000 # 
     controller.mpc.max_accel: 30.0
@@ -244,10 +244,10 @@ gimbal_pipeline:
     controller.mpc.q_pitch: 1000.0
     controller.mpc.q_yaw_vel: 0.0
     controller.mpc.q_pitch_vel: 0.0
-    controller.mpc.r_yaw: 0.0001
-    controller.mpc.r_pitch: 0.001
+    controller.mpc.r_yaw: 0.1
+    controller.mpc.r_pitch: 0.01
     controller.mpc.s_yaw: 0.0001
-    controller.mpc.s_pitch: 0.001
+    controller.mpc.s_pitch: 0.01
 
     # MPC 机动自适应权重衰减（Maneuver-Adaptive MPC）
     # 通过对 UKF center_velocity 做时间戳感知差分计算机动因子 α∈[0,1]
