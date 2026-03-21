@@ -123,6 +123,9 @@ gimbal_pipeline:
     selector.max_distance: 10.0
     selector.min_confidence: 0.15
     selector.hysteresis_threshold: 0.1
+      selector.priority_robot_ids: ["1", "2", "3", "4", "5", "sentry", "outpost", "base"]
+      selector.sticky_lock_frames: 3
+      selector.sticky_lost_frames: 3
 
     # ═══════════════════════════════════════════════════════════════
     # Gimbal controller parameters
