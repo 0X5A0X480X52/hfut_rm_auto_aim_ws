@@ -1,3 +1,14 @@
+# /**:
+#   ros__parameters:
+#     camera_info_url: package://rm_bringup/config/camera_info.yaml
+#     exposure_time: 4000
+#     gain: 15.0
+#     resolution_width: 1280
+#     resolution_height: 1024
+#     offsetX: 0
+#     offsetY: 0
+#     camera_name: "daheng"
+#     recording: true    #是否录制
 /hik_camera:
   ros__parameters:
     camera_name: hik_camera
@@ -5,24 +16,19 @@
 
     # Image resolution (图像分辨率)
     # Set to 0 to use camera default resolution (设置为0则使用相机默认分辨率)
-    image_width: 0         # Image width, 0 for camera default (图像宽度，0表示使用默认)
-    image_height: 0        # Image height, 0 for camera default (图像高度，0表示使用默认)
+    image_width: 1280         # Image width, 0 for camera default (图像宽度，0表示使用默认)
+    image_height: 1024        # Image height, 0 for camera default (图像高度，0表示使用默认)
     
     # Camera parameters
     # NOTE: frame_rate设置说明：
     # - 低帧率 (10fps): 稳定，适合调试，避免MV_E_NODATA错误
     # - 中帧率 (30fps): 平衡性能和稳定性
     # - 高帧率 (50fps+): 需要确保相机和USB带宽充足
-    exposure_time: 5000.0  # Exposure time in microseconds (曝光时间)
+    exposure_time: 2500.0  # Exposure time in microseconds (曝光时间)
     gain: 8.0              # Gain value (0~16) (增益)
     frame_rate: 250.0       # Frame rate in fps (帧率 - 建议从10开始)
     
     # Image processing
-    flip_image: true      # Whether to flip the image (是否翻转图像)
+    flip_image: false      # Whether to flip the image (是否翻转图像)
     # Frame id for published Image and CameraInfo
     frame_id: camera_optical_frame
-    # Raw stream dumping
-    raw_stream:
-      enabled: true  # Enable writing yaw-format raw frames
-      path: /tmp/hik_camera.yaw  # Output yaw file
-      interval: 1  # Frame sampling interval: 1=every frame, 2=every second frame

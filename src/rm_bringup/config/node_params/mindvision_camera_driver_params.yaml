@@ -7,7 +7,7 @@
     image_width: 0   # 图像宽度，0表示使用相机默认值
     image_height: 0  # 图像高度，0表示使用相机默认值
 
-    exposure_time: 2000
+    exposure_time: 1500
     gain: 8.0
     flip_image: true
     # Frame id for published Image and CameraInfo

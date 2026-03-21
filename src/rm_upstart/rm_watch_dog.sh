@@ -4,7 +4,7 @@
 TIMEOUT=10  # 设定超时时间为10秒
 NAMESPACE="" # 命名空间 例如 "/infantry_3" 注意要有"/"
 # NODE_NAMES=("armor_detector" "armor_solver" "serial_driver" "camera_driver")  # 列出所有需要监控的节点名称，注意是用空格分隔
-NODE_NAMES=("armor_detector" "gimbal_pipeline" "serial_driver")  # 列出所有需要监控的节点名称，注意是用空格分隔
+NODE_NAMES=("armor_detector")  # 列出所有需要监控的节点名称，注意是用空格分隔
 USER="$(whoami)" #用户名
 HOME_DIR=$(eval echo ~$USER)
 WORKING_DIR="$HOME_DIR/hfut_rm_auto_aim_ws/" # 代码目录 
@@ -40,12 +40,41 @@ fi
 function bringup() {
     source /opt/ros/humble/setup.bash
     source $WORKING_DIR/install/setup.bash
+    source /home/hfut-nuc/next_navigator/env.zsh
+    source /opt/intel/oneapi/setvars.sh
+    source /opt/MVS/bin/set_env_path.sh
+    
+    # 设置串口权限
+    #sudo chmod 666 /dev/ttyMIAO
+    
+    # 检测并设置Hikrobot相机USB设备权限
+    USB_LINE=$(lsusb | grep "Hikrobot MV-CS016-10UC" | head -1)
+    if [ ! -z "$USB_LINE" ]; then
+        echo "找到Hikrobot相机设备: $USB_LINE"
+        BUS_NUM=$(echo "$USB_LINE" | sed -E 's/Bus ([0-9]+) Device ([0-9]+):.*/\1/')
+        DEV_NUM=$(echo "$USB_LINE" | sed -E 's/Bus ([0-9]+) Device ([0-9]+):.*/\2/')
+        
+        # 格式化总线号和设备号为3位数字（如004, 002）
+        BUS_NUM=$(printf "%03d" $BUS_NUM)
+        DEV_NUM=$(printf "%03d" $DEV_NUM)
+        
+        USB_DEVICE="/dev/bus/usb/$BUS_NUM/$DEV_NUM"
+        echo "设置USB设备权限: $USB_DEVICE"
+        chmod 666 "$USB_DEVICE"
+    else
+        echo "警告: 未找到Hikrobot MV-CS016-10UC相机设备"
+    fi
+
     nohup ros2 launch $LAUNCH_FILE > "$OUTPUT_FILE" 2>&1 &
 }
 
 function restart() {
-    pkill -f ros  # 杀掉所有ROS2进程
-    ros2 daemon stop
+    PID=$(ps -eo pid,cmd | grep "[/]opt/ros/humble/bin/ros2 launch rm_bringup bringup_pipeline.launch.py" | awk '{print $1}') && echo $PID
+    #pkill -f ros  # 杀掉所有ROS2进程
+    kill $PID
+    sleep 2
+    kill -9 $PID
+    #ros2 daemon stop
     ros2 daemon start
     bringup
 }
@@ -77,4 +106,3 @@ while true; do
     done
     sleep $TIMEOUT
 done
-

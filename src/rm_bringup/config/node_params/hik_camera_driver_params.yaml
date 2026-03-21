@@ -16,8 +16,8 @@
 
     # Image resolution (图像分辨率)
     # Set to 0 to use camera default resolution (设置为0则使用相机默认分辨率)
-    image_width: 0         # Image width, 0 for camera default (图像宽度，0表示使用默认)
-    image_height: 0        # Image height, 0 for camera default (图像高度，0表示使用默认)
+    image_width: 1280         # Image width, 0 for camera default (图像宽度，0表示使用默认)
+    image_height: 1024        # Image height, 0 for camera default (图像高度，0表示使用默认)
     
     # Camera parameters
     # NOTE: frame_rate设置说明：
@@ -29,6 +29,6 @@
     frame_rate: 250.0       # Frame rate in fps (帧率 - 建议从10开始)
     
     # Image processing
-    flip_image: true      # Whether to flip the image (是否翻转图像)
+    flip_image: false      # Whether to flip the image (是否翻转图像)
     # Frame id for published Image and CameraInfo
     frame_id: camera_optical_frame
