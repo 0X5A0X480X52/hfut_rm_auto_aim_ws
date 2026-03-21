@@ -591,6 +591,21 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.mpc.maneuver_adapt.tau",    10.0);
   declare_parameter("controller.mpc.maneuver_adapt.r_scale", 10.0);
 
+  // MPC 命中概率权重加权 (Q 权重缩放)
+  declare_parameter("controller.mpc.weighting.enable", false);
+  declare_parameter("controller.mpc.weighting.alpha", 3.0);
+  declare_parameter("controller.mpc.weighting.k_omega", 0.5);
+  declare_parameter("controller.mpc.weighting.sigma_min", 0.05);
+  declare_parameter("controller.mpc.weighting.sigma_max", 0.5);
+  declare_parameter("controller.mpc.weighting.sigma_sys", 0.02);
+  declare_parameter("controller.mpc.weighting.target_size", 0.135);
+  declare_parameter("controller.mpc.weighting.delay_s", 0.0);
+  declare_parameter("controller.mpc.weighting.max_w", 6.0);
+  declare_parameter("controller.mpc.weighting.smooth_alpha", 0.7);
+  declare_parameter("controller.mpc.weighting.min_distance", 0.1);
+  declare_parameter("controller.mpc.weighting.sigma_beta", 0.3);
+  declare_parameter("controller.mpc.weighting.gamma", 0.5);
+
   // MPC 轨迹生成前速度 clamp
   declare_parameter("controller.mpc.vel_clamp.enable",          false);
   declare_parameter("controller.mpc.vel_clamp.max_linear_speed", 5.0);
@@ -1452,6 +1467,21 @@ void GimbalPipelineNode::initGimbalStrategies() {
     get_parameter("controller.mpc.maneuver_adapt.eta").as_double(),
     get_parameter("controller.mpc.maneuver_adapt.tau").as_double(),
     get_parameter("controller.mpc.maneuver_adapt.r_scale").as_double());
+  mpc_s->setWeightingParameters(
+    get_parameter("controller.mpc.weighting.enable").as_bool(),
+    get_parameter("controller.mpc.weighting.alpha").as_double(),
+    get_parameter("controller.mpc.weighting.k_omega").as_double(),
+    get_parameter("controller.mpc.weighting.sigma_min").as_double(),
+    get_parameter("controller.mpc.weighting.sigma_max").as_double(),
+    get_parameter("controller.mpc.weighting.sigma_sys").as_double(),
+    get_parameter("controller.mpc.weighting.target_size").as_double(),
+    get_parameter("controller.mpc.weighting.delay_s").as_double(),
+    get_parameter("controller.mpc.weighting.max_w").as_double(),
+    get_parameter("controller.mpc.weighting.smooth_alpha").as_double(),
+    get_parameter("controller.mpc.weighting.min_distance").as_double(),
+    get_parameter("controller.bullet_speed").as_double(),
+    get_parameter("controller.mpc.weighting.sigma_beta").as_double(),
+    get_parameter("controller.mpc.weighting.gamma").as_double());
   {
     gimbal_controller::mpc::VelocityClampConfig vel_clamp_cfg;
     vel_clamp_cfg.enable =

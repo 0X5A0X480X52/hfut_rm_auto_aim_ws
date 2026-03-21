@@ -99,6 +99,18 @@ public:
     bool enable, double a_max, double eta, double tau, double r_scale);
 
   /**
+   * @brief 设置 MPC 基于命中概率的 Q 权重加权参数
+   *
+   * 仅影响 Q (状态跟踪)，不修改 R/S；禁用时行为与原实现一致。
+   */
+  void setWeightingParameters(
+    bool enable, double alpha, double k_omega,
+    double sigma_min, double sigma_max, double sigma_sys,
+    double target_size, double delay_s, double max_w,
+    double smooth_alpha, double min_distance, double bullet_speed,
+    double sigma_beta, double gamma);
+
+  /**
    * @brief 设置 FOV 软约束参数
    *
    * 启用后，通过 slack 变量在 QP 中惩罚预测轨迹超出相机视场角范围的行为。
@@ -138,6 +150,10 @@ public:
   }
 
 private:
+  Eigen::VectorXd buildWeightingVector(
+    const GimbalControlContext & context,
+    const Eigen::VectorXd & X_ref);
+
   // MPC 核心模块
   mpc::GimbalDynamicsModel dynamics_model_;
   mpc::QPSolver qp_solver_;
@@ -191,6 +207,24 @@ private:
   double eta_{0.2};               // EMA 平滑系数
   double tau_{10.0};              // Q 衰减时间常数 (步数)
   double r_scale_maneuver_{10.0}; // R 放大系数
+
+  // 命中概率权重参数
+  bool enable_weighting_{false};
+  double weighting_alpha_{0.0};
+  double weighting_k_omega_{0.0};
+  double weighting_sigma_min_{0.05};
+  double weighting_sigma_max_{0.5};
+  double weighting_sigma_sys_{0.02};
+  double weighting_target_size_{0.135};
+  double weighting_delay_s_{0.0};
+  double weighting_max_w_{5.0};
+  double weighting_smooth_alpha_{0.0};
+  double weighting_min_distance_{0.1};
+  double weighting_bullet_speed_{20.0};
+  double weighting_sigma_beta_{0.0};
+  double weighting_gamma_{1.0};
+  Eigen::VectorXd prev_w_steps_;
+  bool has_prev_w_steps_{false};
 
   // 机动 alpha EMA 状态
   double alpha_ema_{0.0};

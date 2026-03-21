@@ -261,6 +261,21 @@ gimbal_pipeline:
     controller.mpc.maneuver_adapt.tau: 10.0        # Q 衰减时间常数 (步数尺度)，影响远期衰减速度
     controller.mpc.maneuver_adapt.r_scale: 10.0    # R 放大系数；α=1 时 R_eff = R*(1+r_scale)
 
+    # MPC 命中概率权重加权（仅缩放 Q，默认关闭）
+    controller.mpc.weighting.enable: false
+    controller.mpc.weighting.alpha: 3.0
+    controller.mpc.weighting.k_omega: 0.5
+    controller.mpc.weighting.sigma_min: 0.05
+    controller.mpc.weighting.sigma_max: 0.5
+    controller.mpc.weighting.sigma_sys: 0.02
+    controller.mpc.weighting.target_size: 0.135
+    controller.mpc.weighting.delay_s: 0.0
+    controller.mpc.weighting.max_w: 6.0
+    controller.mpc.weighting.smooth_alpha: 0.7
+    controller.mpc.weighting.min_distance: 0.1
+    controller.mpc.weighting.sigma_beta: 0.3
+    controller.mpc.weighting.gamma: 0.5
+
     # MPC 轨迹生成前速度 clamp
     # 在轨迹生成之前对目标速度进行限幅，防止极端高速状态导致参考轨迹发散:
     #   center_velocity: 保持方向不变，对速度标量 clamp 到 max_linear_speed

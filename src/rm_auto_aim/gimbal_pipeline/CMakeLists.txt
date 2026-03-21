@@ -34,8 +34,9 @@ include_directories(
   ${qpOASES_INCLUDE_DIR}
 )
 
-# ─── Collect all source files ──────────────────────────────────
-file(GLOB_RECURSE ALL_SRCS "src/*.cpp")
+# ─── Collect all source files (recursively include subdirectories) ─
+# Use a recursive glob pattern to ensure sources in subfolders are found
+file(GLOB_RECURSE ALL_SRCS "src/**/*.cpp")
 
 # ─── Shared library (component) ───────────────────────────────
 add_library(${PROJECT_NAME} SHARED ${ALL_SRCS})

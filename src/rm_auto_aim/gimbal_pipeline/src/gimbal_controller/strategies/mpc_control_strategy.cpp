@@ -16,6 +16,7 @@
 
 #include <angles/angles.h>
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 
 #include "gimbal_controller/fire_advisor.hpp"
@@ -83,6 +84,31 @@ void MpcControlStrategy::setManeuverAdaptParameters(
   has_prev_velocity_ = false;
 }
 
+void MpcControlStrategy::setWeightingParameters(
+  bool enable, double alpha, double k_omega,
+  double sigma_min, double sigma_max, double sigma_sys,
+  double target_size, double delay_s, double max_w,
+  double smooth_alpha, double min_distance, double bullet_speed,
+  double sigma_beta, double gamma)
+{
+  enable_weighting_ = enable;
+  weighting_alpha_ = alpha;
+  weighting_k_omega_ = k_omega;
+  weighting_sigma_min_ = sigma_min;
+  weighting_sigma_max_ = sigma_max;
+  weighting_sigma_sys_ = sigma_sys;
+  weighting_target_size_ = target_size;
+  weighting_delay_s_ = delay_s;
+  weighting_max_w_ = max_w;
+  weighting_smooth_alpha_ = smooth_alpha;
+  weighting_min_distance_ = min_distance;
+  weighting_bullet_speed_ = bullet_speed;
+  weighting_sigma_beta_ = sigma_beta;
+  weighting_gamma_ = gamma;
+  has_prev_w_steps_ = false;
+  prev_w_steps_.resize(0);
+}
+
 void MpcControlStrategy::setFovConstraintParameters(
   bool enable, double margin, double slack_weight, int constraint_steps,
   bool dynamic_margin_enable, double margin_vel_scale,
@@ -108,6 +134,75 @@ void MpcControlStrategy::updateFov(double fov_half_yaw, double fov_half_pitch)
   fov_half_yaw_ = fov_half_yaw;
   fov_half_pitch_ = fov_half_pitch;
   camera_info_received_ = true;
+}
+
+Eigen::VectorXd MpcControlStrategy::buildWeightingVector(
+  const GimbalControlContext & context,
+  const Eigen::VectorXd & X_ref)
+{
+  Eigen::VectorXd w = Eigen::VectorXd::Ones(N_);
+  if (!enable_weighting_) {
+    return w;
+  }
+
+  const auto & robot = context.target_robot;
+  const double bullet_speed = std::max(weighting_bullet_speed_, 1e-3);
+  const double alpha = std::max(weighting_alpha_, 0.0);
+  const double smooth_alpha = std::clamp(weighting_smooth_alpha_, 0.0, 1.0);
+  const double sigma_beta = std::max(weighting_sigma_beta_, 0.0);
+  const double gamma = std::max(weighting_gamma_, 1e-3);
+  const int nx = mpc::GimbalDynamicsModel::STATE_DIM;
+
+  for (int k = 0; k < N_; ++k) {
+    double t = (k + 1) * dt_;
+
+    // 预测时刻目标位置：考虑匀加速运动模型的三阶预测，适用于快速机动的目标
+    double px = robot.center_position.x + robot.center_velocity.x * t +
+      0.5 * robot.center_acceleration.x * t * t;
+    double py = robot.center_position.y + robot.center_velocity.y * t +
+      0.5 * robot.center_acceleration.y * t * t;
+    double pz = robot.center_position.z + robot.center_velocity.z * t +
+      0.5 * robot.center_acceleration.z * t * t;
+    double distance = std::sqrt(px * px + py * py + pz * pz);
+    distance = std::max(distance, weighting_min_distance_);
+
+    double yaw_k = robot.yaw + robot.yaw_velocity * t +
+      0.5 * robot.yaw_acceleration * t * t;
+    double omega_k = robot.yaw_velocity + robot.yaw_acceleration * t;
+
+    double t_bullet = distance / bullet_speed;
+    // 命中时刻角度：考虑子弹飞行时间的目标朝向
+    double theta_hit = yaw_k + omega_k * t_bullet;
+    // 参考轨迹给出的“理想击打角”
+    double theta_target = X_ref(k * nx);
+    // 注意：避免重复提前量，这里不再叠加 delay
+    double dtheta = angles::normalize_angle(theta_hit - theta_target);
+
+    // 角度不确定性模型：考虑目标尺寸、系统误差和动态误差
+    double sigma_theta = weighting_target_size_ / distance; // 目标尺寸引起的角度不确定性
+    double sigma_eff = std::sqrt(sigma_theta * sigma_theta +
+      weighting_sigma_sys_ * weighting_sigma_sys_);         // 系统误差引起的角度不确定性
+    double sigma_dynamic = sigma_eff / (1.0 + sigma_beta * std::abs(omega_k)); // 动态误差引起的角度不确定性，快速转动时不确定性增大
+    double sigma = std::clamp(sigma_dynamic, weighting_sigma_min_, weighting_sigma_max_);
+
+    // 权重计算：不确定性越大权重越小；快速转动时权重降低；最终通过 gamma 调整权重衰减的激烈程度
+    double p_angle = std::exp(-0.5 * (dtheta * dtheta) / (sigma * sigma));
+    double p_omega = std::exp(-weighting_k_omega_ * std::abs(omega_k));
+    double r_k = p_angle * p_omega;
+    r_k = std::pow(std::clamp(r_k, 0.0, 1.0), gamma);
+
+    double w_k = 1.0 + alpha * r_k;
+    w(k) = std::clamp(w_k, 1.0, weighting_max_w_);
+  }
+
+  // 权重平滑：与前一次计算的权重进行指数移动平均，避免权重突变导致控制输入抖动
+  if (smooth_alpha > 1e-6 && has_prev_w_steps_ && prev_w_steps_.size() == N_) {
+    w = smooth_alpha * prev_w_steps_ + (1.0 - smooth_alpha) * w;
+  }
+
+  prev_w_steps_ = w;
+  has_prev_w_steps_ = true;
+  return w;
 }
 
 void MpcControlStrategy::rebuildMatrices()
@@ -147,6 +242,8 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     // 机动自适应状态重置：防止旧跟踪历史污染新跟踪
     alpha_ema_ = 0.0;
     has_prev_velocity_ = false;
+    has_prev_w_steps_ = false;
+    prev_w_steps_.resize(0);
     return createIdleCmd();
   }
 
@@ -232,6 +329,10 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     // 构建自适应权重矩阵
     Eigen::MatrixXd Q_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightQ(
       N_, q_yaw_, q_pitch_, q_yaw_vel_, q_pitch_vel_, alpha_ema_, tau_);
+    if (enable_weighting_) {
+      Eigen::VectorXd w_steps = buildWeightingVector(context, X_ref);
+      mpc::GimbalDynamicsModel::scaleBlockDiagonalQ(Q_eff, w_steps);
+    }
     Eigen::MatrixXd R_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightR(
       N_, r_yaw_, r_pitch_, alpha_ema_, r_scale_maneuver_);
 
@@ -307,7 +408,12 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   alpha_ema_ = 0.0;
   Eigen::MatrixXd H;
   Eigen::VectorXd f;
-  mpc::GimbalDynamicsModel::buildQP(A_pred_, B_ctrl_, D_, Q_blk_, R_blk_, S_blk_, x0, X_ref, H, f);
+  Eigen::MatrixXd Q_eff = Q_blk_;
+  if (enable_weighting_) {
+    Eigen::VectorXd w_steps = buildWeightingVector(context, X_ref);
+    mpc::GimbalDynamicsModel::scaleBlockDiagonalQ(Q_eff, w_steps);
+  }
+  mpc::GimbalDynamicsModel::buildQP(A_pred_, B_ctrl_, D_, Q_eff, R_blk_, S_blk_, x0, X_ref, H, f);
 
   // 6) 框约束 + 可选 FOV 软约束
   int n_vars = 2 * N_;

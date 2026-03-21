@@ -270,6 +270,20 @@ public:
   }
 
   /**
+   * @brief 对 block-diagonal Q 的每步子块应用缩放因子
+   * @param Q  (4N × 4N) block-diagonal 权重矩阵
+   * @param w  (N) 每步缩放因子
+   */
+  static void scaleBlockDiagonalQ(Eigen::MatrixXd & Q, const Eigen::VectorXd & w)
+  {
+    const int nx = STATE_DIM;
+    const int N = static_cast<int>(w.size());
+    for (int k = 0; k < N; ++k) {
+      Q.block(k * nx, k * nx, nx, nx) *= w(k);
+    }
+  }
+
+  /**
    * @brief 构建 diagonal 控制权重矩阵 R
    */
   static Eigen::MatrixXd buildWeightR(int N, double r_yaw, double r_pitch)
