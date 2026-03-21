@@ -94,6 +94,12 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       get_parameter("selector.min_confidence").as_double();
   selection_config_.hysteresis_threshold =
       get_parameter("selector.hysteresis_threshold").as_double();
+    selection_config_.priority_robot_ids =
+      get_parameter("selector.priority_robot_ids").as_string_array();
+    selection_config_.sticky_lock_frames =
+      get_parameter("selector.sticky_lock_frames").as_int();
+    selection_config_.sticky_lost_frames =
+      get_parameter("selector.sticky_lost_frames").as_int();
   initSelectionStrategy();
 
   // ── 4. Gimbal controller ──
@@ -469,6 +475,9 @@ void GimbalPipelineNode::declareTargetSelectorParameters() {
   declare_parameter("selector.max_distance", 10.0);
   declare_parameter("selector.min_confidence", 0.3);
   declare_parameter("selector.hysteresis_threshold", 0.1);
+  declare_parameter("selector.priority_robot_ids", std::vector<std::string>{});
+  declare_parameter("selector.sticky_lock_frames", 3);
+  declare_parameter("selector.sticky_lost_frames", 3);
 }
 
 void GimbalPipelineNode::declareGimbalControllerParameters() {
@@ -1306,6 +1315,10 @@ GimbalPipelineNode::generateArmorsOffset(int num_armors, double r1,
 void GimbalPipelineNode::initSelectionStrategy() {
   if (selector_strategy_name_ == "min_yaw_deviation") {
     selection_strategy_ = std::make_unique<MinYawDeviationStrategy>();
+  } else if (selector_strategy_name_ == "priority_list") {
+    selection_strategy_ = std::make_unique<PriorityListStrategy>();
+  } else if (selector_strategy_name_ == "sticky_min_yaw_deviation") {
+    selection_strategy_ = std::make_unique<StickyMinYawDeviationStrategy>();
   } else {
     RCLCPP_WARN(get_logger(), "Unknown selector strategy '%s', using min_yaw_deviation",
                 selector_strategy_name_.c_str());

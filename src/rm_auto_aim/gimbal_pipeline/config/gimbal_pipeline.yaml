@@ -118,11 +118,18 @@
 #     # Target selector parameters
 #     # ═══════════════════════════════════════════════════════════════
 #     selector.strategy: "min_yaw_deviation"
+#     # selector.strategy options:
+#     #   "min_yaw_deviation"            - select by smallest yaw deviation
+#     #   "priority_list"                - select by selector.priority_robot_ids order
+#     #   "sticky_min_yaw_deviation"     - min_yaw + preferred-id locking
 #     selector.reference_yaw: 0.0
 #     selector.max_yaw_deviation: 3.14159
 #     selector.max_distance: 10.0
 #     selector.min_confidence: 0.15
 #     selector.hysteresis_threshold: 0.1
+#     selector.priority_robot_ids: ["1", "2", "3", "4", "5", "sentry", "outpost", "base"]
+#     selector.sticky_lock_frames: 3
+#     selector.sticky_lost_frames: 3
 
 #     # ═══════════════════════════════════════════════════════════════
 #     # Gimbal controller parameters
@@ -339,7 +346,7 @@ gimbal_pipeline:
     default_r1: 0.15
     default_r2: 0.20
     default_dza: 0.0
-    tracker_timeout: 0.50
+    tracker_timeout: 0.0150
     debug_mode: false
     enable_oscillation_detection: false
     visualization_frame: "odom"
@@ -439,12 +446,20 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     # Target selector parameters
     # ═══════════════════════════════════════════════════════════════
-    selector.strategy: "min_yaw_deviation"
+    selector.strategy: "priority_list"
+    # selector.strategy options:
+    #   "min_yaw_deviation"            - select by smallest yaw deviation
+    #   "priority_list"                - select by selector.priority_robot_ids order
+    #   "sticky_min_yaw_deviation"     - min_yaw + preferred-id locking
     selector.reference_yaw: 0.0
     selector.max_yaw_deviation: 3.14159
     selector.max_distance: 10.0
     selector.min_confidence: 0.15
     selector.hysteresis_threshold: 0.1
+    # selector.priority_robot_ids: ["1", "2", "3", "4", "5", "sentry", "outpost", "base"]
+    selector.priority_robot_ids: ["1", "2", "3", "4", "5", "sentry", "outpost", "base"]
+    selector.sticky_lock_frames: 3
+    selector.sticky_lost_frames: 3
 
     # ═══════════════════════════════════════════════════════════════
     # Gimbal controller parameters
@@ -559,7 +574,7 @@ gimbal_pipeline:
 
     controller.mpc.N: 50
     controller.mpc.dt: 0.05
-    controller.mpc.control_delay_s: 0.005
+    controller.mpc.control_delay_s: 0.00
     controller.mpc.max_accel: 30.0
     controller.mpc.q_yaw: 10000.0
     controller.mpc.q_pitch: 1000.0

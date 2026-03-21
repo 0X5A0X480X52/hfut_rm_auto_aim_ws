@@ -45,6 +45,8 @@
 // ─── target_selector internals ────────────────────────────────
 #include "target_selector/selection_strategy.hpp"
 #include "target_selector/strategies/min_yaw_deviation_strategy.hpp"
+#include "target_selector/strategies/priority_list_strategy.hpp"
+#include "target_selector/strategies/sticky_min_yaw_deviation_strategy.hpp"
 
 // ─── prediction logger ────────────────────────────────────────
 #include "gimbal_pipeline/prediction_logger.hpp"

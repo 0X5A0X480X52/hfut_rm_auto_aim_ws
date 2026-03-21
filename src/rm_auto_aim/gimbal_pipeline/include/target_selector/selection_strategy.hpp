@@ -54,6 +54,9 @@ struct SelectionConfig {
   double min_confidence;         // Minimum robot confidence required
   std::string current_target_id; // Currently locked target ID (for hysteresis)
   double hysteresis_threshold;   // Threshold for switching targets (ratio)
+  std::vector<std::string> priority_robot_ids;  // Robot IDs sorted by high->low priority
+  int sticky_lock_frames;        // Frames needed to lock a preferred target id
+  int sticky_lost_frames;        // Frames needed to clear preferred target id
   
   SelectionConfig()
     : reference_yaw(0.0)
@@ -61,7 +64,10 @@ struct SelectionConfig {
     , max_distance(10.0)
     , min_confidence(0.3)
     , current_target_id("")
-    , hysteresis_threshold(0.1) {}
+    , hysteresis_threshold(0.1)
+    , priority_robot_ids()
+    , sticky_lock_frames(3)
+    , sticky_lost_frames(3) {}
 };
 
 /**
