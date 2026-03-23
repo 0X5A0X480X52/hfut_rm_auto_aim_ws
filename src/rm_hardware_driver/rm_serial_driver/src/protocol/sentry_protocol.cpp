@@ -15,7 +15,7 @@
 
 #include "rm_serial_driver/protocol/sentry_protocol.hpp"
 #include <stdlib.h>
-g
+
 namespace fyt::serial_driver::protocol {
 ProtocolSentry::ProtocolSentry(std::string_view port_name, bool enable_data_print) {
   auto uart_transporter = std::make_shared<UartTransporter>(std::string(port_name));
