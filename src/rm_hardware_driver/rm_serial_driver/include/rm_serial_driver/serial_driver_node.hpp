@@ -17,16 +17,18 @@
 #define SERIAL_DRIVER_SERIAL_DRIVER_NODE_HPP_
 
 // std
+#include <geometry_msgs/msg/detail/twist__struct.hpp>
 #include <memory>
 #include <thread>
 // ros2
 #include <tf2_ros/transform_broadcaster.h>
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
-#include <geometry_msgs/msg/twist.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 // project
+#include "std_msgs/msg/int32.hpp"
 #include "rm_utils/heartbeat.hpp"
 #include "rm_interfaces/msg/gimbal_cmd.hpp"
 #include "rm_interfaces/msg/serial_receive_data.hpp"
@@ -74,7 +76,11 @@ private:
   std::vector<rclcpp::SubscriptionBase::SharedPtr> subscriptions_;
   // Publisher
   rclcpp::Publisher<rm_interfaces::msg::SerialReceiveData>::SharedPtr serial_receive_data_pub_;
-
+  rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr wheel_pub_;
+    rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr hp_publisher_;
+  rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr bullet_publisher_;
+  rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr time_remain_publisher_;
+  int time_publish_counter_ = 0;
   // Broadcast tf from odom to gimbal_link
   double timestamp_offset_ = 0;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;

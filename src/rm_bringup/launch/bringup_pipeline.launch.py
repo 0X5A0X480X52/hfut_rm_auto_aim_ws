@@ -208,6 +208,7 @@ def generate_launch_description():
                 name='serial_driver',
                 output='both',
                 emulate_tty=True,
+                prefix="taskset -c 19",
                 parameters=[get_bringup_params('serial_driver')],
             )]
 

@@ -1,0 +1,322 @@
+# GimbalPipeline unified configuration
+# Merges: max_entropy_tracker + target_selector + gimbal_controller
+#
+# The three inter-node ROS2 topics are replaced by internal C++ calls:
+#   /max_entropy_tracker/tracked_robots  →  internal buildTrackedRobotsMsg()
+#   /target_selector/selected_target     →  internal selectTargetInternal()
+#   (eliminates ~2 hops of serialization and scheduling latency)
+
+gimbal_pipeline:
+  ros__parameters:
+    # ═══════════════════════════════════════════════════════════════
+    # Tracker parameters (from max_entropy_tracker)
+    # ═══════════════════════════════════════════════════════════════
+    target_frame: "odom"
+    source_frame: "camera_optical_frame"
+    predict_rate: 20.0
+    default_r1: 0.15
+    default_r2: 0.20
+    default_dza: 0.0
+    tracker_timeout: 0.50
+    debug_mode: false
+    enable_oscillation_detection: false
+    visualization_frame: "odom"
+
+    # UKF tuning
+    ukf.alpha: 0.001
+    ukf.beta: 2.0
+    ukf.kappa: 0.0
+    ukf.obs_noise_pos: 0.008
+    ukf.obs_noise_yaw: 0.05
+    ukf.dual_obs_noise_pos: 0.001
+    ukf.dual_obs_noise_yaw: 0.03
+    ukf.dual_obs_geometry_noise_scale: 0.002
+    ukf.single_obs_update_weight_pos: 5.0
+    ukf.enable_innovation_gating: false
+    ukf.innovation_gate_chi2_threshold: 9.49
+
+    # Motion model
+    motion.translation_model: "Singer"  # "CV" | "Singer"
+    motion.cv_process_noise_vel: 1.00
+    motion.ca_process_noise_acc: 0.01
+    motion.singer_alpha: 0.5
+    motion.singer_sigma: 0.5
+    motion.process_noise_r: 0.00002
+    motion.process_noise_dz: 0.00005
+
+    # Spin model
+    spin.spin_process_noise_yaw_rate: 1.0
+    spin.spin_process_noise_yaw_acc: 10.0
+    spin.spin_process_noise_delta_rate: 1.0
+    spin.spin_process_noise_delta_acc: 30.0
+
+    # Entropy
+    entropy.temperature: 2.0
+    entropy.use_adaptive: true
+    entropy.k_prior_weight: 0.7
+
+    # Tracker logic
+    tracker.tracking_thres: 2
+    tracker.lost_thres: 8
+    tracker.temp_lost_thres: 3
+    tracker.max_match_distance: 2.0
+    tracker.max_match_yaw_diff: 1.0
+    tracker.n_panels: 4
+    tracker.panel_angle_step: 1.5707963267948966
+
+    # Constraints
+    constraints.min_radius: 0.12
+    constraints.max_radius: 0.3
+    constraints.min_dz: -1.0
+    constraints.max_dz: 1.0
+
+    # Panel mismatch detection
+    panel_mismatch.enable: true
+    panel_mismatch.window_size: 8
+    panel_mismatch.threshold_t1: 0.0009
+    panel_mismatch.confirm_count: 3
+    panel_mismatch.reinit_count: 5
+
+    # Output smoother (1-Euro filter + Robbins-Monro)
+    smoother.enable: false
+    smoother.enable_position_smooth: true
+    smoother.enable_yaw_smooth: true
+    smoother.enable_velocity_smooth: true
+    smoother.enable_structural_convergence: true
+    smoother.pos_min_cutoff: 1.5
+    smoother.pos_beta: 0.01
+    smoother.pos_d_cutoff: 1.0
+    smoother.yaw_min_cutoff: 1.0
+    smoother.yaw_beta: 0.005
+    smoother.yaw_d_cutoff: 1.0
+    smoother.vel_min_cutoff: 2.0
+    smoother.vel_beta: 0.01
+    smoother.vel_d_cutoff: 1.0
+    smoother.rm_initial_step: 0.5
+    smoother.rm_gamma: 0.75
+    smoother.rm_n0: 5
+    smoother.rm_dual_obs_boost: 3.0
+    smoother.rm_min_radius: 0.12
+    smoother.rm_max_radius: 0.5
+    smoother.rm_min_dz: -1.0
+    smoother.rm_max_dz: 1.0
+    smoother.rm_convergence_eps: 0.0001
+    smoother.default_freq: 30.0
+
+    # ---- Outlier filter (pre-smoother, independent of smoother.enable) ----
+    # When an outlier is detected the last valid SmoothedOutput is held
+    # (held-frame strategy) so One-Euro filter state is not corrupted.
+    smoother.enable_outlier_filter: true
+    smoother.outlier_method: "mad"        # "mad" | "iqr" | "mahalanobis"
+    smoother.outlier_window_size: 10      # rolling window length
+    smoother.outlier_min_samples: 5       # start filtering after N samples
+    smoother.outlier_mad_k: 3.5           # MAD: |val - median| > k * MAD
+    smoother.outlier_iqr_k: 1.5           # IQR: |val - median| > k * IQR
+    smoother.outlier_mahal_threshold: 9.21  # Mahalanobis: d2 > threshold
+
+    # ═══════════════════════════════════════════════════════════════
+    # Target selector parameters
+    # ═══════════════════════════════════════════════════════════════
+    selector.strategy: "min_yaw_deviation"
+    selector.reference_yaw: 0.0
+    selector.max_yaw_deviation: 3.14159
+    selector.max_distance: 10.0
+    selector.min_confidence: 0.15
+    selector.hysteresis_threshold: 0.1
+
+    # ═══════════════════════════════════════════════════════════════
+    # Gimbal controller parameters
+    # ═══════════════════════════════════════════════════════════════
+    # controller.bullet_speed: 11.5
+    controller.bullet_speed: 23.0
+    controller.control_rate: 250.0
+    controller.strategy: "mpc"    # "current" | "predicted" | "mpc" | "state_machine"
+    controller.ballistic_mode: "local"  # "service" | "local"
+
+    controller.solver.shooting_range_width: 0.135
+    controller.solver.shooting_range_height: 0.135
+    controller.solver.side_angle: 15.0
+    controller.solver.min_switching_v_yaw: 0.0
+    controller.solver.prediction_delay: 0.100
+    controller.solver.max_prediction_time: 0.500
+    controller.solver.max_tracking_v_yaw: 12.0
+    controller.solver.transfer_thresh: 5
+    controller.solver.gravity: 9.8
+    controller.solver.resistance: 0.001
+    controller.solver.iteration_times: 20
+    controller.solver.pitch_offset: 0.0
+    controller.solver.yaw_offset: 0.0
+    controller.solver.facing_enter_angle: 40.0
+    controller.solver.facing_exit_angle: 45.0
+    # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
+    # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
+    # 若启用自适应 delay（adaptive_delay.enable=true），本值作为 delay 初始值。
+    controller.solver.controller_delay: 0.00
+
+    # ── 自适应 controller_delay（AIMD 策略）────────────────────────
+    # 启用后根据目标线速度/角速度及连续未开火帧数动态调整 controller_delay：
+    #   开火成功  →  delay -= add_step                       (线性减小, AD)
+    #   连续未开火超 fire_wait_threshold 帧
+    #           →  delay *= 1 + (mul_factor-1) * speed_factor (加权乘性增大, MI)
+    #     speed_factor = max(min(|v_xyz|/max_linear_speed, 1),
+    #                        min(|v_yaw|/max_angular_speed, 1))
+    # enable=false 时退化为静态 controller_delay，行为与原版完全一致。
+    controller.solver.adaptive_delay.enable: true
+    controller.solver.adaptive_delay.fire_wait_threshold: 10   # 连续未开火多少帧后开始增大
+    controller.solver.adaptive_delay.mul_factor: 1.2           # 乘性增幅因子(>1)
+    controller.solver.adaptive_delay.add_step: 0.005           # 开火成功时每帧减小量 (秒)
+    controller.solver.adaptive_delay.max_delay: 0.10           # delay 上限 (秒)
+    controller.solver.adaptive_delay.min_delay: 0.0            # delay 下限 (秒)
+    controller.solver.adaptive_delay.max_linear_speed: 3.0     # 线速度归一化参考 (m/s)
+    controller.solver.adaptive_delay.max_angular_speed: 10.0   # 角速度归一化参考 (rad/s)
+
+    # ── GimbalCmd 输出端保护滤波器 ──────────────────────────────────
+    # 在 gimbal_cmd 发布前对 yaw_diff / pitch_diff 执行多级可配置保护：
+    #   0. Clamping        — 绝对限幅，防止极端控制量
+    #   1. Outlier Reject  — 帧间突变外点检测，hold 上帧或强制接受
+    #   2. Rate Limiter    — 限制每帧变化量上限
+    #   3. EMA             — 指数移动平均平滑（默认关闭，会引入延迟）
+    #   4. 1-Euro Filter   — 速度自适应低通（默认关闭，运动快时自动减弱平滑）
+    # 各级独立开关；目标切换或从 idle 恢复时自动重置滤波器历史。
+
+    # 0. Clamping
+    controller.output_filter.enable_clamping: false
+    controller.output_filter.max_yaw_diff: 15.0      # 度，yaw_diff 绝对上限
+    controller.output_filter.max_pitch_diff: 10.0    # 度，pitch_diff 绝对上限
+
+    # 1. 外点检测
+    controller.output_filter.enable_outlier_rejection: true
+    controller.output_filter.outlier_threshold_yaw: 8.0    # 帧间跳变判定阈值 (度)
+    controller.output_filter.outlier_threshold_pitch: 5.0  # 帧间跳变判定阈值 (度)
+    controller.output_filter.max_outlier_count: 3          # 连续外点超此数后强制 accept
+
+    # 2. Rate Limiter
+    controller.output_filter.enable_rate_limiter: true
+    controller.output_filter.max_yaw_rate: 5.0     # 每帧最大变化量 (度/帧 @ 250Hz)
+    controller.output_filter.max_pitch_rate: 3.0   # 每帧最大变化量 (度/帧 @ 250Hz)
+
+    # 3. EMA 平滑（默认关闭；开启会引入 1~2 帧延迟）
+    controller.output_filter.enable_ema: true
+    controller.output_filter.ema_alpha: 0.7         # (0,1]，越大越跟随，越小越平滑
+
+    # 4. 1-Euro 自适应低通滤波（默认关闭；运动快时自动减弱平滑，适合高速目标）
+    controller.output_filter.enable_one_euro: false
+    controller.output_filter.one_euro_freq: 250.0        # Hz，应与 control_rate 一致
+    controller.output_filter.one_euro_min_cutoff: 1.0    # 最小截止频率 (Hz)
+    controller.output_filter.one_euro_beta: 0.007        # 速度灵敏度（越大高速时截止频率越高）
+    controller.output_filter.one_euro_d_cutoff: 1.0      # 导数截止频率 (Hz)
+
+    # selection_method: 选板算法
+    #   min_movement_with_facing  — 最小运动量 + 正面朝向 Hysteresis 过滤（默认）
+    #   min_movement              — 纯最小运动量，无朝向过滤
+    #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
+    controller.solver.selection_method: "decision_angle"
+
+    controller.state_machine.facing_enter_angle: 40.0
+    controller.state_machine.facing_exit_angle: 55.0
+    controller.state_machine.spin_v_yaw_thresh: 4.0
+    controller.state_machine.calm_v_yaw_thresh: 2.0
+    controller.state_machine.spin_enter_count: 5
+    controller.state_machine.spin_exit_count: 5
+    controller.state_machine.side_angle: 15.0
+    controller.state_machine.prediction_delay: 0.0
+    controller.state_machine.max_prediction_time: 0.5
+
+    # MPC 控制策略参数（controller.strategy: "mpc" 时生效）
+    # controller.mpc.N: 50
+    # controller.mpc.dt: 0.02
+    # controller.mpc.control_delay_s: 0.0
+    # controller.mpc.max_accel: 30.0
+    # controller.mpc.q_yaw: 100.0
+    # controller.mpc.q_pitch: 100.0
+    # controller.mpc.q_yaw_vel: 10.0
+    # controller.mpc.q_pitch_vel: 10.0
+    # controller.mpc.r_yaw: 0.001
+    # controller.mpc.r_pitch: 0.001
+    # controller.mpc.s_yaw: 0.001
+    # controller.mpc.s_pitch: 0.001
+
+    controller.mpc.N: 10
+    controller.mpc.dt: 0.03
+    controller.mpc.control_delay_s: 0.002000 # 
+    controller.mpc.max_accel: 30.0
+    controller.mpc.q_yaw: 10000.0
+    controller.mpc.q_pitch: 1000.0
+    controller.mpc.q_yaw_vel: 10.0
+    controller.mpc.q_pitch_vel: 10.0
+    controller.mpc.r_yaw: 0.00001
+    controller.mpc.r_pitch: 0.0001
+    controller.mpc.s_yaw: 0.000001
+    controller.mpc.s_pitch: 0.0001
+
+    # MPC 机动自适应权重衰减（Maneuver-Adaptive MPC）
+    # 通过对 UKF center_velocity 做时间戳感知差分计算机动因子 α∈[0,1]
+    # α>0 时: 衰减远期 Q 权重（减少超调追踪）+ 放大 R 权重（抑制控制量）
+    # 禁用时 (enable: false) 与原实现完全一致，零改动
+    controller.mpc.maneuver_adapt.enable: false
+    controller.mpc.maneuver_adapt.a_max: 10.0       # 差分速度归一化上限 (m/s²)，目标机动峰值加速度经验值
+    controller.mpc.maneuver_adapt.eta: 0.2         # α EMA 平滑系数 (0.1~0.3)，防止瞬时 spike 过敏感
+    controller.mpc.maneuver_adapt.tau: 1000.0        # Q 衰减时间常数 (步数尺度)，影响远期衰减速度
+    controller.mpc.maneuver_adapt.r_scale: 1000.0    # R 放大系数；α=1 时 R_eff = R*(1+r_scale)
+
+    # MPC 轨迹生成前速度 clamp
+    # 在轨迹生成之前对目标速度进行限幅，防止极端高速状态导致参考轨迹发散:
+    #   center_velocity: 保持方向不变，对速度标量 clamp 到 max_linear_speed
+    #   yaw_velocity:    直接 clamp 到 [-max_v_yaw, +max_v_yaw]
+    # enable: false 时不做任何处理，行为与原版完全一致
+    controller.mpc.vel_clamp.enable: true
+    controller.mpc.vel_clamp.max_linear_speed: 1.0   # 线速度标量上限 (m/s)
+    controller.mpc.vel_clamp.max_v_yaw: 10.0         # yaw 角速度上限 (rad/s)
+
+    # MPC FOV 软约束: 防止云台输出将目标甩出视野
+    # enable: false 时不做任何处理，行为与原版完全一致
+    controller.mpc.fov_constraint.enable: false
+    controller.mpc.fov_constraint.margin: 0.05                     # FOV 边缘安全余量 (rad)
+    controller.mpc.fov_constraint.slack_weight: 1000.0             # 松弛变量惩罚权重
+    controller.mpc.fov_constraint.constraint_steps: 0              # 约束步数 (0 = 全部 N 步)
+    controller.mpc.fov_constraint.dynamic_margin.enable: false     # 动态余量: 目标速度越大余量越大
+    controller.mpc.fov_constraint.dynamic_margin.vel_scale: 0.01   # 动态余量系数
+    controller.mpc.fov_constraint.fallback_fov_yaw: 0.35           # 未收到 camera_info 时 yaw 半角 (rad)
+    controller.mpc.fov_constraint.fallback_fov_pitch: 0.26         # 未收到 camera_info 时 pitch 半角 (rad)
+
+    # MPC 延时补偿: 启用后参考轨迹生成考虑 processing_delay + controller_delay + prediction_delay
+    # 并对每步迭代补偿子弹飞行时间、选板时考虑延迟后的云台姿态
+    # enable_delay_compensation: false 时行为与原版完全一致
+    controller.mpc.enable_delay_compensation: true
+    controller.mpc.prediction_delay_s: 0.00      # 额外预测延迟 (秒), 叠加在 processing_delay 之上
+    controller.mpc.flight_time_iters: 2          # 飞行时间迭代补偿次数
+    controller.mpc.max_processing_delay_s: 0.5    # 最大处理延迟 clamp 上限 (秒)
+
+    # ═══════════════════════════════════════════════════════════════
+    # Prediction Logger — 预测准确率记录（可选）
+    # ═══════════════════════════════════════════════════════════════
+    # 启用后会将观测值与 Tracker 后验状态写入 CSV 文件，
+    # 供 scripts/analyze_prediction.py 离线分析预测误差。
+    logging.enable: false
+    logging.output_dir: "/tmp/prediction_logs"
+    logging.robot_id_filter: ""      # 只记录指定 robot_id；为空则记录全部
+    logging.flush_every_n: 50        # 每 N 行落盘一次，减少 I/O 阻塞
+
+    # ═══════════════════════════════════════════════════════════════
+    # Maneuver Detection — 机动检测（基于 UKF NIS + 新息范数）
+    # ═══════════════════════════════════════════════════════════════
+    # 分 update_type 的组合阈值规则（FPR≤10% 离线分析结果）：
+    #   单观测(update_type=1): nis > nis_threshold_single AND innov_norm > innov_norm_threshold_single
+    #   双观测(update_type=2): nis > nis_threshold_dual   AND innov_norm > innov_norm_threshold_dual
+    maneuver.enable: true
+    # maneuver.nis_threshold_single: 238.807
+    # maneuver.nis_threshold_dual: 4132.110
+    # maneuver.innov_norm_threshold_single: 0.1279
+    # maneuver.innov_norm_threshold_dual: 0.0613
+
+    maneuver.nis_threshold_single: 500.0
+    maneuver.nis_threshold_dual: 6500.0
+    maneuver.innov_norm_threshold_single: 0.15
+    maneuver.innov_norm_threshold_dual: 0.10
+
+    # Optional MAD-based outlier filter applied before threshold comparison.
+    # When enabled, nis and innov_norm are each filtered through a rolling
+    # window of mad_window samples per update_type before the decision rule.
+    maneuver.mad_filter_enable: true
+    maneuver.mad_window: 10
+    maneuver.mad_k: 3.0

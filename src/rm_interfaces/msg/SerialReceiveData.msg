@@ -4,4 +4,14 @@ float32 bullet_speed
 float32 roll 
 float32 yaw
 float32 pitch
-JudgeSystemData judge_system_data
+uint8 game_status
+uint16 remaining_time
+uint16 blood
+uint8 fire_count_enough
+uint8 whether2cruise
+int16 outpost_hp
+float32 chassis_vx
+float32 chassis_vy
+float32 chassis_wz
+uint16 friend_average_blood
+OperatorCommand operator_command

@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <limits>
+#include <rm_utils/heartbeat.hpp>
 #include <set>
 #include <sstream>
 
@@ -374,6 +375,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
                 get_parameter("logging.output_dir").as_string().c_str());
   }
 
+  // ── 6. Heartbeat ──
   heartbeat_ = HeartBeatPublisher::create(this);
 
   RCLCPP_INFO(get_logger(),

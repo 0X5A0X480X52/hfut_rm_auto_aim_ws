@@ -17,11 +17,13 @@
 #define SERIAL_DRIVER__SENTRY_PROTOCOL_HPP_
 
 // project
-#include "rm_interfaces/msg/chassis_cmd.hpp"
 #include "rm_serial_driver/protocol.hpp"
+#include "rm_interfaces/msg/blind.hpp"
+#include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/float64.hpp>
 
 namespace fyt::serial_driver::protocol {
-// 哨兵通信协议
+// 步兵通信协议
 class ProtocolSentry : public Protocol {
 public:
   explicit ProtocolSentry(std::string_view port_name, bool enable_data_print);
@@ -29,12 +31,21 @@ public:
   ~ProtocolSentry() = default;
 
   void send(const rm_interfaces::msg::GimbalCmd &data) override;
-
-  void send(const rm_interfaces::msg::ChassisCmd &data);
+  void send(const geometry_msgs::msg::Twist &data);
+  void send(const rm_interfaces::msg::Blind &data);
+  //发送角度
+  void send(const std_msgs::msg::Float64 &data);
+  //发送爬坡标志位
+  void send(const std_msgs::msg::Bool &data);
+  //发送前哨站角度
+  void send1(const std_msgs::msg::Float64 &data);
+  //发送攻击前哨站标志位
+  void send1(const std_msgs::msg::Bool &data);
 
   bool receive(rm_interfaces::msg::SerialReceiveData &data) override;
 
-  std::vector<rclcpp::SubscriptionBase::SharedPtr> getSubscriptions(rclcpp::Node::SharedPtr node) override;
+  std::vector<rclcpp::SubscriptionBase::SharedPtr> getSubscriptions(
+    rclcpp::Node::SharedPtr node) override;
 
   std::vector<rclcpp::Client<rm_interfaces::srv::SetMode>::SharedPtr> getClients(
     rclcpp::Node::SharedPtr node) const override;
@@ -42,10 +53,8 @@ public:
   std::string getErrorMessage() override { return packet_tool_->getErrorMessage(); }
 
 private:
-  enum GameStatus { NOT_START = 0x00, ENEMY_RED = 0x01, ENEMY_BLUE = 0x02 };
-  FixedPacketTool<32>::SharedPtr packet_tool_;
-  FixedPacket<32> packet_;
-  rm_interfaces::msg::ChassisCmd chassis_cmd_;
+  FixedPacketTool<64>::SharedPtr packet_tool_;
+  FixedPacket<64> packet;
 };
 }  // namespace fyt::serial_driver::protocol
 

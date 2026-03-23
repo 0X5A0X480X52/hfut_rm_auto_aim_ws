@@ -26,9 +26,10 @@
     # - 高帧率 (50fps+): 需要确保相机和USB带宽充足
     exposure_time: 1500.0  # Exposure time in microseconds (曝光时间)
     gain: 8.0              # Gain value (0~16) (增益)
-    frame_rate: 250.0       # Frame rate in fps (帧率 - 建议从10开始)
+    frame_rate: 180.0       # Frame rate in fps (帧率 - 建议从10开始)
     
     # Image processing
+    flip_image: false      # Whether to flip the image (是否翻转图像)
     flip_image: false      # Whether to flip the image (是否翻转图像)
     # Frame id for published Image and CameraInfo
     frame_id: camera_optical_frame

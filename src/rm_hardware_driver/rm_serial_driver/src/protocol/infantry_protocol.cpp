@@ -14,6 +14,7 @@
 // limitations under the License.
 
 #include "rm_serial_driver/protocol/infantry_protocol.hpp"
+#include <stdlib.h>
 
 namespace fyt::serial_driver::protocol {
 ProtocolInfantry::ProtocolInfantry(std::string_view port_name, bool enable_data_print) {
@@ -40,6 +41,24 @@ bool ProtocolInfantry::receive(rm_interfaces::msg::SerialReceiveData &data) {
     packet.unloadData(data.roll, 2);
     packet.unloadData(data.pitch, 6);
     packet.unloadData(data.yaw, 10);
+    packet.unloadData(data.game_status,14);
+    packet.unloadData(data.remaining_time,15);
+    packet.unloadData(data.blood,17);
+    packet.unloadData(data.fire_count_enough,19); //由whether2occupy修改为读取发弹量
+    packet.unloadData(data.whether2cruise,20);
+    packet.unloadData(data.outpost_hp,21);
+    packet.unloadData(data.chassis_vx,23);
+    packet.unloadData(data.chassis_vy,27);
+    packet.unloadData(data.chassis_wz,31);
+
+    //////////////////  added and change here //////////////////////
+    /////navigation data
+    // packet.unloadData(data.progress, 14);
+    // packet.unloadData(data.outpostHp, 15);
+    // packet.unloadData(data.targetX, 17);
+    // packet.unloadData(data.targetY, 21);
+    // packet.unloadData(data.fornothing, 32);  //占位符
+    //////////////////  added and change here //////////////////////
     return true;
   } else {
     return false;
@@ -50,10 +69,47 @@ std::vector<rclcpp::SubscriptionBase::SharedPtr> ProtocolInfantry::getSubscripti
   rclcpp::Node::SharedPtr node) {
   auto sub1 = node->create_subscription<rm_interfaces::msg::GimbalCmd>(
     "armor_solver/cmd_gimbal",
-    // "trajectory_planner/gimbal_cmd",
     rclcpp::SensorDataQoS(),
     [this](const rm_interfaces::msg::GimbalCmd::SharedPtr msg) { this->send(*msg); });
-  return {sub1};
+  //////////////////  added and change here //////////////////////
+  auto sub3 = node->create_subscription<geometry_msgs::msg::Twist>(
+    "/cmd_vel_chassis",
+    rclcpp::SensorDataQoS(),
+    [this](const geometry_msgs::msg::Twist::SharedPtr msg) { this->send(*msg); });
+  /*auto sub2 = node->create_subscription<rm_interfaces::msg::Blind>(
+    "blind_detector/left/blind",
+    rclcpp::SensorDataQoS(),
+    [this](const rm_interfaces::msg::Blind::SharedPtr msg){ this->send(*msg); });
+
+  auto sub4 = node->create_subscription<rm_interfaces::msg::Blind>(
+    "blind_detector/right/blind",
+    rclcpp::SensorDataQoS(),
+    [this](const rm_interfaces::msg::Blind::SharedPtr msg){ this->send(*msg); });*/
+    
+  //自身与狗洞夹角
+  auto sub5 = node->create_subscription<std_msgs::msg::Float64>(
+    "/dogHole_angle_difference",
+    rclcpp::SensorDataQoS(),
+    [this](const std_msgs::msg::Float64::SharedPtr msg) { this->send(*msg); });
+  //是否达到狗洞前
+  auto sub6 = node->create_subscription<std_msgs::msg::Bool>(
+    "/ifClimb",
+    rclcpp::SensorDataQoS(),
+    [this](const std_msgs::msg::Bool::SharedPtr msg) { this->send(*msg); });
+  //自身与前哨站夹角
+  auto sub7 = node->create_subscription<std_msgs::msg::Float64>(
+    "/outpost_angle_difference",
+    rclcpp::SensorDataQoS(),
+    [this](const std_msgs::msg::Float64::SharedPtr msg) { this->send1(*msg); });
+  //是否到达攻击前哨站位置
+  auto sub8 = node->create_subscription<std_msgs::msg::Bool>(
+    "/if_attack_outpost",
+    rclcpp::SensorDataQoS(),
+    [this](const std_msgs::msg::Bool::SharedPtr msg) { this->send1(*msg); });
+  //return {sub1, sub2, sub3, sub4, sub5, sub6, sub7, sub8};
+  return {sub1, sub3, sub5, sub6, sub7, sub8};
+  //return {sub1, sub3, sub5, sub6, sub7, sub8};
+  //////////////////  added and change here //////////////////////
 }
 
 std::vector<rclcpp::Client<rm_interfaces::srv::SetMode>::SharedPtr> ProtocolInfantry::getClients(
@@ -62,7 +118,10 @@ std::vector<rclcpp::Client<rm_interfaces::srv::SetMode>::SharedPtr> ProtocolInfa
                                                                   rmw_qos_profile_services_default);
   auto client2 = node->create_client<rm_interfaces::srv::SetMode>("gimbal_pipeline/set_mode",
                                                                   rmw_qos_profile_services_default);
-  return {client1, client2};
+  auto client3 = node->create_client<rm_interfaces::srv::SetMode>("left/blind_detector/set_mode", rmw_qos_profile_services_default);  //补盲
+  //auto client4 = node->create_client<rm_interfaces::srv::SetMode>("right/blind_detector/set_mode", rmw_qos_profile_services_default);  //补盲
+  //return {client1, client2};
+  return {client1, client2};  //补盲
 }
 
 }  // namespace fyt::serial_driver::protocol

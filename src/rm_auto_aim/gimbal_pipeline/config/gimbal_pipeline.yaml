@@ -437,7 +437,7 @@ gimbal_pipeline:
     # ---- Outlier filter (pre-smoother, independent of smoother.enable) ----
     # When an outlier is detected the last valid SmoothedOutput is held
     # (held-frame strategy) so One-Euro filter state is not corrupted.
-    smoother.enable_outlier_filter: false
+    smoother.enable_outlier_filter: true
     smoother.outlier_method: "mad"        # "mad" | "iqr" | "mahalanobis"
     smoother.outlier_window_size: 10      # rolling window length
     smoother.outlier_min_samples: 5       # start filtering after N samples
@@ -475,8 +475,8 @@ gimbal_pipeline:
     controller.solver.shooting_range_height: 0.135
     controller.solver.side_angle: 15.0
     controller.solver.min_switching_v_yaw: 0.0
-    controller.solver.prediction_delay: 0.00
-    controller.solver.max_prediction_time: 1.00
+    controller.solver.prediction_delay: 0.100
+    controller.solver.max_prediction_time: 0.500
     controller.solver.max_tracking_v_yaw: 12.0
     controller.solver.transfer_thresh: 5
     controller.solver.gravity: 9.8

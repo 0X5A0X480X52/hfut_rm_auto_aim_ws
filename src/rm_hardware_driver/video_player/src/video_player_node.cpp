@@ -161,6 +161,7 @@ public:
         cv_bridge::CvImage cv_image(header, "bgr8", frame);
         sensor_msgs::msg::Image::SharedPtr image_msg = cv_image.toImageMsg();
 
+        //auto image_msg
         // Update camera info timestamp
         camera_info_msg_.header = header;
 
