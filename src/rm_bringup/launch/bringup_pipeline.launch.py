@@ -162,7 +162,12 @@ def generate_launch_description():
                 plugin='ros2_hik_camera::HikCameraNode',
                 name='hik_camera',
                 parameters=[get_bringup_params('hik_camera_driver')],
-                extra_arguments=[{'use_intra_process_comms': True}]
+                extra_arguments=[{'use_intra_process_comms': True,
+                                  'env': {
+                                    'MVCAM_SDK_PATH': '/opt/MVS',
+                                    'MVCAM_COMMON_RUNENV': '/opt/MVS/lib'
+                                }}
+                ]
             )
         else:
             image_node = ComposableNode(

@@ -47,6 +47,8 @@
 #include "target_selector/strategies/min_yaw_deviation_strategy.hpp"
 #include "target_selector/strategies/priority_list_strategy.hpp"
 #include "target_selector/strategies/sticky_min_yaw_deviation_strategy.hpp"
+#include "target_selector/strategies/priority_list_strategy.hpp"
+#include "target_selector/strategies/sticky_min_yaw_deviation_strategy.hpp"
 
 // ─── prediction logger ────────────────────────────────────────
 #include "gimbal_pipeline/prediction_logger.hpp"
@@ -220,6 +222,9 @@ class GimbalPipelineNode : public rclcpp::Node {
 
   // Publishers
   rclcpp::Publisher<rm_interfaces::msg::GimbalCmd>::SharedPtr gimbal_cmd_pub_;
+
+  // Heartbeat
+  HeartBeatPublisher::SharedPtr heartbeat_;
 
   // Maneuver states publisher (always-on, for chart monitoring)
   rclcpp::Publisher<rm_interfaces::msg::ManeuverStates>::SharedPtr
