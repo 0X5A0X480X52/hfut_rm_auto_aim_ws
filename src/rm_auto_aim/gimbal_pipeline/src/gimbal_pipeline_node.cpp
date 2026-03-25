@@ -50,6 +50,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   declareTargetSelectorParameters();
   declareGimbalControllerParameters();
 
+  RCLCPP_INFO(get_logger(), "Parameters declared, now loading...");
+
   // ── 2. Read common / tracker params ──
   target_frame_ = get_parameter("target_frame").as_string();
   source_frame_ = get_parameter("source_frame").as_string();
@@ -82,6 +84,9 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       get_parameter("tracker_timeout").as_double(),
       get_parameter("enable_oscillation_detection").as_bool());
 
+  RCLCPP_INFO(get_logger(), "Tracker initialized (predict_rate=%.1f Hz)",
+              predict_rate_);
+
   // ── 3. Target selector ──
   selector_strategy_name_ =
       get_parameter("selector.strategy").as_string();
@@ -102,6 +107,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     selection_config_.sticky_lost_frames =
       get_parameter("selector.sticky_lost_frames").as_int();
   initSelectionStrategy();
+
+  RCLCPP_INFO(get_logger(), "[GimbalPipelineNode] selector_strategy: %s", selector_strategy_name_.c_str());
 
   // ── 4. Gimbal controller ──
   bullet_speed_ = get_parameter("controller.bullet_speed").as_double();
@@ -287,6 +294,14 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       fcfg.enable_one_euro ? "ON" : "off",
       fcfg.one_euro_freq, fcfg.one_euro_min_cutoff, fcfg.one_euro_beta);
   }
+
+  RCLCPP_INFO(get_logger(),
+     "GimbalPipelineNode initialized: target_frame=%s, control_rate=%.0f Hz, "
+     "selector_strategy=%s, gimbal_strategy=%s, ballistic_mode=%s",
+     target_frame_.c_str(), control_rate_,
+     selector_strategy_name_.c_str(),
+     current_gimbal_strategy_name_.c_str(),
+     ballistic_mode_.c_str());
 
   // ── 5. ROS2 external interfaces ──
   rclcpp::QoS sensor_qos(10);

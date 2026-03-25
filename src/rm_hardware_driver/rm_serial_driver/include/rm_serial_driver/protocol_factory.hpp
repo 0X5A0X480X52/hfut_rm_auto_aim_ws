@@ -22,6 +22,7 @@
 #include "rm_serial_driver/protocol.hpp"
 #include "rm_serial_driver/protocol/default_protocol.hpp"
 #include "rm_serial_driver/protocol/infantry_protocol.hpp"
+#include "rm_serial_driver/protocol/infantry_protocol_16.hpp"
 #include "rm_serial_driver/protocol/sentry_protocol.hpp"
 
 namespace fyt::serial_driver {
@@ -36,6 +37,10 @@ public:
     if (protocol_type == "infantry") {
       return std::make_unique<protocol::ProtocolInfantry>(port_name, enable_data_print);
     }
+    if (protocol_type == "infantry_16") {
+      return std::make_unique<protocol::ProtocolInfantry16>(port_name, enable_data_print);
+    }
+
     if (protocol_type == "hero") {
       return std::make_unique<protocol::DefaultProtocol>(port_name, enable_data_print);
     }

@@ -34,9 +34,12 @@ include_directories(
   ${qpOASES_INCLUDE_DIR}
 )
 
-# ─── Collect all source files (recursively include subdirectories) ─
-# Use a recursive glob pattern to ensure sources in subfolders are found
-file(GLOB_RECURSE ALL_SRCS "src/*.cpp" "src/**/*.cpp")
+# ─── Collect all source files (include src root + subdirectories) ─
+# Some CMake versions/policies may miss src/*.cpp when only using src/**/*.cpp.
+file(GLOB_RECURSE ALL_SRCS
+  "src/*.cpp"
+  "src/**/*.cpp"
+)
 
 # ─── Shared library (component) ───────────────────────────────
 add_library(${PROJECT_NAME} SHARED ${ALL_SRCS})

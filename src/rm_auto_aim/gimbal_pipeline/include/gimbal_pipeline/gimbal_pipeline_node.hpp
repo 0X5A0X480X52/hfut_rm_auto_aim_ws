@@ -220,9 +220,6 @@ class GimbalPipelineNode : public rclcpp::Node {
   // Publishers
   rclcpp::Publisher<rm_interfaces::msg::GimbalCmd>::SharedPtr gimbal_cmd_pub_;
 
-  // Heartbeat
-  HeartBeatPublisher::SharedPtr heartbeat_;
-
   // Maneuver states publisher (always-on, for chart monitoring)
   rclcpp::Publisher<rm_interfaces::msg::ManeuverStates>::SharedPtr
       maneuver_states_pub_;
