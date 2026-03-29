@@ -38,6 +38,10 @@ def generate_launch_description():
     declare_enable_viz = DeclareLaunchArgument('enable_visualization', default_value='true', description='Enable fusion visualization')
     declare_enable_tf = DeclareLaunchArgument('enable_robot_tf', default_value='true', description='Start robot_state_publisher and static TFs for cameras')
     declare_robot_xacro = DeclareLaunchArgument('robot_xacro', default_value='./src/rm_robot_description/urdf/test_dual_camera.urdf.xacro', description='Path to test robot xacro')
+    declare_fusion_executable = DeclareLaunchArgument(
+        'fusion_executable',
+        default_value='armor_fusion_node',
+        description='Fusion executable, e.g. armor_fusion_node or multi_camera_fusion_node.py')
 
     # Include the mindvision dual camera driver (it launches namespaces camera_left and camera_right)
     include_mindvision = IncludeLaunchDescription(
@@ -112,7 +116,7 @@ def generate_launch_description():
     # Fusion node - subscribe to the detectors' armors topics under camera namespaces
     fusion_node = Node(
         package='armor_fusion',
-        executable='multi_camera_fusion_node.py',
+        executable=LaunchConfiguration('fusion_executable'),
         name='multi_camera_fusion',
         output='screen',
         parameters=[
@@ -121,6 +125,7 @@ def generate_launch_description():
                 # detectors publish their armors to 'camera_left/armor_detector/armors' and 'camera_right/armor_detector/armors'
                 'camera_topics': ['camera_left/armor_detector/armors', 'camera_right/armor_detector/armors'],
                 'enable_visualization': LaunchConfiguration('enable_visualization'),
+                'output_topic': '/armor_detector/armors',
             }
         ]
     )
@@ -137,9 +142,6 @@ def generate_launch_description():
                 'debug': True,
                 'target_frame': 'odom',
             }
-        ],
-        remappings=[
-            ('armor_detector/armors', 'armor_fusion/armors'),
         ]
     )
 
@@ -152,7 +154,7 @@ def generate_launch_description():
         description='System-level params file for fusion/solver/detectors'
     )
 
-    for decl in [declare_params, declare_use_sensor_qos, declare_enable_viz, declare_enable_tf, declare_robot_xacro, declare_system_params]:
+    for decl in [declare_params, declare_use_sensor_qos, declare_enable_viz, declare_enable_tf, declare_robot_xacro, declare_fusion_executable, declare_system_params]:
         ld.add_action(decl)
 
     # Mindvision driver first

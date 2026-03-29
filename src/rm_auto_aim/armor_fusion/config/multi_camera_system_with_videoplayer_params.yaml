@@ -8,8 +8,15 @@
       - "/camera1/armor_detector/armors"
       - "/camera2/armor_detector/armors"
 
+    camera_info_topics:
+      - "/camera1/camera_info"
+      - "/camera2/camera_info"
+
     # 目标坐标系
     target_frame: "odom"
+
+    # 输出话题保持与原 detector 一致，下游 tracker 无需改代码
+    output_topic: "/armor_detector/armors"
 
     # DBSCAN 聚类参数
     dbscan_eps: 0.3
@@ -26,3 +33,10 @@
 
     measurement_buffer_size: 10
     sync_timeout: 0.05
+
+    # 严格FOV门控
+    enable_strict_fov_gate: true
+    use_camera_info_fov: true
+    camera_horizontal_fov_deg: 80.0
+    camera_vertical_fov_deg: 60.0
+    fov_margin_deg: 2.0

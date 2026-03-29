@@ -1,0 +1,17 @@
+# Dual-camera URDF pose config for bringup_pipeline_multicam_video_test.launch.py
+# All poses are relative to their parent frame and use: "x y z" / "roll pitch yaw".
+
+# gimbal_link pose relative to base_link
+gimbal:
+  xyz: "0 0 0"
+  rpy: "0 0 0"
+
+# camera1_link pose relative to gimbal_link
+camera1:
+  xyz: "0.05 0.06 0.05"
+  rpy: "0 0 0"
+
+# camera2_link pose relative to gimbal_link
+camera2:
+  xyz: "0.05 -0.06 0.05"
+  rpy: "0 0 3.1415926"

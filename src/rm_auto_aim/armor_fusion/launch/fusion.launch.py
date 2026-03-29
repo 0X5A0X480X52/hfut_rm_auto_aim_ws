@@ -27,23 +27,48 @@ def generate_launch_description():
         default_value='false',
         description='Enable debug output'
     )
+
+    fusion_executable_arg = DeclareLaunchArgument(
+        'fusion_executable',
+        default_value='armor_fusion_node',
+        description='Fusion executable, e.g. armor_fusion_node or multi_camera_fusion_node.py'
+    )
+
+    output_topic_arg = DeclareLaunchArgument(
+        'output_topic',
+        default_value='/armor_detector/armors',
+        description='Fused output topic, default keeps detector-compatible interface'
+    )
+
+    log_level_arg = DeclareLaunchArgument(
+        'log_level',
+        default_value='INFO',
+        description='ROS log level'
+    )
     
     # Multi-camera fusion node
     fusion_node = Node(
         package='armor_fusion',
-        executable='multi_camera_fusion_node.py',
+        executable=LaunchConfiguration('fusion_executable'),
         name='multi_camera_fusion',
         output='screen',
-        parameters=[LaunchConfiguration('config_file')],
+        parameters=[
+            LaunchConfiguration('config_file'),
+            {
+                'output_topic': LaunchConfiguration('output_topic'),
+            }
+        ],
         remappings=[
             # 可以在这里添加话题重映射
         ],
-        arguments=['--ros-args', '--log-level', 
-                  ['DEBUG' if LaunchConfiguration('debug') else 'INFO']]
+        arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')]
     )
     
     return LaunchDescription([
         config_file_arg,
         debug_arg,
+        fusion_executable_arg,
+        output_topic_arg,
+        log_level_arg,
         fusion_node,
     ])

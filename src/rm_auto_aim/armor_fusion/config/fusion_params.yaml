@@ -6,9 +6,17 @@
     camera_topics:
       - "/camera1/armor_detector/armors"
       - "/camera2/armor_detector/armors"
+
+    # 与 camera_topics 对应的 camera_info 话题（为空时会自动从 camera_topics 推导）
+    camera_info_topics:
+      - "/camera1/camera_info"
+      - "/camera2/camera_info"
     
     # 目标坐标系
     target_frame: "base_link"
+
+    # 输出话题保持与原 detector 一致，下游 tracker 无需改代码
+    output_topic: "/armor_detector/armors"
     
     # DBSCAN 聚类参数
     # eps: 聚类半径（米）- 两个点被认为是邻居的最大距离
@@ -32,3 +40,13 @@
     # 同步超时时间（秒）
     # 超过此时间的消息将被丢弃
     sync_timeout: 0.05
+
+    # 严格FOV门控：仅在多相机都能“看见”同一候选中心时才允许跨相机去重聚类
+    enable_strict_fov_gate: true
+    # 默认从 camera_info 自动计算FOV；未收到/无效时回退到下方默认参数
+    use_camera_info_fov: true
+    # 相机水平/垂直视场角（度）
+    camera_horizontal_fov_deg: 80.0
+    camera_vertical_fov_deg: 60.0
+    # FOV边界容差（度）
+    fov_margin_deg: 2.0

@@ -46,6 +46,8 @@ class MultiCameraFusionNode(Node):
             parameters=[
                 ('camera_topics', ['camera1/armors', 'camera2/armors']),
                 ('target_frame', 'base_link'),
+                ('output_topic', '/armor_detector/armors'),
+                ('marker_topic', 'armor_fusion/markers'),
                 ('dbscan_eps', 0.3),
                 ('dbscan_min_samples', 1),
                 ('max_cluster_noise', 0.5),
@@ -60,6 +62,8 @@ class MultiCameraFusionNode(Node):
 
         self.camera_topics = self.get_parameter('camera_topics').value
         self.target_frame = self.get_parameter('target_frame').value
+        self.output_topic = self.get_parameter('output_topic').value
+        self.marker_topic = self.get_parameter('marker_topic').value
         self.dbscan_eps = self.get_parameter('dbscan_eps').value
         self.dbscan_min_samples = self.get_parameter('dbscan_min_samples').value
         self.max_cluster_noise = self.get_parameter('max_cluster_noise').value
@@ -119,9 +123,9 @@ class MultiCameraFusionNode(Node):
             self.get_logger().info(f'Subscribed to {topic}')
 
         # Publishers
-        self.fused_armors_pub = self.create_publisher(Armors, 'armor_fusion/armors', qos_profile)
+        self.fused_armors_pub = self.create_publisher(Armors, self.output_topic, qos_profile)
         if self.enable_viz:
-            self.marker_pub = self.create_publisher(MarkerArray, 'armor_fusion/markers', 10)
+            self.marker_pub = self.create_publisher(MarkerArray, self.marker_topic, 10)
 
         # Timer
         timer_period = 1.0 / self.publish_rate

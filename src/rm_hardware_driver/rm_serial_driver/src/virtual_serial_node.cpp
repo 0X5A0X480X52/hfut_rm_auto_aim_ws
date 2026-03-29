@@ -65,7 +65,7 @@ public:
     set_mode_clients_.emplace(autoaim_set_mode_client_1->get_service_name(),
                               autoaim_set_mode_client_1);
     auto autoaim_set_mode_client_2 =
-      this->create_client<rm_interfaces::srv::SetMode>("gimbal_controller/set_mode");
+      this->create_client<rm_interfaces::srv::SetMode>("gimbal_pipeline/set_mode");
     set_mode_clients_.emplace(autoaim_set_mode_client_2->get_service_name(),
                               autoaim_set_mode_client_2);
     if (has_rune_) {

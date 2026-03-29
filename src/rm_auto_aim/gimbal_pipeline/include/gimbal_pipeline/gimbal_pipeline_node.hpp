@@ -132,9 +132,6 @@ class GimbalPipelineNode : public rclcpp::Node {
   void publishManeuverMarkers(const std_msgs::msg::Header &header);
   std::array<float, 4> hsvToRgb(float h, float s, float v);
 
-  // Heartbeat
-  HeartBeatPublisher::SharedPtr heartbeat_;
-
   /* ================================================================ */
   /*  Tracker state (from MaxEntropyTrackerNode)                      */
   /* ================================================================ */

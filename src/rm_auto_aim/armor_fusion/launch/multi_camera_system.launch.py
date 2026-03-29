@@ -58,6 +58,12 @@ def generate_launch_description():
         default_value='red',
         description='Target color: red or blue'
     )
+
+    fusion_executable = DeclareLaunchArgument(
+        'fusion_executable',
+        default_value='armor_fusion_node',
+        description='Fusion executable, e.g. armor_fusion_node or multi_camera_fusion_node.py'
+    )
     
     # Camera 1 detector node
     camera1_detector = Node(
@@ -100,13 +106,14 @@ def generate_launch_description():
     # Fusion node
     fusion_node = Node(
         package='armor_fusion',
-        executable='multi_camera_fusion_node.py',
+        executable=LaunchConfiguration('fusion_executable'),
         name='multi_camera_fusion',
         output='screen',
         parameters=[
             LaunchConfiguration('system_params'),
             {
                 'enable_visualization': LaunchConfiguration('enable_visualization'),
+                'output_topic': '/armor_detector/armors',
             }
         ]
     )
@@ -121,10 +128,6 @@ def generate_launch_description():
             'debug': True,
             'target_frame': 'odom',
         }],
-        remappings=[
-            # Remap to subscribe to fusion output instead of single detector
-            ('armor_detector/armors', 'armor_fusion/armors'),
-        ]
     )
     
     return LaunchDescription([
@@ -132,6 +135,7 @@ def generate_launch_description():
         enable_camera2,
         enable_visualization,
         target_color,
+        fusion_executable,
         system_params,
         camera1_detector,
         camera2_detector,

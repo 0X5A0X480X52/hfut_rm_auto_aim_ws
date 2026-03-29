@@ -95,8 +95,29 @@ ros2 launch armor_fusion fusion.launch.py config_file:=/path/to/your/config.yaml
 ### 单独运行节点
 
 ```bash
+ros2 run armor_fusion armor_fusion_node --ros-args --params-file config/fusion_params.yaml
+```
+
+Python 版本仍可用：
+
+```bash
 ros2 run armor_fusion multi_camera_fusion_node.py --ros-args --params-file config/fusion_params.yaml
 ```
+
+## C++ 代码结构（按功能拆分）
+
+- `include/armor_fusion/measurement_types.hpp`
+  - 融合内部统一测量类型定义
+- `include/armor_fusion/transform_utils.hpp` + `src/transform_utils.cpp`
+  - TF变换与变换失败回退逻辑
+- `include/armor_fusion/clustering_utils.hpp` + `src/clustering_utils.cpp`
+  - 聚类与聚类合并逻辑
+- `include/armor_fusion/fusion_utils.hpp` + `src/fusion_utils.cpp`
+  - 单聚类融合（位置加权融合、ID/类型聚合、四元数平均）
+- `include/armor_fusion/visualization_utils.hpp` + `src/visualization_utils.cpp`
+  - RViz Marker 构建
+- `include/armor_fusion/multi_camera_fusion_node.hpp` + `src/multi_camera_fusion_node.cpp`
+  - 节点编排流程（订阅/缓冲/调度/发布）
 
 ## 话题接口
 
@@ -108,10 +129,10 @@ ros2 run armor_fusion multi_camera_fusion_node.py --ros-args --params-file confi
 
 ### 发布话题
 
-- **`/armor_fusion/armors`** (`rm_interfaces/msg/Armors`)
+- **`/armor_detector/armors`** (`rm_interfaces/msg/Armors`)
   - 融合后的装甲板检测结果
   - 在 `base_link` 坐标系下
-  - 供 `armor_solver` 订阅使用
+  - 与原 detector 输出话题保持一致，tracker/solver 无需改代码
 
 - **`/armor_fusion/markers`** (`visualization_msgs/msg/MarkerArray`)
   - 可视化标记（当 `enable_visualization=true` 时）
@@ -123,20 +144,15 @@ ros2 run armor_fusion multi_camera_fusion_node.py --ros-args --params-file confi
 
 ### 与现有系统集成
 
-修改 `armor_solver` 的订阅话题，从原来的单个 detector 改为订阅 fusion 的输出：
+默认配置下不需要修改 `armor_solver` 或 `armor_tracker` 订阅代码。
 
-```python
-# 原来
-armors_sub_.subscribe(this, "armor_detector/armors", ...)
+- 融合节点输出直接发布到 `/armor_detector/armors`
+- 下游节点保持原有订阅即可
 
-# 改为
-armors_sub_.subscribe(this, "armor_fusion/armors", ...)
-```
-
-或者使用话题重映射：
+如需并行对照测试，可通过参数覆盖输出话题：
 
 ```bash
-ros2 run armor_solver armor_solver_node --ros-args -r armor_detector/armors:=armor_fusion/armors
+ros2 launch armor_fusion fusion.launch.py output_topic:=/armor_fusion/armors
 ```
 
 ### 完整启动示例
@@ -162,9 +178,7 @@ ros2 run armor_solver armor_solver_node --ros-args -r armor_detector/armors:=arm
   <include file="$(find-pkg-share armor_fusion)/launch/fusion.launch.py"/>
   
   <!-- Solver节点（订阅融合结果） -->
-  <node pkg="armor_solver" exec="armor_solver_node" name="armor_solver">
-    <remap from="armor_detector/armors" to="armor_fusion/armors"/>
-  </node>
+  <node pkg="armor_solver" exec="armor_solver_node" name="armor_solver"/>
 </launch>
 ```
 

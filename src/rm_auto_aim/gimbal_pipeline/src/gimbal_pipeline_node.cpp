@@ -349,6 +349,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
             "~/maneuver_markers", 10);
   }
 
+  RCLCPP_INFO(get_logger(), "Subscribed to topics: /armor_detector/armors (with TF sync), /joint_states, camera_info");
+
   // Service: ~/set_mode
   set_mode_srv_ = create_service<rm_interfaces::srv::SetMode>(
       "~/set_mode",
@@ -363,7 +365,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
 
   if (debug_mode_) initMarkers();
 
-  heartbeat_ = HeartBeatPublisher::create(this);
+  RCLCPP_INFO(get_logger(), "Service ~/set_mode ready");
 
   // ─── Prediction logger ────────────────────────────────────────
   if (get_parameter("logging.enable").as_bool()) {
@@ -375,8 +377,12 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
                 get_parameter("logging.output_dir").as_string().c_str());
   }
 
+  RCLCPP_INFO(get_logger(), "PredictionLogger: %s", prediction_logger_ ? "enabled" : "disabled");
+
   // ── 6. Heartbeat ──
   heartbeat_ = HeartBeatPublisher::create(this);
+
+  RCLCPP_INFO(get_logger(), "GimbalPipelineNode (unified pipeline) initialized successfully");
 
   RCLCPP_INFO(get_logger(),
               "GimbalPipelineNode initialized: target_frame=%s, "
@@ -819,7 +825,10 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
 
 void GimbalPipelineNode::armorsCallback(
     const rm_interfaces::msg::Armors::SharedPtr msg) {
-  if (msg->armors.empty()) return;
+  if (msg->armors.empty()) {
+    RCLCPP_INFO(get_logger(), "Received empty armors message, skipping tracker update");
+    return;
+  }
 
   rclcpp::Time msg_time(msg->header.stamp);
   double current_time = msg_time.seconds();
