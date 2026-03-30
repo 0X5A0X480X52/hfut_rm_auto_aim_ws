@@ -20,9 +20,7 @@ gimbal_pipeline:
     ukf.beta: 2.0
     ukf.kappa: 0.0
     ukf.obs_noise_pos: 0.08
-    ukf.obs_noise_pos: 0.08
     ukf.obs_noise_yaw: 0.05
-    ukf.dual_obs_noise_pos: 0.01
     ukf.dual_obs_noise_pos: 0.01
     ukf.dual_obs_noise_yaw: 0.03
     ukf.dual_obs_geometry_noise_scale: 0.02
@@ -34,8 +32,8 @@ gimbal_pipeline:
     motion.translation_model: "Singer"  # "CV" | "Singer"
     motion.cv_process_noise_vel: 1.00
     motion.ca_process_noise_acc: 0.01
-    motion.singer_alpha: 0.5
-    motion.singer_sigma: 0.50
+    motion.singer_alpha: 1.0
+    motion.singer_sigma: 0.050
     motion.process_noise_r: 0.002
     motion.process_noise_dz: 0.00005
 
@@ -108,7 +106,7 @@ gimbal_pipeline:
   #$
 
     # Output smoother (1-Euro filter + Robbins-Monro)
-    smoother.enable: false
+    smoother.enable: true
     smoother.enable_position_smooth: false
     smoother.enable_yaw_smooth: false
     smoother.enable_velocity_smooth: true
@@ -136,7 +134,7 @@ gimbal_pipeline:
     # ---- Outlier filter (pre-smoother, independent of smoother.enable) ----
     # When an outlier is detected the last valid SmoothedOutput is held
     # (held-frame strategy) so One-Euro filter state is not corrupted.
-    smoother.enable_outlier_filter: true
+    smoother.enable_outlier_filter: false
     smoother.outlier_method: "mad"        # "mad" | "iqr" | "mahalanobis"
     smoother.outlier_window_size: 10      # rolling window length
     smoother.outlier_min_samples: 5       # start filtering after N samples
@@ -165,7 +163,7 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     # Gimbal controller parameters
     # ═══════════════════════════════════════════════════════════════
-    controller.bullet_speed: 22.60
+    controller.bullet_speed: 22.70
     controller.control_rate: 250.0
     controller.strategy: "mpc"    # "current" | "predicted" | "mpc" | "state_machine"
     controller.ballistic_mode: "local"  # "service" | "local"
@@ -183,14 +181,14 @@ gimbal_pipeline:
     controller.solver.iteration_times: 20
     controller.solver.pitch_offset: 0.0
     controller.solver.yaw_offset: 0.0
-    controller.solver.facing_enter_angle: 55.0  # 55.0
-    controller.solver.facing_exit_angle: 65.0  # 85.0
+    controller.solver.facing_enter_angle: 65.0  # 55.0
+    controller.solver.facing_exit_angle: 85.0  # 85.0
     # 径向选板动态阈值（仅对 min_movement_with_radial 生效）
     # 角度单位: 度；角速度单位: rad/s
     # |v_yaw| 越大，径向过滤阈值越小：
     #   th_dyn = max(th_base * (1 - shrink_ratio * clamp(|v_yaw|/v_yaw_ref,0,1)), min_angle_deg)
     controller.solver.radial_dynamic.enable: true
-    controller.solver.radial_dynamic.v_yaw_ref: 60.0
+    controller.solver.radial_dynamic.v_yaw_ref: 15.0
     controller.solver.radial_dynamic.shrink_ratio: 60.0
     controller.solver.radial_dynamic.min_angle_deg: 5.0
     # 角平分线偏移（度）：|v_yaw| 越大，中心线偏移越大，且受上限约束。
@@ -295,16 +293,16 @@ gimbal_pipeline:
 
     controller.mpc.N: 50
     controller.mpc.dt: 0.05
-    controller.mpc.control_delay_s: 0.00
+    controller.mpc.control_delay_s: 0.10000
     controller.mpc.max_accel: 30.0
-    controller.mpc.q_yaw: 100000.0
+    controller.mpc.q_yaw: 1000000.0
     controller.mpc.q_pitch: 1000.0
     controller.mpc.q_yaw_vel: 100.0
     controller.mpc.q_pitch_vel: 1.0
-    controller.mpc.r_yaw: 0.0001
+    controller.mpc.r_yaw: 0.000001
     controller.mpc.r_pitch: 0.001
-    controller.mpc.s_yaw: 0.00001
-    controller.mpc.s_pitch: 0.001
+    controller.mpc.s_yaw: 0.000001
+    controller.mpc.s_pitch: 0.0001
 
     # MPC 数值稳健性: 在线 RMS 归一化（统一 Q/R/S 量纲）
     # enable=false 时保持原行为
@@ -333,19 +331,19 @@ gimbal_pipeline:
     controller.mpc.diagnostics.rank_tol_rel: 1e-9
 
     # MPC 命中概率权重加权（仅缩放 Q，默认关闭）
-    # controller.mpc.weighting.enable: false
-    # controller.mpc.weighting.alpha: 3.0 # 误差与命中概率的权衡参数，越大越重视误差小的轨迹
-    # controller.mpc.weighting.k_omega: 0.5 # 角速度衰减权重，越大越明显地降低快速转动时的权重
-    # controller.mpc.weighting.sigma_min: 0.05 # 最小角度不确定性 (rad)，防止过度自信导致权重过大
-    # controller.mpc.weighting.sigma_max: 0.5 # 最大角度不确定性 (rad)，防止过度不确定导致权重过小
-    # controller.mpc.weighting.sigma_sys: 0.02 # 系统误差引起的角度不确定性 (rad)，与目标距离成正比
-    # controller.mpc.weighting.target_size: 0.135 # 目标尺寸 (m)，用于将线速度转换为角度不确定性
-    # controller.mpc.weighting.delay_s: 0.0 # 额外预测延迟 (秒)，叠加在 controller.mpc.control_delay_s 之上，用于模拟更长的系统延迟对权重的影响
-    # controller.mpc.weighting.max_w: 6.0 # 权重上限，防止过大权重导致优化数值问题
-    # controller.mpc.weighting.smooth_alpha: 0.7 # 权重平滑系数，越大越平滑，范围 [0,1]
-    # controller.mpc.weighting.min_distance: 0.1 # 最小距离 (m)，用于权重计算中的距离归一化，防止过近时权重过大
-    # controller.mpc.weighting.sigma_beta: 0.3 # 角速度引起的不确定性增量权重，越大越明显地降低快速转动时的权重
-    # controller.mpc.weighting.gamma: 0.5 # 快速转动时权重衰减调整因子，越大衰减越激烈
+    controller.mpc.weighting.enable: false
+    controller.mpc.weighting.alpha: 3.0 # 误差与命中概率的权衡参数，越大越重视误差小的轨迹
+    controller.mpc.weighting.k_omega: 0.5 # 角速度衰减权重，越大越明显地降低快速转动时的权重
+    controller.mpc.weighting.sigma_min: 0.05 # 最小角度不确定性 (rad)，防止过度自信导致权重过大
+    controller.mpc.weighting.sigma_max: 0.5 # 最大角度不确定性 (rad)，防止过度不确定导致权重过小
+    controller.mpc.weighting.sigma_sys: 0.02 # 系统误差引起的角度不确定性 (rad)，与目标距离成正比
+    controller.mpc.weighting.target_size: 0.135 # 目标尺寸 (m)，用于将线速度转换为角度不确定性
+    controller.mpc.weighting.delay_s: 0.0 # 额外预测延迟 (秒)，叠加在 controller.mpc.control_delay_s 之上，用于模拟更长的系统延迟对权重的影响
+    controller.mpc.weighting.max_w: 6.0 # 权重上限，防止过大权重导致优化数值问题
+    controller.mpc.weighting.smooth_alpha: 0.7 # 权重平滑系数，越大越平滑，范围 [0,1]
+    controller.mpc.weighting.min_distance: 0.1 # 最小距离 (m)，用于权重计算中的距离归一化，防止过近时权重过大
+    controller.mpc.weighting.sigma_beta: 0.3 # 角速度引起的不确定性增量权重，越大越明显地降低快速转动时的权重
+    controller.mpc.weighting.gamma: 0.5 # 快速转动时权重衰减调整因子，越大衰减越激烈
 
     # MPC 轨迹生成前速度 clamp
     # 在轨迹生成之前对目标速度进行限幅，防止极端高速状态导致参考轨迹发散:
