@@ -292,17 +292,17 @@ gimbal_pipeline:
     # controller.mpc.s_pitch: 0.001
 
     controller.mpc.N: 50
-    controller.mpc.dt: 0.05
-    controller.mpc.control_delay_s: 0.10000
-    controller.mpc.max_accel: 30.0
-    controller.mpc.q_yaw: 1000000.0
-    controller.mpc.q_pitch: 1000.0
-    controller.mpc.q_yaw_vel: 100.0
-    controller.mpc.q_pitch_vel: 1.0
-    controller.mpc.r_yaw: 0.000001
-    controller.mpc.r_pitch: 0.001
-    controller.mpc.s_yaw: 0.000001
-    controller.mpc.s_pitch: 0.0001
+    controller.mpc.dt: 0.05    
+    controller.mpc.control_delay_s: 0.01    
+    controller.mpc.max_accel: 30.0    
+    controller.mpc.q_yaw: 800000.0    
+    controller.mpc.q_pitch: 1200.0    
+    controller.mpc.q_yaw_vel: 150.0    
+    controller.mpc.q_pitch_vel: 1.5
+    controller.mpc.r_yaw: 0.005    
+    controller.mpc.r_pitch: 0.0015    
+    controller.mpc.s_yaw: 0.0005    
+    controller.mpc.s_pitch: 0.0002
 
     # MPC 数值稳健性: 在线 RMS 归一化（统一 Q/R/S 量纲）
     # enable=false 时保持原行为
