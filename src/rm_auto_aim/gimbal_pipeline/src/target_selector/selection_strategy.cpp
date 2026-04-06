@@ -18,6 +18,8 @@
 #include <cmath>
 #include <rclcpp/rclcpp.hpp>
 
+#include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
+
 namespace fyt::auto_aim {
 
 std::vector<const SelectionStrategy::TrackedRobot*> SelectionStrategy::filterCandidates(
@@ -68,15 +70,12 @@ std::vector<const SelectionStrategy::TrackedRobot*> SelectionStrategy::filterCan
 double SelectionStrategy::calculateYawToRobot(const TrackedRobot& robot) const {
   // Calculate yaw angle from origin to robot center in gimbal frame
   // Assuming robot position is already in gimbal coordinate system
-  return std::atan2(robot.center_position.y, robot.center_position.x);
+  const auto center = robot_description::TrackedRobotUsage::centerPosition(robot);
+  return std::atan2(center.y(), center.x());
 }
 
 double SelectionStrategy::calculateDistanceToRobot(const TrackedRobot& robot) const {
-  // Calculate Euclidean distance to robot center
-  double dx = robot.center_position.x;
-  double dy = robot.center_position.y;
-  double dz = robot.center_position.z;
-  return std::sqrt(dx * dx + dy * dy + dz * dz);
+  return robot_description::TrackedRobotUsage::centerDistance(robot);
 }
 
 double SelectionStrategy::calculateYawDeviation(

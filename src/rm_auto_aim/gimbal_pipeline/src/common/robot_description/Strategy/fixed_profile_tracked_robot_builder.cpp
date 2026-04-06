@@ -154,6 +154,9 @@ public:
     msg.is_visible = input.tracker.is_tracking() || input.tracker.is_temp_lost();
     msg.visible_armor_count = msg.is_visible ? std::max(0, input.visible_armor_count) : 0;
 
+    // Publish full-state fields and keep legacy fields synchronized.
+    TrackedRobotUsage::syncFullStateFromLegacy(msg);
+
     return msg;
   }
 

@@ -24,13 +24,25 @@ namespace gimbal_controller
 std::vector<Eigen::Vector3d> ArmorPositionCalculator::calculate(
   const rm_interfaces::msg::TrackedRobot & robot) const
 {
-  Eigen::Vector3d center(
-    robot.center_position.x,
-    robot.center_position.y,
-    robot.center_position.z);
+  const auto normalized_robot =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(robot);
 
-  auto offsets = fyt::auto_aim::robot_description::TrackedRobotUsage::resolveOffsets(
-    robot,
+  if (!normalized_robot.armors_offset.empty()) {
+    RCLCPP_DEBUG(
+      rclcpp::get_logger("ArmorPositionCalculator"),
+      "Using armors_offset from TrackedRobot (size=%zu, num_armors=%d)",
+      normalized_robot.armors_offset.size(), normalized_robot.num_armors);
+  } else {
+    RCLCPP_DEBUG(
+      rclcpp::get_logger("ArmorPositionCalculator"),
+      "armors_offset empty, using module fallback (num_armors=%d)",
+      normalized_robot.num_armors);
+  }
+
+  return fyt::auto_aim::robot_description::TrackedRobotUsage::calculateArmorWorldPositionsEigen(
+    normalized_robot,
+    0.0,
+    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY,
     [](const rm_interfaces::msg::TrackedRobot & fallback_robot) {
       return ArmorPositionCalculator::generateDefaultOffsets(
         fallback_robot.robot_type,
@@ -40,43 +52,18 @@ std::vector<Eigen::Vector3d> ArmorPositionCalculator::calculate(
         fallback_robot.d_za,
         fallback_robot.d_zc);
     });
-
-  if (!robot.armors_offset.empty()) {
-    RCLCPP_DEBUG(
-      rclcpp::get_logger("ArmorPositionCalculator"),
-      "Using armors_offset from TrackedRobot (size=%zu, num_armors=%d)",
-      robot.armors_offset.size(), robot.num_armors);
-  } else {
-    RCLCPP_DEBUG(
-      rclcpp::get_logger("ArmorPositionCalculator"),
-      "armors_offset empty, using module fallback (num_armors=%d)",
-      robot.num_armors);
-  }
-
-  std::vector<Eigen::Vector3d> positions;
-  positions.reserve(offsets.size());
-  for (const auto & offset : offsets) {
-    positions.push_back(transformToWorld(center, robot.yaw, offset));
-  }
-
-  return positions;
 }
 
 std::vector<Eigen::Vector3d> ArmorPositionCalculator::calculatePredicted(
   const rm_interfaces::msg::TrackedRobot & robot,
   double dt) const
 {
-  // 预测机器人中心位置
-  Eigen::Vector3d predicted_center(
-    robot.center_position.x + dt * robot.center_velocity.x,
-    robot.center_position.y + dt * robot.center_velocity.y,
-    robot.center_position.z + dt * robot.center_velocity.z);
-
-  // 预测机器人yaw角
-  double predicted_yaw = robot.yaw + dt * robot.yaw_velocity;
-
-  auto offsets = fyt::auto_aim::robot_description::TrackedRobotUsage::resolveOffsets(
-    robot,
+  const auto normalized_robot =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(robot);
+  return fyt::auto_aim::robot_description::TrackedRobotUsage::calculateArmorWorldPositionsEigen(
+    normalized_robot,
+    dt,
+    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY,
     [](const rm_interfaces::msg::TrackedRobot & fallback_robot) {
       return ArmorPositionCalculator::generateDefaultOffsets(
         fallback_robot.robot_type,
@@ -86,14 +73,6 @@ std::vector<Eigen::Vector3d> ArmorPositionCalculator::calculatePredicted(
         fallback_robot.d_za,
         fallback_robot.d_zc);
     });
-
-  std::vector<Eigen::Vector3d> positions;
-  positions.reserve(offsets.size());
-  for (const auto & offset : offsets) {
-    positions.push_back(transformToWorld(predicted_center, predicted_yaw, offset));
-  }
-
-  return positions;
 }
 
 std::vector<Eigen::Vector3d> ArmorPositionCalculator::generateDefaultOffsets(
@@ -124,20 +103,6 @@ std::vector<Eigen::Vector3d> ArmorPositionCalculator::generateDefaultOffsets(
   }
 
   return offsets;
-}
-
-Eigen::Vector3d ArmorPositionCalculator::transformToWorld(
-  const Eigen::Vector3d & center,
-  double yaw,
-  const Eigen::Vector3d & offset) const
-{
-  // 2D 旋转矩阵 (绕 z 轴)
-  Eigen::Matrix3d rotation;
-  rotation << std::cos(yaw), -std::sin(yaw), 0,
-              std::sin(yaw),  std::cos(yaw), 0,
-              0,              0,             1;
-
-  return center + rotation * offset;
 }
 
 }  // namespace gimbal_controller

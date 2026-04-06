@@ -17,6 +17,7 @@
 #include "gimbal_controller/armor_selector.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
+#include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 #include <angles/angles.h>
 
 #include <iostream>
@@ -46,13 +47,17 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
     return createIdleCmd();
   }
 
-  const auto & robot = context.target_robot;
+  const auto robot =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(context.target_robot);
+  const auto center_position =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::centerPosition(robot);
+  const auto linear_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::linearVelocity(robot);
+  const double yaw_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::yawVelocity(robot);
 
   // 估计飞行时间 (使用当前位置)
-  Eigen::Vector3d current_center(
-    robot.center_position.x,
-    robot.center_position.y,
-    robot.center_position.z);
+  const Eigen::Vector3d current_center = center_position;
 
   double flight_time = 0;
   if (local_compensator_) {
@@ -82,14 +87,17 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
     return createIdleCmd();
   }
 
-  // 预测中心位置
-  Eigen::Vector3d predicted_center(
-    robot.center_position.x + total_prediction_time * robot.center_velocity.x,
-    robot.center_position.y + total_prediction_time * robot.center_velocity.y,
-    robot.center_position.z + total_prediction_time * robot.center_velocity.z);
-
-  // 预测 yaw
-  double predicted_yaw = robot.yaw + total_prediction_time * robot.yaw_velocity;
+  // 预测中心位置与 yaw
+  Eigen::Vector3d predicted_center =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::predictCenter(
+    robot,
+    total_prediction_time,
+    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
+  double predicted_yaw =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::predictYaw(
+    robot,
+    total_prediction_time,
+    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
 
   // 选择最佳装甲板 (基于预测位置，路由到配置的选板策略)
   auto predicted_selection = armor_selector_->selectBest(
@@ -97,7 +105,7 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
     predicted_center,
     predicted_yaw,
     robot.num_armors,
-    robot.yaw_velocity,
+    yaw_velocity,
     context.current_yaw,
     context.current_pitch);
 
@@ -112,7 +120,7 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   }
 
   // 高转速状态机处理
-  double abs_v_yaw = std::abs(robot.yaw_velocity);
+  double abs_v_yaw = std::abs(yaw_velocity);
 
   switch (state_) {
     case TRACKING_ARMOR:
@@ -161,24 +169,26 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
       extra_dt = std::min(extra_dt, max_prediction_time_);
       auto extra_positions = position_calculator_->calculatePredicted(robot, extra_dt);
       if (!extra_positions.empty()) {
-        Eigen::Vector3d extra_center(
-          robot.center_position.x + extra_dt * robot.center_velocity.x,
-          robot.center_position.y + extra_dt * robot.center_velocity.y,
-          robot.center_position.z + extra_dt * robot.center_velocity.z);
-        double extra_yaw = robot.yaw + extra_dt * robot.yaw_velocity;
+        Eigen::Vector3d extra_center =
+          fyt::auto_aim::robot_description::TrackedRobotUsage::predictCenter(
+          robot,
+          extra_dt,
+          fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
+        double extra_yaw =
+          fyt::auto_aim::robot_description::TrackedRobotUsage::predictYaw(
+          robot,
+          extra_dt,
+          fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
         auto extra_selection = armor_selector_->selectBest(
           extra_positions, extra_center, extra_yaw,
-          robot.num_armors, robot.yaw_velocity,
+          robot.num_armors, yaw_velocity,
           context.current_yaw, context.current_pitch);
         control_target_position = extra_selection.position;
       }
     }
   }
 
-  Eigen::Vector3d target_velocity(
-    robot.center_velocity.x,
-    robot.center_velocity.y,
-    robot.center_velocity.z);
+  const Eigen::Vector3d target_velocity = linear_velocity;
 
   // 计算云台控制角度 (使用预测位置)
   double control_pitch, control_yaw, control_flight_time;
@@ -222,12 +232,8 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
 
   // 自适应 delay 更新（根据本帧 fire_advice 和目标速度）
   if (adaptive_delay_enabled_) {
-    Eigen::Vector3d vel(
-      robot.center_velocity.x,
-      robot.center_velocity.y,
-      robot.center_velocity.z);
-    double v_linear  = vel.norm();
-    double v_angular = std::abs(robot.yaw_velocity);
+    double v_linear  = linear_velocity.norm();
+    double v_angular = std::abs(yaw_velocity);
     adaptive_ctrl_.update(fire_advice, v_linear, v_angular);
   }
 

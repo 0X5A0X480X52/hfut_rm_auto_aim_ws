@@ -14,6 +14,8 @@
 
 #include "gimbal_controller/mpc/mpc_reference_generator.hpp"
 
+#include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
+
 #include <angles/angles.h>
 #include <cmath>
 #include <iostream>
@@ -65,18 +67,20 @@ Eigen::VectorXd MpcReferenceGenerator::generate(
     }
 
     // 3. 预测时刻的目标中心
-    Eigen::Vector3d target_center(
-      future_robot.center_position.x,
-      future_robot.center_position.y,
-      future_robot.center_position.z);
+    const Eigen::Vector3d target_center =
+      fyt::auto_aim::robot_description::TrackedRobotUsage::centerPosition(future_robot);
+    const double future_yaw =
+      fyt::auto_aim::robot_description::TrackedRobotUsage::yaw(future_robot);
+    const double future_yaw_velocity =
+      fyt::auto_aim::robot_description::TrackedRobotUsage::yawVelocity(future_robot);
 
     // 4. 选板
     auto selection = armor_selector_->selectBest(
       armor_positions,
       target_center,
-      future_robot.yaw,
+      future_yaw,
       future_robot.num_armors,
-      future_robot.yaw_velocity,
+      future_yaw_velocity,
       current_yaw,
       current_pitch);
 
@@ -131,27 +135,10 @@ rm_interfaces::msg::TrackedRobot MpcReferenceGenerator::propagateRobot(
   const rm_interfaces::msg::TrackedRobot & robot,
   double dt)
 {
-  auto future = robot;
-
-  // 匀速/匀加速传播中心位置
-  future.center_position.x += robot.center_velocity.x * dt
-    + 0.5 * robot.center_acceleration.x * dt * dt;
-  future.center_position.y += robot.center_velocity.y * dt
-    + 0.5 * robot.center_acceleration.y * dt * dt;
-  future.center_position.z += robot.center_velocity.z * dt
-    + 0.5 * robot.center_acceleration.z * dt * dt;
-
-  // 传播速度
-  future.center_velocity.x += robot.center_acceleration.x * dt;
-  future.center_velocity.y += robot.center_acceleration.y * dt;
-  future.center_velocity.z += robot.center_acceleration.z * dt;
-
-  // 传播 yaw (匀加速旋转)
-  future.yaw += robot.yaw_velocity * dt
-    + 0.5 * robot.yaw_acceleration * dt * dt;
-  future.yaw_velocity += robot.yaw_acceleration * dt;
-
-  return future;
+  return fyt::auto_aim::robot_description::TrackedRobotUsage::predict(
+    robot,
+    dt,
+    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_ACCELERATION);
 }
 
 Eigen::VectorXd MpcReferenceGenerator::generateWithDelay(
@@ -189,19 +176,15 @@ Eigen::VectorXd MpcReferenceGenerator::generateWithDelay(
     auto future_robot = propagateRobot(clamped_robot, t_predict);
 
     // 3. 子弹飞行时间迭代补偿
-    Eigen::Vector3d pred_center(
-      future_robot.center_position.x,
-      future_robot.center_position.y,
-      future_robot.center_position.z);
+    Eigen::Vector3d pred_center =
+      fyt::auto_aim::robot_description::TrackedRobotUsage::centerPosition(future_robot);
 
     double t_flight = 0.0;
     for (int iter = 0; iter < delay_config.flight_time_iters; ++iter) {
       t_flight = local_compensator_->getFlyingTime(pred_center);
       auto flight_robot = propagateRobot(clamped_robot, t_predict + t_flight);
-      pred_center = Eigen::Vector3d(
-        flight_robot.center_position.x,
-        flight_robot.center_position.y,
-        flight_robot.center_position.z);
+      pred_center =
+        fyt::auto_aim::robot_description::TrackedRobotUsage::centerPosition(flight_robot);
     }
 
     // 用飞行时间补偿后的时刻重新传播整个机器人状态 (含 yaw)
@@ -216,18 +199,20 @@ Eigen::VectorXd MpcReferenceGenerator::generateWithDelay(
     }
 
     // 5. 补偿后的目标中心
-    Eigen::Vector3d target_center(
-      compensated_robot.center_position.x,
-      compensated_robot.center_position.y,
-      compensated_robot.center_position.z);
+    const Eigen::Vector3d target_center =
+      fyt::auto_aim::robot_description::TrackedRobotUsage::centerPosition(compensated_robot);
+    const double compensated_yaw =
+      fyt::auto_aim::robot_description::TrackedRobotUsage::yaw(compensated_robot);
+    const double compensated_yaw_velocity =
+      fyt::auto_aim::robot_description::TrackedRobotUsage::yawVelocity(compensated_robot);
 
     // 6. 选板逻辑: 统一走 ArmorSelector 配置策略
     auto selection = armor_selector_->selectBest(
       armor_positions,
       target_center,
-      compensated_robot.yaw,
+      compensated_yaw,
       compensated_robot.num_armors,
-      compensated_robot.yaw_velocity,
+      compensated_yaw_velocity,
       current_yaw,
       current_pitch);
 
@@ -270,29 +255,35 @@ Eigen::VectorXd MpcReferenceGenerator::generateWithDelay(
 rm_interfaces::msg::TrackedRobot MpcReferenceGenerator::applyVelocityClamp(
   const rm_interfaces::msg::TrackedRobot & robot) const
 {
+  const auto normalized = fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(robot);
   if (!vel_clamp_config_.enable) {
-    return robot;
+    return normalized;
   }
 
-  auto result = robot;
+  auto result = normalized;
 
   // 线速度: 保持方向不变，对标量限幅
-  const double vx = robot.center_velocity.x;
-  const double vy = robot.center_velocity.y;
-  const double vz = robot.center_velocity.z;
+  Eigen::Vector3d linear_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::linearVelocity(normalized);
+  const double vx = linear_velocity.x();
+  const double vy = linear_velocity.y();
+  const double vz = linear_velocity.z();
   const double speed = std::sqrt(vx * vx + vy * vy + vz * vz);
   if (speed > vel_clamp_config_.max_linear_speed && speed > 1e-9) {
     const double scale = vel_clamp_config_.max_linear_speed / speed;
-    result.center_velocity.x = vx * scale;
-    result.center_velocity.y = vy * scale;
-    result.center_velocity.z = vz * scale;
+    linear_velocity *= scale;
   }
+
+  result.center_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::toVector3(linear_velocity);
 
   // yaw 角速度: 直接限幅
   result.yaw_velocity = std::clamp(
-    robot.yaw_velocity,
+    fyt::auto_aim::robot_description::TrackedRobotUsage::yawVelocity(normalized),
     -vel_clamp_config_.max_v_yaw,
     vel_clamp_config_.max_v_yaw);
+
+  fyt::auto_aim::robot_description::TrackedRobotUsage::syncFullStateFromLegacy(result);
 
   return result;
 }

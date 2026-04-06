@@ -72,18 +72,6 @@ public:
     double d_za,
     double d_zc);
 
-private:
-  /**
-   * @brief 计算单个装甲板的世界坐标
-   * @param center 机器人中心位置
-   * @param yaw 机器人yaw角
-   * @param offset 装甲板在机器人坐标系中的偏移
-   * @return 装甲板世界坐标
-   */
-  Eigen::Vector3d transformToWorld(
-    const Eigen::Vector3d & center,
-    double yaw,
-    const Eigen::Vector3d & offset) const;
 };
 
 }  // namespace gimbal_controller

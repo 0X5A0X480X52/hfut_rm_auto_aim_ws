@@ -16,6 +16,7 @@
 #include "gimbal_controller/armor_position_calculator.hpp"
 #include "gimbal_controller/armor_selector.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
+#include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 #include <angles/angles.h>
 
 namespace gimbal_controller
@@ -41,26 +42,33 @@ rm_interfaces::msg::GimbalCmd CurrentPositionStrategy::solve(
     return createIdleCmd();
   }
 
+  const auto target_robot =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(context.target_robot);
+  const auto center_position =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::centerPosition(target_robot);
+  const auto linear_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::linearVelocity(target_robot);
+  const double target_yaw =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::yaw(target_robot);
+  const double target_yaw_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::yawVelocity(target_robot);
+
   // 计算所有装甲板的当前位置
-  auto armor_positions = position_calculator_->calculate(context.target_robot);
+  auto armor_positions = position_calculator_->calculate(target_robot);
 
   if (armor_positions.empty()) {
     return createIdleCmd();
   }
 
-  // 构建目标中心位置
-  Eigen::Vector3d target_center(
-    context.target_robot.center_position.x,
-    context.target_robot.center_position.y,
-    context.target_robot.center_position.z);
+  const Eigen::Vector3d target_center = center_position;
 
   // 选择最佳装甲板（开火判断用，路由到配置的选板策略）
   auto fire_selection = armor_selector_->selectBest(
     armor_positions,
     target_center,
-    context.target_robot.yaw,
-    context.target_robot.num_armors,
-    context.target_robot.yaw_velocity,
+    target_yaw,
+    target_robot.num_armors,
+    target_yaw_velocity,
     context.current_yaw,
     context.current_pitch);
 
@@ -75,30 +83,31 @@ rm_interfaces::msg::GimbalCmd CurrentPositionStrategy::solve(
 
   if (effective_ctrl_delay > 0.0) {
     auto predicted_positions = position_calculator_->calculatePredicted(
-      context.target_robot, effective_ctrl_delay);
+      target_robot, effective_ctrl_delay);
     if (!predicted_positions.empty()) {
-      Eigen::Vector3d predicted_center(
-        context.target_robot.center_position.x + effective_ctrl_delay * context.target_robot.center_velocity.x,
-        context.target_robot.center_position.y + effective_ctrl_delay * context.target_robot.center_velocity.y,
-        context.target_robot.center_position.z + effective_ctrl_delay * context.target_robot.center_velocity.z);
-      double predicted_yaw = context.target_robot.yaw
-                             + effective_ctrl_delay * context.target_robot.yaw_velocity;
+      Eigen::Vector3d predicted_center =
+        fyt::auto_aim::robot_description::TrackedRobotUsage::predictCenter(
+        target_robot,
+        effective_ctrl_delay,
+        fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
+      double predicted_yaw =
+        fyt::auto_aim::robot_description::TrackedRobotUsage::predictYaw(
+        target_robot,
+        effective_ctrl_delay,
+        fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
       auto ctrl_selection = armor_selector_->selectBest(
         predicted_positions,
         predicted_center,
         predicted_yaw,
-        context.target_robot.num_armors,
-        context.target_robot.yaw_velocity,
+        target_robot.num_armors,
+        target_yaw_velocity,
         context.current_yaw,
         context.current_pitch);
       control_position = ctrl_selection.position;
       control_distance = ctrl_selection.distance;
     }
   }
-  Eigen::Vector3d target_velocity(
-    context.target_robot.center_velocity.x,
-    context.target_robot.center_velocity.y,
-    context.target_robot.center_velocity.z);
+  const Eigen::Vector3d target_velocity = linear_velocity;
 
   // 计算弹道补偿（使用云台控制位置）
   double pitch, yaw, flight_time;
@@ -129,18 +138,14 @@ rm_interfaces::msg::GimbalCmd CurrentPositionStrategy::solve(
 
   // 自适应 delay 更新（根据本帧 fire_advice 和目标速度）
   if (adaptive_delay_enabled_) {
-    Eigen::Vector3d vel(
-      context.target_robot.center_velocity.x,
-      context.target_robot.center_velocity.y,
-      context.target_robot.center_velocity.z);
-    double v_linear  = vel.norm();
-    double v_angular = std::abs(context.target_robot.yaw_velocity);
+    double v_linear  = linear_velocity.norm();
+    double v_angular = std::abs(target_yaw_velocity);
     adaptive_ctrl_.update(fire_advice, v_linear, v_angular);
   }
 
   // 构建控制命令
   rm_interfaces::msg::GimbalCmd cmd;
-  cmd.header = context.target_robot.header;
+  cmd.header = target_robot.header;
   cmd.yaw = cmd_yaw * 180.0 / M_PI;
   cmd.pitch = cmd_pitch * 180.0 / M_PI;
   cmd.yaw_diff = yaw_diff * 180.0 / M_PI;

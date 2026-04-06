@@ -17,6 +17,7 @@
 #include "gimbal_controller/armor_selector.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
+#include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 #include <angles/angles.h>
 #include <limits>
 
@@ -30,8 +31,19 @@ namespace gimbal_controller
 rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
   const GimbalControlContext & context)
 {
+  GimbalControlContext normalized_context = context;
+  normalized_context.target_robot =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(context.target_robot);
+  const auto & target_robot = normalized_context.target_robot;
+  const auto center_position =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::centerPosition(target_robot);
+  const double target_yaw =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::yaw(target_robot);
+  const double target_yaw_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::yawVelocity(target_robot);
+
   // 无跟踪 → LOST
-  if (!context.is_tracking) {
+  if (!normalized_context.is_tracking) {
     resetStateMachine();
     return createIdleCmd();
   }
@@ -41,14 +53,11 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
   }
 
   // 保存上次目标位置 (用于 LOST → 保持瞄准)
-  Eigen::Vector3d current_center(
-    context.target_robot.center_position.x,
-    context.target_robot.center_position.y,
-    context.target_robot.center_position.z);
+  const Eigen::Vector3d current_center = center_position;
   last_target_position_ = current_center;
 
   // ---- 自旋检测计数 ----
-  double abs_v_yaw = std::abs(context.target_robot.yaw_velocity);
+  double abs_v_yaw = std::abs(target_yaw_velocity);
 
   if (abs_v_yaw > spin_v_yaw_thresh_) {
     spin_count_++;
@@ -78,12 +87,12 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
       }
       // 检查是否有正面装甲板 → SINGLE
       {
-        auto armor_positions = position_calculator_->calculate(context.target_robot);
+        auto armor_positions = position_calculator_->calculate(target_robot);
         auto facing_angles = ArmorSelector::computeFacingAngles(
-          armor_positions, context.target_robot.yaw, context.target_robot.num_armors);
+          armor_positions, target_yaw, target_robot.num_armors);
         int best = selectBestFacingArmor(
           armor_positions, facing_angles, facing_enter_angle_,
-          context.current_yaw, context.current_pitch);
+          normalized_context.current_yaw, normalized_context.current_pitch);
         if (best >= 0) {
           state_ = State::SINGLE;
           locked_armor_index_ = best;
@@ -101,7 +110,7 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
       }
       // 检查锁定板是否仍有效
       {
-        auto armor_positions = position_calculator_->calculate(context.target_robot);
+        auto armor_positions = position_calculator_->calculate(target_robot);
         if (locked_armor_index_ < 0 ||
             locked_armor_index_ >= static_cast<int>(armor_positions.size()))
         {
@@ -111,7 +120,7 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
           break;
         }
         auto facing_angles = ArmorSelector::computeFacingAngles(
-          armor_positions, context.target_robot.yaw, context.target_robot.num_armors);
+          armor_positions, target_yaw, target_robot.num_armors);
         double fa = facing_angles[locked_armor_index_];
         double exit_rad = facing_exit_angle_ * M_PI / 180.0;
         if (fa > exit_rad) {
@@ -126,12 +135,12 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
       // 检查是否退出 SPIN
       if (calm_count_ >= spin_exit_count_) {
         // 尝试找正面装甲板 → SINGLE, 否则 → CENTER
-        auto armor_positions = position_calculator_->calculate(context.target_robot);
+        auto armor_positions = position_calculator_->calculate(target_robot);
         auto facing_angles = ArmorSelector::computeFacingAngles(
-          armor_positions, context.target_robot.yaw, context.target_robot.num_armors);
+          armor_positions, target_yaw, target_robot.num_armors);
         int best = selectBestFacingArmor(
           armor_positions, facing_angles, facing_enter_angle_,
-          context.current_yaw, context.current_pitch);
+          normalized_context.current_yaw, normalized_context.current_pitch);
         if (best >= 0) {
           state_ = State::SINGLE;
           locked_armor_index_ = best;
@@ -147,13 +156,13 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
   // ---- 执行当前状态行为 ----
   switch (state_) {
     case State::LOST:
-      return handleLost(context);
+      return handleLost(normalized_context);
     case State::CENTER:
-      return handleCenter(context);
+      return handleCenter(normalized_context);
     case State::SINGLE:
-      return handleSingle(context);
+      return handleSingle(normalized_context);
     case State::SPIN:
-      return handleSpin(context);
+      return handleSpin(normalized_context);
   }
 
   return createIdleCmd();  // 不应到达
@@ -173,16 +182,18 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::handleCenter(
   const GimbalControlContext & context)
 {
   const auto & robot = context.target_robot;
-  Eigen::Vector3d current_center(
-    robot.center_position.x, robot.center_position.y, robot.center_position.z);
+  const auto center_position =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::centerPosition(robot);
+  const Eigen::Vector3d current_center = center_position;
 
   double dt = computePredictionTime(context, current_center);
 
   // 预测中心位置
-  Eigen::Vector3d predicted_center(
-    robot.center_position.x + dt * robot.center_velocity.x,
-    robot.center_position.y + dt * robot.center_velocity.y,
-    robot.center_position.z + dt * robot.center_velocity.z);
+  Eigen::Vector3d predicted_center =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::predictCenter(
+    robot,
+    dt,
+    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
 
   // 当前位置用于开火判断 — 使用最近的装甲板
   auto current_positions = position_calculator_->calculate(robot);
@@ -202,8 +213,9 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::handleSingle(
   const GimbalControlContext & context)
 {
   const auto & robot = context.target_robot;
-  Eigen::Vector3d current_center(
-    robot.center_position.x, robot.center_position.y, robot.center_position.z);
+  const auto center_position =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::centerPosition(robot);
+  const Eigen::Vector3d current_center = center_position;
 
   double dt = computePredictionTime(context, current_center);
 
@@ -235,8 +247,11 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::handleSpin(
   const GimbalControlContext & context)
 {
   const auto & robot = context.target_robot;
-  Eigen::Vector3d current_center(
-    robot.center_position.x, robot.center_position.y, robot.center_position.z);
+  const auto center_position =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::centerPosition(robot);
+  const double yaw_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::yawVelocity(robot);
+  const Eigen::Vector3d current_center = center_position;
 
   double dt = computePredictionTime(context, current_center);
 
@@ -249,14 +264,19 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::handleSpin(
   }
 
   // 使用 selectByDecisionAngle 选择装甲板
-  double predicted_yaw = robot.yaw + dt * robot.yaw_velocity;
-  Eigen::Vector3d predicted_center(
-    robot.center_position.x + dt * robot.center_velocity.x,
-    robot.center_position.y + dt * robot.center_velocity.y,
-    robot.center_position.z + dt * robot.center_velocity.z);
+  double predicted_yaw =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::predictYaw(
+    robot,
+    dt,
+    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
+  Eigen::Vector3d predicted_center =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::predictCenter(
+    robot,
+    dt,
+    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
 
   int decision_id = armor_selector_->selectByDecisionAngle(
-    predicted_positions, predicted_center, predicted_yaw, robot.yaw_velocity);
+    predicted_positions, predicted_center, predicted_yaw, yaw_velocity);
 
   if (decision_id < 0 || decision_id >= static_cast<int>(predicted_positions.size())) {
     // Fallback: 跟踪中心
@@ -350,10 +370,8 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::buildCommand(
   double fire_distance,
   bool force_fire) const
 {
-  Eigen::Vector3d target_velocity(
-    context.target_robot.center_velocity.x,
-    context.target_robot.center_velocity.y,
-    context.target_robot.center_velocity.z);
+  const Eigen::Vector3d target_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::linearVelocity(context.target_robot);
 
   // 弹道补偿 (控制目标)
   double control_pitch, control_yaw, control_flight;

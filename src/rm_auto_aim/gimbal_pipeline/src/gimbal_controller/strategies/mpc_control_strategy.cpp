@@ -20,6 +20,7 @@
 #include <iostream>
 
 #include "gimbal_controller/fire_advisor.hpp"
+#include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 
 namespace gimbal_controller
 {
@@ -145,7 +146,20 @@ Eigen::VectorXd MpcControlStrategy::buildWeightingVector(
     return w;
   }
 
-  const auto & robot = context.target_robot;
+  const auto robot =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(context.target_robot);
+  const auto center_position =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::centerPosition(robot);
+  const auto linear_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::linearVelocity(robot);
+  const auto linear_acceleration =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::linearAcceleration(robot);
+  const double yaw =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::yaw(robot);
+  const double yaw_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::yawVelocity(robot);
+  const double yaw_acceleration =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::yawAcceleration(robot);
   const double bullet_speed = std::max(weighting_bullet_speed_, 1e-3);
   const double alpha = std::max(weighting_alpha_, 0.0);
   const double smooth_alpha = std::clamp(weighting_smooth_alpha_, 0.0, 1.0);
@@ -157,18 +171,18 @@ Eigen::VectorXd MpcControlStrategy::buildWeightingVector(
     double t = (k + 1) * dt_;
 
     // 预测时刻目标位置：考虑匀加速运动模型的三阶预测，适用于快速机动的目标
-    double px = robot.center_position.x + robot.center_velocity.x * t +
-      0.5 * robot.center_acceleration.x * t * t;
-    double py = robot.center_position.y + robot.center_velocity.y * t +
-      0.5 * robot.center_acceleration.y * t * t;
-    double pz = robot.center_position.z + robot.center_velocity.z * t +
-      0.5 * robot.center_acceleration.z * t * t;
+    double px = center_position.x() + linear_velocity.x() * t +
+      0.5 * linear_acceleration.x() * t * t;
+    double py = center_position.y() + linear_velocity.y() * t +
+      0.5 * linear_acceleration.y() * t * t;
+    double pz = center_position.z() + linear_velocity.z() * t +
+      0.5 * linear_acceleration.z() * t * t;
     double distance = std::sqrt(px * px + py * py + pz * pz);
     distance = std::max(distance, weighting_min_distance_);
 
-    double yaw_k = robot.yaw + robot.yaw_velocity * t +
-      0.5 * robot.yaw_acceleration * t * t;
-    double omega_k = robot.yaw_velocity + robot.yaw_acceleration * t;
+    double yaw_k = yaw + yaw_velocity * t +
+      0.5 * yaw_acceleration * t * t;
+    double omega_k = yaw_velocity + yaw_acceleration * t;
 
     double t_bullet = distance / bullet_speed;
     // 命中时刻角度：考虑子弹飞行时间的目标朝向
@@ -224,6 +238,12 @@ void MpcControlStrategy::rebuildMatrices()
 rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   const GimbalControlContext & context)
 {
+  const auto target_robot =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(context.target_robot);
+  const Eigen::Vector3d target_linear_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::linearVelocity(target_robot);
+  const double target_distance =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::centerDistance(target_robot);
 
   // std::cout << "MPC Control Strategy: Solving for target robot at position ("
   //           << context.target_robot.center_position.x << ", "
@@ -289,11 +309,11 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     delay_cfg.flight_time_iters = flight_time_iters_;
 
     X_ref = ref_generator_.generateWithDelay(
-      context.target_robot, context.current_yaw, context.current_pitch,
+      target_robot, context.current_yaw, context.current_pitch,
       N_, dt_, delay_cfg);
   } else {
     X_ref = ref_generator_.generate(
-      context.target_robot, context.current_yaw, context.current_pitch, N_, dt_);
+      target_robot, context.current_yaw, context.current_pitch, N_, dt_);
   }
 
   // 5) 构造 QP
@@ -306,10 +326,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     if (has_prev_velocity_ && cur_stamp != prev_target_stamp_) {
       double delta_t = (cur_stamp - prev_target_stamp_).seconds();
       if (delta_t > 1e-6) {
-        Eigen::Vector3d vel_now(
-          context.target_robot.center_velocity.x,
-          context.target_robot.center_velocity.y,
-          context.target_robot.center_velocity.z);
+        Eigen::Vector3d vel_now = target_linear_velocity;
         double accel_est = (vel_now - prev_target_velocity_).norm() / delta_t;
         double alpha_raw = std::clamp(accel_est / a_max_, 0.0, 1.0);
         alpha_ema_ = eta_ * alpha_raw + (1.0 - eta_) * alpha_ema_;
@@ -317,10 +334,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     }
     // 更新历史状态（仅 stamp 变化时）
     if (!has_prev_velocity_ || cur_stamp != prev_target_stamp_) {
-      prev_target_velocity_ = Eigen::Vector3d(
-        context.target_robot.center_velocity.x,
-        context.target_robot.center_velocity.y,
-        context.target_robot.center_velocity.z);
+      prev_target_velocity_ = target_linear_velocity;
       prev_target_stamp_ = cur_stamp;
       has_prev_velocity_ = true;
     }
@@ -369,10 +383,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
 
     double ref_yaw   = X_ref(0);
     double ref_pitch = X_ref(1);
-    double distance  = std::sqrt(
-      context.target_robot.center_position.x * context.target_robot.center_position.x +
-      context.target_robot.center_position.y * context.target_robot.center_position.y +
-      context.target_robot.center_position.z * context.target_robot.center_position.z);
+    double distance  = target_distance;
 
     bool fire_advice = false;
     if (fire_advisor_) {
@@ -389,7 +400,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     }
 
     rm_interfaces::msg::GimbalCmd cmd;
-    cmd.header     = context.target_robot.header;
+    cmd.header     = target_robot.header;
     cmd.yaw        = cmd_yaw   * 180.0 / M_PI;
     cmd.pitch      = cmd_pitch * 180.0 / M_PI;
     cmd.yaw_diff   = yaw_diff   * 180.0 / M_PI;
@@ -457,10 +468,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   // 10) 开火判断: 使用参考轨迹第一步的 yaw/pitch 作为开火目标
   double ref_yaw = X_ref(0);
   double ref_pitch = X_ref(1);
-  double distance = std::sqrt(
-    context.target_robot.center_position.x * context.target_robot.center_position.x +
-    context.target_robot.center_position.y * context.target_robot.center_position.y +
-    context.target_robot.center_position.z * context.target_robot.center_position.z);
+  double distance = target_distance;
 
   bool fire_advice = false;
   if (fire_advisor_) {
@@ -481,7 +489,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
 
   // 11) 填充 GimbalCmd (角度以度为单位)
   rm_interfaces::msg::GimbalCmd cmd;
-  cmd.header = context.target_robot.header;
+  cmd.header = target_robot.header;
   cmd.yaw = cmd_yaw * 180.0 / M_PI;
   cmd.pitch = cmd_pitch * 180.0 / M_PI;
   cmd.yaw_diff = yaw_diff * 180.0 / M_PI;
@@ -513,10 +521,11 @@ mpc::QPResult MpcControlStrategy::solveFovConstrainedQP(
   // 计算有效 margin（可选动态调整）
   double margin_eff = fov_margin_;
   if (enable_dynamic_margin_) {
-    double v_target = std::sqrt(
-      context.target_robot.center_velocity.x * context.target_robot.center_velocity.x +
-      context.target_robot.center_velocity.y * context.target_robot.center_velocity.y +
-      context.target_robot.center_velocity.z * context.target_robot.center_velocity.z);
+    const auto target_robot =
+      fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(context.target_robot);
+    const Eigen::Vector3d target_velocity =
+      fyt::auto_aim::robot_description::TrackedRobotUsage::linearVelocity(target_robot);
+    double v_target = target_velocity.norm();
     margin_eff += margin_vel_scale_ * v_target;
   }
 
@@ -557,6 +566,9 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::fallbackDirectAim(
   const GimbalControlContext & context,
   const Eigen::VectorXd & X_ref)
 {
+  const auto target_robot =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(context.target_robot);
+
   // QP 失败时回退: 直接用参考轨迹首步 yaw/pitch 作为目标
   double ref_yaw = X_ref(0);
   double ref_pitch = X_ref(1);
@@ -564,10 +576,8 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::fallbackDirectAim(
   double yaw_diff = angles::normalize_angle(ref_yaw - context.current_yaw);
   double pitch_diff = ref_pitch - context.current_pitch;
 
-  double distance = std::sqrt(
-    context.target_robot.center_position.x * context.target_robot.center_position.x +
-    context.target_robot.center_position.y * context.target_robot.center_position.y +
-    context.target_robot.center_position.z * context.target_robot.center_position.z);
+  double distance =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::centerDistance(target_robot);
 
   bool fire_advice = false;
   if (fire_advisor_) {
@@ -577,7 +587,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::fallbackDirectAim(
   }
 
   rm_interfaces::msg::GimbalCmd cmd;
-  cmd.header = context.target_robot.header;
+  cmd.header = target_robot.header;
   cmd.yaw = ref_yaw * 180.0 / M_PI;
   cmd.pitch = ref_pitch * 180.0 / M_PI;
   cmd.yaw_diff = yaw_diff * 180.0 / M_PI;

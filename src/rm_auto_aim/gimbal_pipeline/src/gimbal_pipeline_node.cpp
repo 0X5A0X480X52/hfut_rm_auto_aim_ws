@@ -984,16 +984,18 @@ void GimbalPipelineNode::armorsCallback(
   if (prediction_logger_) {
     int64_t ts_ns = msg_time.nanoseconds();
     for (const auto &robot : tracked_msg.robots) {
+      const auto center_position = robot_description::TrackedRobotUsage::centerPosition(robot);
+      const auto linear_velocity = robot_description::TrackedRobotUsage::linearVelocity(robot);
       LogTrackerState st;
-      st.center_x           = robot.center_position.x;
-      st.center_y           = robot.center_position.y;
-      st.center_z           = robot.center_position.z;
-      st.vel_x              = robot.center_velocity.x;
-      st.vel_y              = robot.center_velocity.y;
-      st.vel_z              = robot.center_velocity.z;
-      st.yaw                = robot.yaw;
-      st.yaw_velocity       = robot.yaw_velocity;
-      st.yaw_acceleration   = robot.yaw_acceleration;
+      st.center_x           = center_position.x();
+      st.center_y           = center_position.y();
+      st.center_z           = center_position.z();
+      st.vel_x              = linear_velocity.x();
+      st.vel_y              = linear_velocity.y();
+      st.vel_z              = linear_velocity.z();
+      st.yaw                = robot_description::TrackedRobotUsage::yaw(robot);
+      st.yaw_velocity       = robot_description::TrackedRobotUsage::yawVelocity(robot);
+      st.yaw_acceleration   = robot_description::TrackedRobotUsage::yawAcceleration(robot);
       st.radius_1           = robot.radius;
       st.radius_2           = robot.radius_2;
       st.dza                = robot.d_za;
@@ -1723,13 +1725,21 @@ void GimbalPipelineNode::publishGimbalMarkers(
     const rm_interfaces::msg::GimbalCmd &cmd) {
   if (!debug_gimbal_marker_pub_) return;
 
+  const auto normalized_target = robot_description::TrackedRobotUsage::normalizeState(target_robot);
+  const auto center_position = robot_description::TrackedRobotUsage::centerPosition(normalized_target);
+  const auto linear_velocity = robot_description::TrackedRobotUsage::linearVelocity(normalized_target);
+  const double target_yaw = robot_description::TrackedRobotUsage::yaw(normalized_target);
+  const double target_yaw_velocity =
+      robot_description::TrackedRobotUsage::yawVelocity(normalized_target);
+
   visualization_msgs::msg::MarkerArray marker_array;
 
   // Position
   position_marker_.header = target_robot.header;
   position_marker_.id = 0;
   position_marker_.action = visualization_msgs::msg::Marker::ADD;
-  position_marker_.pose.position = target_robot.center_position;
+  position_marker_.pose.position =
+    robot_description::TrackedRobotUsage::toPoint(center_position);
   position_marker_.pose.orientation.w = 1.0;
   marker_array.markers.push_back(position_marker_);
 
@@ -1738,37 +1748,38 @@ void GimbalPipelineNode::publishGimbalMarkers(
   target_velocity_marker_.id = 0;
   target_velocity_marker_.action = visualization_msgs::msg::Marker::ADD;
   target_velocity_marker_.points.clear();
-  geometry_msgs::msg::Point vel_start = target_robot.center_position;
-  geometry_msgs::msg::Point vel_end = target_robot.center_position;
-  vel_end.x += target_robot.center_velocity.x * 0.5;
-  vel_end.y += target_robot.center_velocity.y * 0.5;
-  vel_end.z += target_robot.center_velocity.z * 0.5;
+  geometry_msgs::msg::Point vel_start =
+    robot_description::TrackedRobotUsage::toPoint(center_position);
+  geometry_msgs::msg::Point vel_end = vel_start;
+  vel_end.x += linear_velocity.x() * 0.5;
+  vel_end.y += linear_velocity.y() * 0.5;
+  vel_end.z += linear_velocity.z() * 0.5;
   target_velocity_marker_.points.push_back(vel_start);
   target_velocity_marker_.points.push_back(vel_end);
   marker_array.markers.push_back(target_velocity_marker_);
 
   // Armor plates
-  if (!target_robot.armors_offset.empty()) {
-    for (size_t i = 0; i < target_robot.armors_offset.size(); ++i) {
+  if (!normalized_target.armors_offset.empty()) {
+    for (size_t i = 0; i < normalized_target.armors_offset.size(); ++i) {
       auto armor_marker = armors_marker_;
       armor_marker.header = target_robot.header;
       armor_marker.id = static_cast<int>(i);
       armor_marker.action = visualization_msgs::msg::Marker::ADD;
-      double cos_yaw = std::cos(target_robot.yaw);
-      double sin_yaw = std::sin(target_robot.yaw);
-      const auto &offset = target_robot.armors_offset[i];
+      double cos_yaw = std::cos(target_yaw);
+      double sin_yaw = std::sin(target_yaw);
+      const auto &offset = normalized_target.armors_offset[i];
       armor_marker.pose.position.x =
-          target_robot.center_position.x +
+          center_position.x() +
           offset.position.x * cos_yaw - offset.position.y * sin_yaw;
       armor_marker.pose.position.y =
-          target_robot.center_position.y +
+          center_position.y() +
           offset.position.x * sin_yaw + offset.position.y * cos_yaw;
       armor_marker.pose.position.z =
-          target_robot.center_position.z + offset.position.z;
+          center_position.z() + offset.position.z;
       tf2::Quaternion q;
       q.setRPY(0, 0.2618,
-               target_robot.yaw +
-                   i * (2 * M_PI / target_robot.num_armors));
+               target_yaw +
+                   i * (2 * M_PI / normalized_target.num_armors));
       armor_marker.pose.orientation.x = q.x();
       armor_marker.pose.orientation.y = q.y();
       armor_marker.pose.orientation.z = q.z();
@@ -1778,10 +1789,10 @@ void GimbalPipelineNode::publishGimbalMarkers(
   }
 
   // Allowed radial selection range marker (for min_movement_with_radial)
-  if (radial_selection_enabled_ && armor_selector_ && target_robot.num_armors > 0) {
-    const double center_x = target_robot.center_position.x;
-    const double center_y = target_robot.center_position.y;
-    const double center_z = target_robot.center_position.z;
+  if (radial_selection_enabled_ && armor_selector_ && normalized_target.num_armors > 0) {
+    const double center_x = center_position.x();
+    const double center_y = center_position.y();
+    const double center_z = center_position.z();
 
     // Direction from robot center to our gimbal origin (world origin approximation).
     double axis_yaw = std::atan2(-center_y, -center_x);
@@ -1791,19 +1802,19 @@ void GimbalPipelineNode::publishGimbalMarkers(
     double bias_deg = 0.0;
     if (radial_dynamic_enable_) {
       speed_norm = std::clamp(
-        std::abs(target_robot.yaw_velocity) / radial_dynamic_v_yaw_ref_, 0.0, 1.0);
+        std::abs(target_yaw_velocity) / radial_dynamic_v_yaw_ref_, 0.0, 1.0);
       const double scale = 1.0 - radial_dynamic_shrink_ratio_ * speed_norm;
       enter_deg = std::max(enter_deg * scale, radial_dynamic_min_angle_deg_);
       const double bias_mag = std::min(
         radial_dynamic_bias_gain_deg_ * speed_norm,
         radial_dynamic_max_bias_deg_);
-      bias_deg = (target_robot.yaw_velocity >= 0.0 ? 1.0 : -1.0) * bias_mag;
+      bias_deg = (target_yaw_velocity >= 0.0 ? 1.0 : -1.0) * bias_mag;
       axis_yaw += bias_deg * M_PI / 180.0;
     }
     const double enter_rad = enter_deg * M_PI / 180.0;
 
     double radius = 0.25;
-    for (const auto & offset : target_robot.armors_offset) {
+    for (const auto & offset : normalized_target.armors_offset) {
       const double r = std::hypot(offset.position.x, offset.position.y);
       if (r > radius) {
         radius = r;
