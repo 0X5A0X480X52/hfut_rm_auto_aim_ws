@@ -36,7 +36,7 @@ include_directories(
 
 # ─── Collect all source files (include src root + subdirectories) ─
 # Some CMake versions/policies may miss src/*.cpp when only using src/**/*.cpp.
-file(GLOB_RECURSE ALL_SRCS
+file(GLOB_RECURSE ALL_SRCS CONFIGURE_DEPENDS
   "src/*.cpp"
   "src/**/*.cpp"
 )

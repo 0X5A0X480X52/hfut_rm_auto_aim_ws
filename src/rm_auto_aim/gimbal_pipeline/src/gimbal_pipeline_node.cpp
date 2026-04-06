@@ -11,7 +11,6 @@
 #include <cmath>
 #include <limits>
 #include <rm_utils/heartbeat.hpp>
-#include <set>
 #include <sstream>
 
 #include "rm_utils/logger/log.hpp"
@@ -83,6 +82,26 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       get_parameter("default_dza").as_double(),
       get_parameter("tracker_timeout").as_double(),
       get_parameter("enable_oscillation_detection").as_bool());
+
+  robot_description_facade_ = std::make_unique<robot_description::RobotDescriptionFacade>();
+  robot_description_facade_->setStrictUnknownReject(
+      get_parameter("robot_description.strict_unknown_reject").as_bool());
+
+  {
+    std::ostringstream oss;
+    const auto supported_ids = robot_description_facade_->supportedRobotIds();
+    for (size_t i = 0; i < supported_ids.size(); ++i) {
+      if (i != 0) {
+        oss << ",";
+      }
+      oss << supported_ids[i];
+    }
+    RCLCPP_INFO(
+      get_logger(),
+      "RobotDescription initialized (strict_unknown_reject=%s, supported_ids=[%s])",
+      robot_description_facade_->strictUnknownReject() ? "true" : "false",
+      oss.str().c_str());
+  }
 
   RCLCPP_INFO(get_logger(), "Tracker initialized (predict_rate=%.1f Hz)",
               predict_rate_);
@@ -423,6 +442,7 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("debug_mode", false);
   declare_parameter("enable_oscillation_detection", false);
   declare_parameter("visualization_frame", "odom");
+  declare_parameter("robot_description.strict_unknown_reject", true);
 
   // UKF
   declare_parameter("ukf.alpha", 0.001);
@@ -860,13 +880,16 @@ void GimbalPipelineNode::armorsCallback(
   std::string sf =
       msg->header.frame_id.empty() ? source_frame_ : msg->header.frame_id;
 
-  // Valid robot ID whitelist to filter out misclassified detections
-  static const std::set<std::string> valid_robot_ids = {
-      "1", "2", "3", "4", "5", "outpost", "base", "sentry", "guard"};
+  const bool strict_unknown_reject =
+      robot_description_facade_ && robot_description_facade_->strictUnknownReject();
 
   for (const auto &armor : msg->armors) {
-    // Skip invalid/unknown robot IDs to prevent false tracker creation
-    if (valid_robot_ids.count(armor.number) == 0) {
+    const bool supported_robot_id =
+        robot_description_facade_ &&
+        robot_description_facade_->isSupportedRobotId(armor.number);
+
+    // Strict mode: skip unsupported IDs to prevent false tracker creation.
+    if (strict_unknown_reject && !supported_robot_id) {
       if (debug_mode_)
         RCLCPP_WARN(get_logger(), "Ignoring armor with invalid ID: '%s'",
                     armor.number.c_str());
@@ -1180,6 +1203,11 @@ rm_interfaces::msg::TrackedRobots GimbalPipelineNode::buildTrackedRobotsMsg(
     auto robot = has_smoothed
         ? buildTrackedRobotMessage(header, rid, *tracker, &smoothed)
         : buildTrackedRobotMessage(header, rid, *tracker, nullptr);
+
+    if (robot.robot_id.empty()) {
+      continue;
+    }
+
     tracked_msg.robots.push_back(robot);
   }
 
@@ -1239,155 +1267,40 @@ rm_interfaces::msg::Target GimbalPipelineNode::buildTargetMessage(
 rm_interfaces::msg::TrackedRobot GimbalPipelineNode::buildTrackedRobotMessage(
     const std_msgs::msg::Header &header, const std::string &robot_id,
     AdaptiveArmorTracker &tracker, const SmoothedOutput *smoothed) {
-  rm_interfaces::msg::TrackedRobot msg;
-  msg.header = header;
-  msg.header.frame_id = target_frame_;
-  msg.robot_id = robot_id;
-  msg.robot_type = static_cast<uint8_t>(inferRobotType(robot_id));
+  rm_interfaces::msg::TrackedRobot empty_msg;
 
-  if (tracker.is_tracking())
-    msg.track_state = rm_interfaces::msg::TrackedRobot::TRACKING;
-  else if (tracker.is_temp_lost())
-    msg.track_state = rm_interfaces::msg::TrackedRobot::TEMP_LOST;
-  else
-    msg.track_state = rm_interfaces::msg::TrackedRobot::DETECTING;
-
-  auto idx = tracker.ukf().state_idx();
-  const auto &x = tracker.ukf().x();
-
-  if (smoothed) {
-    msg.center_position.x = smoothed->center_position.x();
-    msg.center_position.y = smoothed->center_position.y();
-    msg.center_position.z = smoothed->center_position.z();
-    msg.center_velocity.x = smoothed->velocity.x();
-    msg.center_velocity.y = smoothed->velocity.y();
-    msg.center_velocity.z = smoothed->velocity.z();
-    msg.yaw = smoothed->yaw;
-    msg.yaw_velocity = smoothed->yaw_velocity;
-    msg.radius = smoothed->r1;
-    msg.radius_2 = smoothed->r2;
-    msg.d_za = smoothed->dza;
-  } else {
-    auto pos = tracker.get_center_position();
-    msg.center_position.x = pos.x();
-    msg.center_position.y = pos.y();
-    msg.center_position.z = pos.z();
-    msg.center_velocity.x = x(idx.VX());
-    msg.center_velocity.y = x(idx.VY());
-    msg.center_velocity.z = x(idx.VZ());
-    msg.yaw = tracker.get_yaw();
-    msg.yaw_velocity = x(idx.DELTA_RATE());
-    auto [r1, r2] = tracker.get_radii();
-    msg.radius = r1;
-    msg.radius_2 = r2;
-    msg.d_za = tracker.get_dza();
+  if (!robot_description_facade_) {
+    RCLCPP_ERROR_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "RobotDescriptionFacade is not initialized, skip TrackedRobot build");
+    return empty_msg;
   }
 
-  if (idx.has("AX")) {
-    msg.center_acceleration.x = x(idx.AX());
-    msg.center_acceleration.y = x(idx.AY());
-    msg.center_acceleration.z = x(idx.AZ());
-  } else {
-    msg.center_acceleration.x = 0.0;
-    msg.center_acceleration.y = 0.0;
-    msg.center_acceleration.z = 0.0;
+  int visible_armor_count = 0;
+  auto obs_it = last_obs_counts_.find(robot_id);
+  if (obs_it != last_obs_counts_.end()) {
+    visible_armor_count = obs_it->second;
   }
 
-  msg.yaw_acceleration =
-      idx.has("DELTA_ACC") ? x(idx.get("DELTA_ACC")) : 0.0;
-  msg.d_zc = 0.0;
-  msg.num_armors = inferNumArmors(robot_id, msg.robot_type);
+  robot_description::TrackedRobotBuildInput input{
+    header,
+    target_frame_,
+    robot_id,
+    tracker,
+    smoothed,
+    visible_armor_count};
 
-  double off_r1 = smoothed ? smoothed->r1 : msg.radius;
-  double off_r2 = smoothed ? smoothed->r2 : msg.radius_2;
-  double off_dza = smoothed ? smoothed->dza : msg.d_za;
-  msg.armors_offset =
-      generateArmorsOffset(msg.num_armors, off_r1, off_r2, off_dza, msg.d_zc);
-
-  try {
-    const auto &P = tracker.ukf().P();
-    int dim = static_cast<int>(P.rows());
-    msg.covariance_dim = dim;
-    msg.state_covariance.resize(dim * dim);
-    for (int r = 0; r < dim; ++r)
-      for (int c = 0; c < dim; ++c)
-        msg.state_covariance[r * dim + c] = P(r, c);
-  } catch (...) {
-    msg.state_covariance.clear();
-    msg.covariance_dim = 0;
+  auto build_result = robot_description_facade_->tryBuildTrackedRobot(input);
+  if (!build_result.ok()) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "Rejected TrackedRobot build for id='%s': %s",
+      robot_id.c_str(),
+      build_result.reason.c_str());
+    return empty_msg;
   }
 
-  msg.bound_armor_ids = {robot_id};
-
-  if (tracker.is_tracking())
-    msg.confidence = 1.0;
-  else if (tracker.is_temp_lost())
-    msg.confidence = 0.7;
-  else
-    msg.confidence = 0.3;
-
-  msg.is_visible = tracker.is_tracking() || tracker.is_temp_lost();
-  auto it = last_obs_counts_.find(robot_id);
-  msg.visible_armor_count =
-      (msg.is_visible && it != last_obs_counts_.end()) ? it->second : 0;
-
-  return msg;
-}
-
-/* ================================================================ */
-/*  Tracker helpers                                                  */
-/* ================================================================ */
-
-uint8_t GimbalPipelineNode::inferRobotType(
-    const std::string &robot_id) const {
-  if (robot_id == "outpost")
-    return rm_interfaces::msg::TrackedRobot::OUTPOST_3;
-  if (robot_id == "base") return rm_interfaces::msg::TrackedRobot::BASE;
-  if (robot_id == "sentry") return rm_interfaces::msg::TrackedRobot::SENTRY;
-  if (robot_id == "1") return rm_interfaces::msg::TrackedRobot::HERO_4;
-  if (robot_id == "2" || robot_id == "3" || robot_id == "4" ||
-      robot_id == "5")
-    return rm_interfaces::msg::TrackedRobot::STANDARD_4;
-  return rm_interfaces::msg::TrackedRobot::UNKNOWN;
-}
-
-int GimbalPipelineNode::inferNumArmors(const std::string & /*robot_id*/,
-                                       int robot_type) const {
-  using T = rm_interfaces::msg::TrackedRobot;
-  if (robot_type == T::OUTPOST_3 || robot_type == T::BASE) return 3;
-  if (robot_type == T::BALANCE_2) return 2;
-  return 4;
-}
-
-std::vector<geometry_msgs::msg::Pose>
-GimbalPipelineNode::generateArmorsOffset(int num_armors, double r1,
-                                          double r2, double d_za,
-                                          double d_zc) const {
-  std::vector<geometry_msgs::msg::Pose> offsets;
-  bool is_current_pair = true;
-
-  for (int i = 0; i < num_armors; ++i) {
-    double angle = i * (2.0 * M_PI / num_armors);
-    double r, dz;
-    if (num_armors == 4) {
-      r = is_current_pair ? r1 : r2;
-      dz = d_zc + (is_current_pair ? -d_za : d_za);
-      is_current_pair = !is_current_pair;
-    } else {
-      r = r1;
-      dz = d_zc;
-    }
-    geometry_msgs::msg::Pose pose;
-    pose.position.x = -r * std::cos(angle);
-    pose.position.y = -r * std::sin(angle);
-    pose.position.z = dz;
-    pose.orientation.x = 0.0;
-    pose.orientation.y = 0.0;
-    pose.orientation.z = 0.0;
-    pose.orientation.w = 1.0;
-    offsets.push_back(pose);
-  }
-  return offsets;
+  return build_result.robot;
 }
 
 /* ================================================================ */

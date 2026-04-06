@@ -13,6 +13,7 @@ gimbal_pipeline:
     debug_mode: true
     enable_oscillation_detection: false
     visualization_frame: "odom"
+    robot_description.strict_unknown_reject: true
 
     # UKF tuning
     ukf.alpha: 0.001

@@ -52,6 +52,7 @@
 
 // ─── prediction logger ────────────────────────────────────────
 #include "gimbal_pipeline/prediction_logger.hpp"
+#include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 
 // ─── gimbal_controller internals ──────────────────────────────
 #include "gimbal_controller/armor_position_calculator.hpp"
@@ -95,10 +96,6 @@ class GimbalPipelineNode : public rclcpp::Node {
   rm_interfaces::msg::TrackedRobot buildTrackedRobotMessage(
       const std_msgs::msg::Header &header, const std::string &robot_id,
       AdaptiveArmorTracker &tracker, const SmoothedOutput *smoothed = nullptr);
-  uint8_t inferRobotType(const std::string &robot_id) const;
-  int inferNumArmors(const std::string &robot_id, int robot_type) const;
-  std::vector<geometry_msgs::msg::Pose> generateArmorsOffset(
-      int num_armors, double r1, double r2, double d_za, double d_zc) const;
 
   /* ================================================================ */
   /*  Target selection logic (from TargetSelectorNode)                */
@@ -144,6 +141,8 @@ class GimbalPipelineNode : public rclcpp::Node {
 
   std::unique_ptr<TFHandler> tf_handler_;
   std::unique_ptr<TrackerManager> tracker_manager_;
+  std::unique_ptr<robot_description::RobotDescriptionFacade>
+      robot_description_facade_;
 
   SmootherConfig smoother_config_;
   std::unordered_map<std::string, OutputSmoother> smoothers_;
@@ -219,6 +218,9 @@ class GimbalPipelineNode : public rclcpp::Node {
 
   // Publishers
   rclcpp::Publisher<rm_interfaces::msg::GimbalCmd>::SharedPtr gimbal_cmd_pub_;
+
+  // Heartbeat
+  HeartBeatPublisher::SharedPtr heartbeat_;
 
   // Maneuver states publisher (always-on, for chart monitoring)
   rclcpp::Publisher<rm_interfaces::msg::ManeuverStates>::SharedPtr

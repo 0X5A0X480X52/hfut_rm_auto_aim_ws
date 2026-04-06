@@ -13,7 +13,10 @@
 // limitations under the License.
 
 #include "gimbal_controller/armor_position_calculator.hpp"
+
 #include <rclcpp/rclcpp.hpp>
+
+#include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 
 namespace gimbal_controller
 {
@@ -26,39 +29,34 @@ std::vector<Eigen::Vector3d> ArmorPositionCalculator::calculate(
     robot.center_position.y,
     robot.center_position.z);
 
-  std::vector<Eigen::Vector3d> positions;
+  auto offsets = fyt::auto_aim::robot_description::TrackedRobotUsage::resolveOffsets(
+    robot,
+    [](const rm_interfaces::msg::TrackedRobot & fallback_robot) {
+      return ArmorPositionCalculator::generateDefaultOffsets(
+        fallback_robot.robot_type,
+        fallback_robot.num_armors,
+        fallback_robot.radius,
+        fallback_robot.radius_2,
+        fallback_robot.d_za,
+        fallback_robot.d_zc);
+    });
 
-  // 如果有自定义的装甲板偏移，使用它们
   if (!robot.armors_offset.empty()) {
     RCLCPP_DEBUG(
       rclcpp::get_logger("ArmorPositionCalculator"),
       "Using armors_offset from TrackedRobot (size=%zu, num_armors=%d)",
       robot.armors_offset.size(), robot.num_armors);
-    
-    positions.reserve(robot.armors_offset.size());
-    for (const auto & pose : robot.armors_offset) {
-      Eigen::Vector3d offset(pose.position.x, pose.position.y, pose.position.z);
-      positions.push_back(transformToWorld(center, robot.yaw, offset));
-    }
   } else {
-    // 否则使用默认几何生成
     RCLCPP_DEBUG(
       rclcpp::get_logger("ArmorPositionCalculator"),
-      "armors_offset empty, using generateDefaultOffsets (num_armors=%d)",
+      "armors_offset empty, using module fallback (num_armors=%d)",
       robot.num_armors);
-    
-    auto offsets = generateDefaultOffsets(
-      robot.robot_type,
-      robot.num_armors,
-      robot.radius,
-      robot.radius_2,
-      robot.d_za,
-      robot.d_zc);
+  }
 
-    positions.reserve(offsets.size());
-    for (const auto & offset : offsets) {
-      positions.push_back(transformToWorld(center, robot.yaw, offset));
-    }
+  std::vector<Eigen::Vector3d> positions;
+  positions.reserve(offsets.size());
+  for (const auto & offset : offsets) {
+    positions.push_back(transformToWorld(center, robot.yaw, offset));
   }
 
   return positions;
@@ -77,27 +75,22 @@ std::vector<Eigen::Vector3d> ArmorPositionCalculator::calculatePredicted(
   // 预测机器人yaw角
   double predicted_yaw = robot.yaw + dt * robot.yaw_velocity;
 
+  auto offsets = fyt::auto_aim::robot_description::TrackedRobotUsage::resolveOffsets(
+    robot,
+    [](const rm_interfaces::msg::TrackedRobot & fallback_robot) {
+      return ArmorPositionCalculator::generateDefaultOffsets(
+        fallback_robot.robot_type,
+        fallback_robot.num_armors,
+        fallback_robot.radius,
+        fallback_robot.radius_2,
+        fallback_robot.d_za,
+        fallback_robot.d_zc);
+    });
+
   std::vector<Eigen::Vector3d> positions;
-
-  if (!robot.armors_offset.empty()) {
-    positions.reserve(robot.armors_offset.size());
-    for (const auto & pose : robot.armors_offset) {
-      Eigen::Vector3d offset(pose.position.x, pose.position.y, pose.position.z);
-      positions.push_back(transformToWorld(predicted_center, predicted_yaw, offset));
-    }
-  } else {
-    auto offsets = generateDefaultOffsets(
-      robot.robot_type,
-      robot.num_armors,
-      robot.radius,
-      robot.radius_2,
-      robot.d_za,
-      robot.d_zc);
-
-    positions.reserve(offsets.size());
-    for (const auto & offset : offsets) {
-      positions.push_back(transformToWorld(predicted_center, predicted_yaw, offset));
-    }
+  positions.reserve(offsets.size());
+  for (const auto & offset : offsets) {
+    positions.push_back(transformToWorld(predicted_center, predicted_yaw, offset));
   }
 
   return positions;
