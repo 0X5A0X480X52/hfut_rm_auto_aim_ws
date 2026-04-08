@@ -16,6 +16,7 @@
 #define GIMBAL_CONTROLLER__MPC__GIMBAL_DYNAMICS_MODEL_HPP_
 
 #include <Eigen/Dense>
+#include <algorithm>
 #include <cmath>
 
 namespace gimbal_controller
@@ -53,6 +54,42 @@ public:
   using InputMatrix = Eigen::Matrix<double, 4, 2>;
   using StateVector = Eigen::Vector4d;
   using ControlVector = Eigen::Vector2d;
+
+  /**
+   * @brief 计算状态 RMS 的安全倒平方缩放系数
+   *
+   * scale = 1 / max(rms_i^2, rms_epsilon)
+   */
+  static Eigen::Vector4d computeStateInvRms2Scale(
+    const Eigen::Vector4d & state_rms, double rms_epsilon)
+  {
+    const double eps = std::max(rms_epsilon, 1e-12);
+    Eigen::Vector4d scale;
+    for (int i = 0; i < STATE_DIM; ++i) {
+      const double v = std::abs(state_rms(i));
+      const double denom = std::max(v * v, eps);
+      scale(i) = 1.0 / denom;
+    }
+    return scale;
+  }
+
+  /**
+   * @brief 计算控制 RMS 的安全倒平方缩放系数
+   *
+   * scale = 1 / max(rms_i^2, rms_epsilon)
+   */
+  static Eigen::Vector2d computeControlInvRms2Scale(
+    const Eigen::Vector2d & control_rms, double rms_epsilon)
+  {
+    const double eps = std::max(rms_epsilon, 1e-12);
+    Eigen::Vector2d scale;
+    for (int i = 0; i < CONTROL_DIM; ++i) {
+      const double v = std::abs(control_rms(i));
+      const double denom = std::max(v * v, eps);
+      scale(i) = 1.0 / denom;
+    }
+    return scale;
+  }
 
   explicit GimbalDynamicsModel(double dt = 0.01)
   : dt_(dt)
@@ -260,11 +297,27 @@ public:
   static Eigen::MatrixXd buildWeightQ(
     int N, double q_yaw, double q_pitch, double q_yaw_vel, double q_pitch_vel)
   {
+    return buildWeightQ(
+      N, q_yaw, q_pitch, q_yaw_vel, q_pitch_vel,
+      Eigen::Vector4d::Ones(), 1e-12);
+  }
+
+  /**
+   * @brief 构建带 RMS 归一化的 block-diagonal 权重矩阵 Q
+   *
+   * Q_diag = diag(q) .* (1 / rms(state)^2)
+   */
+  static Eigen::MatrixXd buildWeightQ(
+    int N, double q_yaw, double q_pitch, double q_yaw_vel, double q_pitch_vel,
+    const Eigen::Vector4d & state_rms, double rms_epsilon)
+  {
     const int nx = STATE_DIM;
     Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(nx * N, nx * N);
     Eigen::Vector4d diag_q(q_yaw, q_pitch, q_yaw_vel, q_pitch_vel);
+    const Eigen::Vector4d inv_rms2 = computeStateInvRms2Scale(state_rms, rms_epsilon);
+    const Eigen::Vector4d diag_q_norm = diag_q.cwiseProduct(inv_rms2);
     for (int k = 0; k < N; ++k) {
-      Q.block(k * nx, k * nx, nx, nx) = diag_q.asDiagonal();
+      Q.block(k * nx, k * nx, nx, nx) = diag_q_norm.asDiagonal();
     }
     return Q;
   }
@@ -288,11 +341,25 @@ public:
    */
   static Eigen::MatrixXd buildWeightR(int N, double r_yaw, double r_pitch)
   {
+    return buildWeightR(N, r_yaw, r_pitch, Eigen::Vector2d::Ones(), 1e-12);
+  }
+
+  /**
+   * @brief 构建带 RMS 归一化的 diagonal 控制权重矩阵 R
+   *
+   * R_diag = diag(r) .* (1 / rms(control)^2)
+   */
+  static Eigen::MatrixXd buildWeightR(
+    int N, double r_yaw, double r_pitch,
+    const Eigen::Vector2d & control_rms, double rms_epsilon)
+  {
     const int nu = CONTROL_DIM;
     Eigen::MatrixXd R = Eigen::MatrixXd::Zero(nu * N, nu * N);
     Eigen::Vector2d diag_r(r_yaw, r_pitch);
+    const Eigen::Vector2d inv_rms2 = computeControlInvRms2Scale(control_rms, rms_epsilon);
+    const Eigen::Vector2d diag_r_norm = diag_r.cwiseProduct(inv_rms2);
     for (int k = 0; k < N; ++k) {
-      R.block(k * nu, k * nu, nu, nu) = diag_r.asDiagonal();
+      R.block(k * nu, k * nu, nu, nu) = diag_r_norm.asDiagonal();
     }
     return R;
   }
@@ -302,7 +369,19 @@ public:
    */
   static Eigen::MatrixXd buildWeightS(int N, double s_yaw, double s_pitch)
   {
-    return buildWeightR(N, s_yaw, s_pitch);  // same structure
+    return buildWeightS(N, s_yaw, s_pitch, Eigen::Vector2d::Ones(), 1e-12);
+  }
+
+  /**
+   * @brief 构建带 RMS 归一化的 diagonal 平滑权重矩阵 S
+   *
+   * S_diag = diag(s) .* (1 / rms(delta_u)^2)
+   */
+  static Eigen::MatrixXd buildWeightS(
+    int N, double s_yaw, double s_pitch,
+    const Eigen::Vector2d & delta_u_rms, double rms_epsilon)
+  {
+    return buildWeightR(N, s_yaw, s_pitch, delta_u_rms, rms_epsilon);  // same structure
   }
 
   /**
@@ -328,13 +407,28 @@ public:
     int N, double q_yaw, double q_pitch, double q_yaw_vel, double q_pitch_vel,
     double alpha, double tau)
   {
+    return buildAdaptiveWeightQ(
+      N, q_yaw, q_pitch, q_yaw_vel, q_pitch_vel,
+      alpha, tau, Eigen::Vector4d::Ones(), 1e-12);
+  }
+
+  /**
+   * @brief 构建带 RMS 归一化的机动自适应 block-diagonal 跟踪权重矩阵 Q_eff
+   */
+  static Eigen::MatrixXd buildAdaptiveWeightQ(
+    int N, double q_yaw, double q_pitch, double q_yaw_vel, double q_pitch_vel,
+    double alpha, double tau,
+    const Eigen::Vector4d & state_rms, double rms_epsilon)
+  {
     const int nx = STATE_DIM;
     Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(nx * N, nx * N);
     Eigen::Vector4d diag_q(q_yaw, q_pitch, q_yaw_vel, q_pitch_vel);
+    const Eigen::Vector4d inv_rms2 = computeStateInvRms2Scale(state_rms, rms_epsilon);
+    const Eigen::Vector4d diag_q_norm = diag_q.cwiseProduct(inv_rms2);
     for (int k = 0; k < N; ++k) {
       double decay = 1.0 - std::exp(-static_cast<double>(k) / tau);
       double scale = 1.0 - alpha * decay;
-      Q.block(k * nx, k * nx, nx, nx) = (scale * diag_q).asDiagonal();
+      Q.block(k * nx, k * nx, nx, nx) = (scale * diag_q_norm).asDiagonal();
     }
     return Q;
   }
@@ -357,8 +451,20 @@ public:
   static Eigen::MatrixXd buildAdaptiveWeightR(
     int N, double r_yaw, double r_pitch, double alpha, double r_scale)
   {
+    return buildAdaptiveWeightR(
+      N, r_yaw, r_pitch, alpha, r_scale,
+      Eigen::Vector2d::Ones(), 1e-12);
+  }
+
+  /**
+   * @brief 构建带 RMS 归一化的机动自适应 diagonal 控制权重矩阵 R_eff
+   */
+  static Eigen::MatrixXd buildAdaptiveWeightR(
+    int N, double r_yaw, double r_pitch, double alpha, double r_scale,
+    const Eigen::Vector2d & control_rms, double rms_epsilon)
+  {
     double scale = 1.0 + alpha * r_scale;
-    return buildWeightR(N, r_yaw * scale, r_pitch * scale);
+    return buildWeightR(N, r_yaw * scale, r_pitch * scale, control_rms, rms_epsilon);
   }
 
   /**

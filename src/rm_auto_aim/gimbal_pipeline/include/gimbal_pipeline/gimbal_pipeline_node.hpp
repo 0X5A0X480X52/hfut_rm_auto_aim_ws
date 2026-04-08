@@ -14,6 +14,7 @@
 #include <vector>
 
 #include <rclcpp/rclcpp.hpp>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
@@ -47,8 +48,6 @@
 #include "target_selector/strategies/min_yaw_deviation_strategy.hpp"
 #include "target_selector/strategies/priority_list_strategy.hpp"
 #include "target_selector/strategies/sticky_min_yaw_deviation_strategy.hpp"
-#include "target_selector/strategies/priority_list_strategy.hpp"
-#include "target_selector/strategies/sticky_min_yaw_deviation_strategy.hpp"
 
 // ─── prediction logger ────────────────────────────────────────
 #include "gimbal_pipeline/prediction_logger.hpp"
@@ -59,9 +58,11 @@
 #include "gimbal_controller/armor_selector.hpp"
 #include "gimbal_controller/ballistic_solver_client.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
+#include "gimbal_controller/gimbal_cmd_postprocessor.hpp"
 #include "gimbal_controller/gimbal_cmd_filter.hpp"
 #include "gimbal_controller/gimbal_control_strategy.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
+#include "gimbal_controller/strategy_orchestrator.hpp"
 
 // ─── heartbeat 
 #include "rm_utils/heartbeat.hpp"
@@ -113,9 +114,17 @@ class GimbalPipelineNode : public rclcpp::Node {
   void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg);
   void updateGimbalState();
   void timerCallback();
+  void applyPendingRuntimeUpdates();
   void setModeCallback(
       const std::shared_ptr<rm_interfaces::srv::SetMode::Request> request,
       std::shared_ptr<rm_interfaces::srv::SetMode::Response> response);
+  rcl_interfaces::msg::SetParametersResult onSetParameters(
+      const std::vector<rclcpp::Parameter> &params);
+  bool isValidGimbalStrategyName(const std::string &name) const;
+  void loadOrchestratorConfigFromParams(
+      gimbal_controller::StrategyOrchestratorConfig &config) const;
+  void loadPostprocessorConfigFromParams(
+      gimbal_controller::GimbalCmdPostprocessorConfig &config) const;
   gimbal_controller::GimbalControlStrategy::SharedPtr getGimbalStrategy(
       const std::string &name) const;
 
@@ -174,6 +183,25 @@ class GimbalPipelineNode : public rclcpp::Node {
                      gimbal_controller::GimbalControlStrategy::SharedPtr>
       gimbal_strategies_;
   std::string current_gimbal_strategy_name_{"current"};
+  std::string active_gimbal_strategy_name_{"current"};
+  gimbal_controller::StrategyOrchestrator strategy_orchestrator_;
+  gimbal_controller::StrategyOrchestratorConfig strategy_orchestrator_config_;
+  gimbal_controller::GimbalCmdPostprocessor gimbal_cmd_postprocessor_;
+  gimbal_controller::GimbalCmdPostprocessorConfig
+      gimbal_cmd_postprocessor_config_;
+
+  // Runtime parameter callback: validate + dirty flag only, apply in timer loop.
+  std::mutex runtime_update_mutex_;
+  bool strategy_config_dirty_{false};
+  bool orchestrator_config_dirty_{false};
+  bool postprocessor_config_dirty_{false};
+  std::string pending_gimbal_strategy_name_;
+  gimbal_controller::StrategyOrchestratorConfig
+      pending_strategy_orchestrator_config_;
+  gimbal_controller::GimbalCmdPostprocessorConfig
+      pending_gimbal_cmd_postprocessor_config_;
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr
+      parameter_callback_handle_;
 
   double current_yaw_{0.0};
   double current_pitch_{0.0};

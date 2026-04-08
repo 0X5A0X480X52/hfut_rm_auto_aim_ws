@@ -34,6 +34,9 @@ struct QPResult
   bool success{false};        // 是否成功
   int num_iterations{0};      // 迭代次数
   double cost{0.0};           // 目标函数值
+  int active_bound_size{0};   // 近似活跃 box 约束数量
+  int active_linear_size{0};  // 近似活跃线性约束数量
+  int active_set_size{0};     // 近似活跃约束总数
 };
 
 /**

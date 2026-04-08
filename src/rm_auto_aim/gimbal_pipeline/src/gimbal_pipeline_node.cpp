@@ -664,6 +664,30 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.mpc.fov_constraint.fallback_fov_yaw",        0.35);
   declare_parameter("controller.mpc.fov_constraint.fallback_fov_pitch",      0.26);
 
+  // MPC 数值稳健性: 在线 RMS 归一化
+  declare_parameter("controller.mpc.normalization.enable", false);
+  declare_parameter("controller.mpc.normalization.window_size", 80);
+  declare_parameter("controller.mpc.normalization.min_samples", 10);
+  declare_parameter("controller.mpc.normalization.rms_epsilon", 1e-6);
+
+  // MPC 数值稳健性: Hessian 自适应对角正则
+  declare_parameter("controller.mpc.regularization.enable", false);
+  declare_parameter("controller.mpc.regularization.epsilon_abs", 1e-8);
+  declare_parameter("controller.mpc.regularization.epsilon_rel", 1e-6);
+  declare_parameter("controller.mpc.regularization.epsilon_max", 1e-2);
+  declare_parameter("controller.mpc.regularization.retry_on_fail", true);
+  declare_parameter("controller.mpc.regularization.retry_scale", 10.0);
+
+  // MPC 数值诊断: 低成本常开 + 高成本抽样
+  declare_parameter("controller.mpc.diagnostics.enable", false);
+  declare_parameter("controller.mpc.diagnostics.low_cost_always", true);
+  declare_parameter("controller.mpc.diagnostics.high_cost_enable", false);
+  declare_parameter("controller.mpc.diagnostics.high_cost_sample_every", 20);
+  declare_parameter("controller.mpc.diagnostics.log_every", 50);
+  declare_parameter("controller.mpc.diagnostics.log_on_failure", true);
+  declare_parameter("controller.mpc.diagnostics.active_tol", 1e-4);
+  declare_parameter("controller.mpc.diagnostics.rank_tol_rel", 1e-9);
+
   // ─── GimbalCmd 输出端保护滤波器 ──────────────────────────────
   // 0. Clamping — 绝对限幅
   declare_parameter("controller.output_filter.enable_clamping",         true);
@@ -1442,6 +1466,27 @@ void GimbalPipelineNode::initGimbalStrategies() {
     get_parameter("controller.mpc.fov_constraint.dynamic_margin.vel_scale").as_double(),
     get_parameter("controller.mpc.fov_constraint.fallback_fov_yaw").as_double(),
     get_parameter("controller.mpc.fov_constraint.fallback_fov_pitch").as_double());
+  mpc_s->setNumericalNormalizationParameters(
+    get_parameter("controller.mpc.normalization.enable").as_bool(),
+    get_parameter("controller.mpc.normalization.window_size").as_int(),
+    get_parameter("controller.mpc.normalization.min_samples").as_int(),
+    get_parameter("controller.mpc.normalization.rms_epsilon").as_double());
+  mpc_s->setHessianRegularizationParameters(
+    get_parameter("controller.mpc.regularization.enable").as_bool(),
+    get_parameter("controller.mpc.regularization.epsilon_abs").as_double(),
+    get_parameter("controller.mpc.regularization.epsilon_rel").as_double(),
+    get_parameter("controller.mpc.regularization.epsilon_max").as_double(),
+    get_parameter("controller.mpc.regularization.retry_on_fail").as_bool(),
+    get_parameter("controller.mpc.regularization.retry_scale").as_double());
+  mpc_s->setDiagnosticsParameters(
+    get_parameter("controller.mpc.diagnostics.enable").as_bool(),
+    get_parameter("controller.mpc.diagnostics.low_cost_always").as_bool(),
+    get_parameter("controller.mpc.diagnostics.high_cost_enable").as_bool(),
+    get_parameter("controller.mpc.diagnostics.high_cost_sample_every").as_int(),
+    get_parameter("controller.mpc.diagnostics.log_every").as_int(),
+    get_parameter("controller.mpc.diagnostics.log_on_failure").as_bool(),
+    get_parameter("controller.mpc.diagnostics.active_tol").as_double(),
+    get_parameter("controller.mpc.diagnostics.rank_tol_rel").as_double());
   gimbal_strategies_["mpc"] = mpc_s;
 
   auto sm_s = std::make_shared<gimbal_controller::StateMachineStrategy>();

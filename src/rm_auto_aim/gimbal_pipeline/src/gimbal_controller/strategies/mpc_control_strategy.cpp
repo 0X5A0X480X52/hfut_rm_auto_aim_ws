@@ -14,10 +14,13 @@
 
 #include "gimbal_controller/strategies/mpc_control_strategy.hpp"
 
+#include <Eigen/Eigenvalues>
 #include <angles/angles.h>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
+#include <utility>
 
 #include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
@@ -25,9 +28,56 @@
 namespace gimbal_controller
 {
 
+namespace
+{
+
+double safeRatio(double num, double den, double eps = 1e-9)
+{
+  return num / std::max(std::abs(den), eps);
+}
+
+int countActiveBounds(
+  const Eigen::VectorXd & x,
+  const Eigen::VectorXd & lb,
+  const Eigen::VectorXd & ub,
+  double tol)
+{
+  const int n = static_cast<int>(x.size());
+  int count = 0;
+  for (int i = 0; i < n; ++i) {
+    if (std::abs(x(i) - lb(i)) <= tol || std::abs(ub(i) - x(i)) <= tol) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+int countActiveLinear(
+  const Eigen::VectorXd & Ax,
+  const Eigen::VectorXd & lbA,
+  const Eigen::VectorXd & ubA,
+  double tol)
+{
+  const int m = static_cast<int>(Ax.size());
+  int count = 0;
+  for (int i = 0; i < m; ++i) {
+    const bool has_lb = lbA(i) > -1e19;
+    const bool has_ub = ubA(i) < 1e19;
+    if ((has_lb && std::abs(Ax(i) - lbA(i)) <= tol) ||
+      (has_ub && std::abs(ubA(i) - Ax(i)) <= tol))
+    {
+      ++count;
+    }
+  }
+  return count;
+}
+
+}  // namespace
+
 MpcControlStrategy::MpcControlStrategy()
 : dynamics_model_(0.01)
 {
+  configureRmsWindows();
 }
 
 void MpcControlStrategy::setMpcParameters(
@@ -108,6 +158,49 @@ void MpcControlStrategy::setWeightingParameters(
   weighting_gamma_ = gamma;
   has_prev_w_steps_ = false;
   prev_w_steps_.resize(0);
+}
+
+void MpcControlStrategy::setNumericalNormalizationParameters(
+  bool enable, int window_size, int min_samples, double rms_epsilon)
+{
+  enable_rms_normalization_ = enable;
+  rms_window_size_ = std::max(1, window_size);
+  rms_min_samples_ = std::max(1, min_samples);
+  rms_epsilon_ = std::max(rms_epsilon, 1e-12);
+  configureRmsWindows();
+  resetNumericalStates();
+}
+
+void MpcControlStrategy::setHessianRegularizationParameters(
+  bool enable, double epsilon_abs, double epsilon_rel, double epsilon_max,
+  bool retry_on_fail, double retry_scale)
+{
+  enable_hessian_regularization_ = enable;
+  hessian_reg_eps_abs_ = std::max(epsilon_abs, 1e-12);
+  hessian_reg_eps_rel_ = std::max(epsilon_rel, 0.0);
+  hessian_reg_eps_max_ = std::max(epsilon_max, hessian_reg_eps_abs_);
+  hessian_reg_retry_on_fail_ = retry_on_fail;
+  hessian_reg_retry_scale_ = std::max(retry_scale, 1.0);
+}
+
+void MpcControlStrategy::setDiagnosticsParameters(
+  bool enable,
+  bool low_cost_always,
+  bool high_cost_enable,
+  int high_cost_sample_every,
+  int log_every,
+  bool log_on_failure,
+  double active_tol,
+  double rank_tol_rel)
+{
+  enable_diagnostics_ = enable;
+  diagnostics_low_cost_always_ = low_cost_always;
+  diagnostics_high_cost_enable_ = high_cost_enable;
+  diagnostics_high_cost_sample_every_ = std::max(1, high_cost_sample_every);
+  diagnostics_log_every_ = std::max(1, log_every);
+  diagnostics_log_on_failure_ = log_on_failure;
+  diagnostics_active_tol_ = std::max(active_tol, 1e-9);
+  diagnostics_rank_tol_rel_ = std::max(rank_tol_rel, 1e-12);
 }
 
 void MpcControlStrategy::setFovConstraintParameters(
@@ -219,6 +312,230 @@ Eigen::VectorXd MpcControlStrategy::buildWeightingVector(
   return w;
 }
 
+void MpcControlStrategy::configureRmsWindows()
+{
+  for (auto & tracker : state_rms_trackers_) {
+    tracker.setWindowSize(rms_window_size_);
+  }
+  for (auto & tracker : control_rms_trackers_) {
+    tracker.setWindowSize(rms_window_size_);
+  }
+  for (auto & tracker : delta_control_rms_trackers_) {
+    tracker.setWindowSize(rms_window_size_);
+  }
+}
+
+void MpcControlStrategy::resetNumericalStates()
+{
+  for (auto & tracker : state_rms_trackers_) {
+    tracker.reset();
+  }
+  for (auto & tracker : control_rms_trackers_) {
+    tracker.reset();
+  }
+  for (auto & tracker : delta_control_rms_trackers_) {
+    tracker.reset();
+  }
+  prev_applied_u_.setZero();
+  has_prev_applied_u_ = false;
+  diagnostics_cycle_ = 0;
+  last_diagnostics_ = DiagnosticsSnapshot{};
+}
+
+Eigen::Vector4d MpcControlStrategy::updateAndGetStateRms(const Eigen::VectorXd & free_error)
+{
+  const int nx = mpc::GimbalDynamicsModel::STATE_DIM;
+  Eigen::Vector4d result = Eigen::Vector4d::Ones();
+
+  for (int d = 0; d < nx; ++d) {
+    double mean_sq = 0.0;
+    for (int k = 0; k < N_; ++k) {
+      const double v = free_error(k * nx + d);
+      mean_sq += v * v;
+    }
+    mean_sq /= std::max(N_, 1);
+    state_rms_trackers_[d].addSample(std::sqrt(std::max(mean_sq, 0.0)));
+
+    if (state_rms_trackers_[d].size() >= rms_min_samples_) {
+      result(d) = state_rms_trackers_[d].rms(rms_epsilon_, 1.0);
+    }
+  }
+
+  return result;
+}
+
+Eigen::Vector2d MpcControlStrategy::getControlRms() const
+{
+  Eigen::Vector2d result = Eigen::Vector2d::Ones();
+  for (int i = 0; i < mpc::GimbalDynamicsModel::CONTROL_DIM; ++i) {
+    if (control_rms_trackers_[i].size() >= rms_min_samples_) {
+      result(i) = control_rms_trackers_[i].rms(rms_epsilon_, 1.0);
+    }
+  }
+  return result;
+}
+
+Eigen::Vector2d MpcControlStrategy::getDeltaControlRms() const
+{
+  Eigen::Vector2d result = Eigen::Vector2d::Ones();
+  for (int i = 0; i < mpc::GimbalDynamicsModel::CONTROL_DIM; ++i) {
+    if (delta_control_rms_trackers_[i].size() >= rms_min_samples_) {
+      result(i) = delta_control_rms_trackers_[i].rms(rms_epsilon_, 1.0);
+    }
+  }
+  return result;
+}
+
+void MpcControlStrategy::updateControlHistory(const mpc::GimbalDynamicsModel::ControlVector & u_opt)
+{
+  for (int i = 0; i < mpc::GimbalDynamicsModel::CONTROL_DIM; ++i) {
+    control_rms_trackers_[i].addSample(u_opt(i));
+  }
+
+  if (has_prev_applied_u_) {
+    const auto du = u_opt - prev_applied_u_;
+    for (int i = 0; i < mpc::GimbalDynamicsModel::CONTROL_DIM; ++i) {
+      delta_control_rms_trackers_[i].addSample(du(i));
+    }
+  } else {
+    for (int i = 0; i < mpc::GimbalDynamicsModel::CONTROL_DIM; ++i) {
+      delta_control_rms_trackers_[i].addSample(u_opt(i));
+    }
+  }
+
+  prev_applied_u_ = u_opt;
+  has_prev_applied_u_ = true;
+}
+
+double MpcControlStrategy::computeRegularizationEpsilon(const Eigen::MatrixXd & H) const
+{
+  const double mean_diag = H.diagonal().cwiseAbs().mean();
+  const double eps_rel = hessian_reg_eps_rel_ * mean_diag;
+  const double eps = std::max(hessian_reg_eps_abs_, eps_rel);
+  return std::clamp(eps, hessian_reg_eps_abs_, hessian_reg_eps_max_);
+}
+
+void MpcControlStrategy::applyHessianRegularization(Eigen::MatrixXd & H, double epsilon) const
+{
+  H.diagonal().array() += epsilon;
+  H = 0.5 * (H + H.transpose());
+}
+
+void MpcControlStrategy::fillAndLogDiagnostics(
+  bool maneuver_path,
+  const Eigen::MatrixXd & H,
+  const Eigen::MatrixXd & Q_eff,
+  const Eigen::MatrixXd & R_eff,
+  const Eigen::MatrixXd & S_eff,
+  const Eigen::VectorXd & lb,
+  const Eigen::VectorXd & ub,
+  const mpc::QPResult & result,
+  double applied_regularization)
+{
+  ++diagnostics_cycle_;
+  if (!enable_diagnostics_) {
+    return;
+  }
+
+  last_diagnostics_ = DiagnosticsSnapshot{};
+  last_diagnostics_.cycle = diagnostics_cycle_;
+  last_diagnostics_.maneuver_path = maneuver_path;
+  last_diagnostics_.qp_success = result.success;
+  last_diagnostics_.qp_iterations = result.num_iterations;
+  last_diagnostics_.active_bound_size = result.active_bound_size;
+  last_diagnostics_.active_linear_size = result.active_linear_size;
+  last_diagnostics_.active_set_size = result.active_set_size;
+  last_diagnostics_.qp_cost = result.cost;
+  last_diagnostics_.regularization_eps = applied_regularization;
+
+  const bool should_compute_low = diagnostics_low_cost_always_ || !result.success;
+  if (should_compute_low) {
+    last_diagnostics_.trace_q = Q_eff.diagonal().sum();
+    last_diagnostics_.trace_r = R_eff.diagonal().sum();
+    last_diagnostics_.trace_s = S_eff.diagonal().sum();
+    last_diagnostics_.trace_q_over_r = safeRatio(last_diagnostics_.trace_q, last_diagnostics_.trace_r);
+    last_diagnostics_.trace_s_over_r = safeRatio(last_diagnostics_.trace_s, last_diagnostics_.trace_r);
+
+    if (result.success && result.U.size() == lb.size() && result.U.size() == ub.size()) {
+      const double u_norm = result.U.norm();
+      const double bu_norm = (B_ctrl_ * result.U).norm();
+      last_diagnostics_.bu_over_u = safeRatio(bu_norm, u_norm);
+      if (last_diagnostics_.active_bound_size == 0) {
+        last_diagnostics_.active_bound_size =
+          countActiveBounds(result.U, lb, ub, diagnostics_active_tol_);
+        last_diagnostics_.active_set_size =
+          last_diagnostics_.active_bound_size + last_diagnostics_.active_linear_size;
+      }
+    }
+  }
+
+  const bool high_cost_by_sample =
+    diagnostics_high_cost_enable_ &&
+    (diagnostics_cycle_ % static_cast<uint64_t>(diagnostics_high_cost_sample_every_) == 0);
+  const bool should_compute_high = high_cost_by_sample || (diagnostics_log_on_failure_ && !result.success);
+  if (should_compute_high) {
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig_solver(H);
+    if (eig_solver.info() == Eigen::Success) {
+      const Eigen::VectorXd eig_vals = eig_solver.eigenvalues();
+      const double lambda_max = eig_vals.maxCoeff();
+      const double lambda_min = eig_vals.minCoeff();
+      const double rank_tol = std::max(std::abs(lambda_max) * diagnostics_rank_tol_rel_, 1e-12);
+      int rank = 0;
+      for (int i = 0; i < eig_vals.size(); ++i) {
+        if (std::abs(eig_vals(i)) > rank_tol) {
+          ++rank;
+        }
+      }
+
+      last_diagnostics_.high_cost_valid = true;
+      last_diagnostics_.lambda_min_h = lambda_min;
+      last_diagnostics_.cond_h = safeRatio(lambda_max, lambda_min, 1e-12);
+      last_diagnostics_.rank_h = rank;
+    }
+  }
+
+  const bool should_log =
+    (diagnostics_cycle_ % static_cast<uint64_t>(diagnostics_log_every_) == 0) ||
+    (diagnostics_log_on_failure_ && !result.success);
+  if (!should_log) {
+    return;
+  }
+
+  auto logger = rclcpp::get_logger("MpcControlStrategy");
+  if (last_diagnostics_.high_cost_valid) {
+    RCLCPP_INFO(
+      logger,
+      "[MPC-NUM] cyc=%llu path=%s ok=%d it=%d act=%d(cost=%.3e) trQ/R=%.3e trS/R=%.3e BU/U=%.3e reg=%.3e cond=%.3e lmin=%.3e rank=%d",
+      static_cast<unsigned long long>(last_diagnostics_.cycle),
+      last_diagnostics_.maneuver_path ? "maneuver" : "normal",
+      last_diagnostics_.qp_success ? 1 : 0,
+      last_diagnostics_.qp_iterations,
+      last_diagnostics_.active_set_size,
+      last_diagnostics_.qp_cost,
+      last_diagnostics_.trace_q_over_r,
+      last_diagnostics_.trace_s_over_r,
+      last_diagnostics_.bu_over_u,
+      last_diagnostics_.regularization_eps,
+      last_diagnostics_.cond_h,
+      last_diagnostics_.lambda_min_h,
+      last_diagnostics_.rank_h);
+  } else {
+    RCLCPP_INFO(
+      logger,
+      "[MPC-NUM] cyc=%llu path=%s ok=%d it=%d act=%d cost=%.3e trQ/R=%.3e trS/R=%.3e BU/U=%.3e reg=%.3e",
+      static_cast<unsigned long long>(last_diagnostics_.cycle),
+      last_diagnostics_.maneuver_path ? "maneuver" : "normal",
+      last_diagnostics_.qp_success ? 1 : 0,
+      last_diagnostics_.qp_iterations,
+      last_diagnostics_.active_set_size,
+      last_diagnostics_.qp_cost,
+      last_diagnostics_.trace_q_over_r,
+      last_diagnostics_.trace_s_over_r,
+      last_diagnostics_.bu_over_u,
+      last_diagnostics_.regularization_eps);
+  }
+}
+
 void MpcControlStrategy::rebuildMatrices()
 {
   dynamics_model_.buildPredictionMatrices(N_, A_pred_, B_ctrl_);
@@ -264,6 +581,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     has_prev_velocity_ = false;
     has_prev_w_steps_ = false;
     prev_w_steps_.resize(0);
+    resetNumericalStates();
     return createIdleCmd();
   }
 
@@ -316,6 +634,16 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
       target_robot, context.current_yaw, context.current_pitch, N_, dt_);
   }
 
+  Eigen::Vector4d state_rms = Eigen::Vector4d::Ones();
+  Eigen::Vector2d control_rms = Eigen::Vector2d::Ones();
+  Eigen::Vector2d delta_control_rms = Eigen::Vector2d::Ones();
+  if (enable_rms_normalization_) {
+    const Eigen::VectorXd free_error = A_pred_ * x0 - X_ref;
+    state_rms = updateAndGetStateRms(free_error);
+    control_rms = getControlRms();
+    delta_control_rms = getDeltaControlRms();
+  }
+
   // 5) 构造 QP
   //    机动自适应模式: 通过对 UKF center_velocity 做时间戳感知差分计算机动因子 alpha,
   //    用 alpha 衰减远期 Q 权重并放大 R 正则项。
@@ -340,18 +668,40 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     }
 
     // 构建自适应权重矩阵
-    Eigen::MatrixXd Q_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightQ(
-      N_, q_yaw_, q_pitch_, q_yaw_vel_, q_pitch_vel_, alpha_ema_, tau_);
+    Eigen::MatrixXd Q_eff;
+    if (enable_rms_normalization_) {
+      Q_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightQ(
+        N_, q_yaw_, q_pitch_, q_yaw_vel_, q_pitch_vel_,
+        alpha_ema_, tau_, state_rms, rms_epsilon_);
+    } else {
+      Q_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightQ(
+        N_, q_yaw_, q_pitch_, q_yaw_vel_, q_pitch_vel_, alpha_ema_, tau_);
+    }
     if (enable_weighting_) {
       Eigen::VectorXd w_steps = buildWeightingVector(context, X_ref);
       mpc::GimbalDynamicsModel::scaleBlockDiagonalQ(Q_eff, w_steps);
     }
-    Eigen::MatrixXd R_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightR(
-      N_, r_yaw_, r_pitch_, alpha_ema_, r_scale_maneuver_);
+    Eigen::MatrixXd R_eff;
+    if (enable_rms_normalization_) {
+      R_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightR(
+        N_, r_yaw_, r_pitch_, alpha_ema_, r_scale_maneuver_, control_rms, rms_epsilon_);
+    } else {
+      R_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightR(
+        N_, r_yaw_, r_pitch_, alpha_ema_, r_scale_maneuver_);
+    }
+    Eigen::MatrixXd S_eff = enable_rms_normalization_
+      ? mpc::GimbalDynamicsModel::buildWeightS(N_, s_yaw_, s_pitch_, delta_control_rms, rms_epsilon_)
+      : S_blk_;
 
     Eigen::MatrixXd H;
     Eigen::VectorXd f;
-    mpc::GimbalDynamicsModel::buildQP(A_pred_, B_ctrl_, D_, Q_eff, R_eff, S_blk_, x0, X_ref, H, f);
+    mpc::GimbalDynamicsModel::buildQP(A_pred_, B_ctrl_, D_, Q_eff, R_eff, S_eff, x0, X_ref, H, f);
+
+    double applied_regularization = 0.0;
+    if (enable_hessian_regularization_) {
+      applied_regularization = computeRegularizationEpsilon(H);
+      applyHessianRegularization(H, applied_regularization);
+    }
 
     // 6) 框约束 + 可选 FOV 软约束
     int n_vars = 2 * N_;
@@ -364,7 +714,38 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
       result = solveFovConstrainedQP(H, f, lb, ub, x0, X_ref, context);
     } else {
       result = qp_solver_.solve(H, f, lb, ub);
+      if (result.success) {
+        result.active_bound_size = countActiveBounds(result.U, lb, ub, diagnostics_active_tol_);
+        result.active_set_size = result.active_bound_size;
+      }
     }
+
+    if (!result.success && enable_hessian_regularization_ && hessian_reg_retry_on_fail_) {
+      const double retry_eps = std::clamp(
+        applied_regularization * hessian_reg_retry_scale_,
+        hessian_reg_eps_abs_, hessian_reg_eps_max_);
+      Eigen::MatrixXd H_retry = H;
+      applyHessianRegularization(H_retry, retry_eps);
+
+      if (enable_fov_constraint_) {
+        result = solveFovConstrainedQP(H_retry, f, lb, ub, x0, X_ref, context);
+      } else {
+        result = qp_solver_.solve(H_retry, f, lb, ub);
+        if (result.success) {
+          result.active_bound_size = countActiveBounds(result.U, lb, ub, diagnostics_active_tol_);
+          result.active_set_size = result.active_bound_size;
+        }
+      }
+
+      if (result.success) {
+        H = std::move(H_retry);
+        applied_regularization = retry_eps;
+      }
+    }
+
+    fillAndLogDiagnostics(
+      true, H, Q_eff, R_eff, S_eff, lb, ub, result, applied_regularization);
+
     if (!result.success) {
       std::cout << "MPC QP solve failed (maneuver-adapt), fallback to direct aim.  " << std::endl;
       return fallbackDirectAim(context, X_ref);
@@ -374,6 +755,9 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
 
     // 8) 提取首步控制量
     mpc::GimbalDynamicsModel::ControlVector u_opt(result.U(0), result.U(1));
+    if (enable_rms_normalization_) {
+      updateControlHistory(u_opt);
+    }
     auto x_next = dynamics_model_.predict(x0, u_opt);
     double cmd_yaw   = angles::normalize_angle(x_next(0));
     double cmd_pitch = x_next(1);
@@ -418,12 +802,27 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   alpha_ema_ = 0.0;
   Eigen::MatrixXd H;
   Eigen::VectorXd f;
-  Eigen::MatrixXd Q_eff = Q_blk_;
+  Eigen::MatrixXd Q_eff = enable_rms_normalization_
+    ? mpc::GimbalDynamicsModel::buildWeightQ(
+    N_, q_yaw_, q_pitch_, q_yaw_vel_, q_pitch_vel_, state_rms, rms_epsilon_)
+    : Q_blk_;
   if (enable_weighting_) {
     Eigen::VectorXd w_steps = buildWeightingVector(context, X_ref);
     mpc::GimbalDynamicsModel::scaleBlockDiagonalQ(Q_eff, w_steps);
   }
-  mpc::GimbalDynamicsModel::buildQP(A_pred_, B_ctrl_, D_, Q_eff, R_blk_, S_blk_, x0, X_ref, H, f);
+  Eigen::MatrixXd R_eff = enable_rms_normalization_
+    ? mpc::GimbalDynamicsModel::buildWeightR(N_, r_yaw_, r_pitch_, control_rms, rms_epsilon_)
+    : R_blk_;
+  Eigen::MatrixXd S_eff = enable_rms_normalization_
+    ? mpc::GimbalDynamicsModel::buildWeightS(N_, s_yaw_, s_pitch_, delta_control_rms, rms_epsilon_)
+    : S_blk_;
+  mpc::GimbalDynamicsModel::buildQP(A_pred_, B_ctrl_, D_, Q_eff, R_eff, S_eff, x0, X_ref, H, f);
+
+  double applied_regularization = 0.0;
+  if (enable_hessian_regularization_) {
+    applied_regularization = computeRegularizationEpsilon(H);
+    applyHessianRegularization(H, applied_regularization);
+  }
 
   // 6) 框约束 + 可选 FOV 软约束
   int n_vars = 2 * N_;
@@ -436,7 +835,38 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     result = solveFovConstrainedQP(H, f, lb, ub, x0, X_ref, context);
   } else {
     result = qp_solver_.solve(H, f, lb, ub);
+    if (result.success) {
+      result.active_bound_size = countActiveBounds(result.U, lb, ub, diagnostics_active_tol_);
+      result.active_set_size = result.active_bound_size;
+    }
   }
+
+  if (!result.success && enable_hessian_regularization_ && hessian_reg_retry_on_fail_) {
+    const double retry_eps = std::clamp(
+      applied_regularization * hessian_reg_retry_scale_,
+      hessian_reg_eps_abs_, hessian_reg_eps_max_);
+    Eigen::MatrixXd H_retry = H;
+    applyHessianRegularization(H_retry, retry_eps);
+
+    if (enable_fov_constraint_) {
+      result = solveFovConstrainedQP(H_retry, f, lb, ub, x0, X_ref, context);
+    } else {
+      result = qp_solver_.solve(H_retry, f, lb, ub);
+      if (result.success) {
+        result.active_bound_size = countActiveBounds(result.U, lb, ub, diagnostics_active_tol_);
+        result.active_set_size = result.active_bound_size;
+      }
+    }
+
+    if (result.success) {
+      H = std::move(H_retry);
+      applied_regularization = retry_eps;
+    }
+  }
+
+  fillAndLogDiagnostics(
+    false, H, Q_eff, R_eff, S_eff, lb, ub, result, applied_regularization);
+
   if (!result.success) {
     // QP 求解失败: 回退到弹道直瞄
     std::cout << "MPC QP solve failed, fallback to direct aim.  " << std::endl;
@@ -448,6 +878,9 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
 
   // 8) 提取首步控制量, 推算期望 yaw/pitch
   mpc::GimbalDynamicsModel::ControlVector u_opt(result.U(0), result.U(1));
+  if (enable_rms_normalization_) {
+    updateControlHistory(u_opt);
+  }
   auto x_next = dynamics_model_.predict(x0, u_opt);
 
   double cmd_yaw = angles::normalize_angle(x_next(0));
@@ -558,6 +991,12 @@ mpc::QPResult MpcControlStrategy::solveFovConstrainedQP(
   result.cost = result_ext.cost;
   if (result_ext.success) {
     result.U = result_ext.U.head(n_u);
+    const Eigen::VectorXd A_times_z = A_con * result_ext.U;
+    result.active_bound_size = countActiveBounds(
+      result_ext.U, lb_ext, ub_ext, diagnostics_active_tol_);
+    result.active_linear_size = countActiveLinear(
+      A_times_z, lbA, ubA, diagnostics_active_tol_);
+    result.active_set_size = result.active_bound_size + result.active_linear_size;
   }
   return result;
 }

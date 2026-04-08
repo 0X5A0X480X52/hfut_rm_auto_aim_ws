@@ -273,6 +273,32 @@ gimbal_pipeline:
     controller.mpc.s_yaw: 0.00001
     controller.mpc.s_pitch: 0.001
 
+    # MPC 数值稳健性: 在线 RMS 归一化（统一 Q/R/S 量纲）
+    # enable=false 时保持原行为
+    controller.mpc.normalization.enable: false
+    controller.mpc.normalization.window_size: 80
+    controller.mpc.normalization.min_samples: 10
+    controller.mpc.normalization.rms_epsilon: 1e-6
+
+    # MPC 数值稳健性: Hessian 自适应对角正则
+    # H <- H + eps*I, eps=max(epsilon_abs, epsilon_rel*mean(diag(H)))
+    controller.mpc.regularization.enable: false
+    controller.mpc.regularization.epsilon_abs: 1e-8
+    controller.mpc.regularization.epsilon_rel: 1e-6
+    controller.mpc.regularization.epsilon_max: 1e-2
+    controller.mpc.regularization.retry_on_fail: true
+    controller.mpc.regularization.retry_scale: 10.0
+
+    # MPC 分层诊断: 低成本常开，高成本抽样
+    controller.mpc.diagnostics.enable: false
+    controller.mpc.diagnostics.low_cost_always: true
+    controller.mpc.diagnostics.high_cost_enable: false
+    controller.mpc.diagnostics.high_cost_sample_every: 20
+    controller.mpc.diagnostics.log_every: 50
+    controller.mpc.diagnostics.log_on_failure: true
+    controller.mpc.diagnostics.active_tol: 1e-4
+    controller.mpc.diagnostics.rank_tol_rel: 1e-9
+
     # MPC 命中概率权重加权（仅缩放 Q，默认关闭）
     # controller.mpc.weighting.enable: false
     # controller.mpc.weighting.alpha: 3.0 # 误差与命中概率的权衡参数，越大越重视误差小的轨迹
