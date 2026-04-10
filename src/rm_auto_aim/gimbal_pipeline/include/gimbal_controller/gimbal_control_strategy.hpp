@@ -17,6 +17,7 @@
 
 #include <memory>
 #include <string>
+#include <cstdint>
 #include <Eigen/Dense>
 
 #include <rclcpp/rclcpp.hpp>
@@ -53,6 +54,26 @@ struct GimbalControlContext
 };
 
 /**
+ * @brief 每帧 delay 语义审计快照
+ */
+struct DelayAuditSnapshot
+{
+  bool valid{false};
+  bool tracking{false};
+  std::string strategy_name;
+
+  double processing_delay_s{0.0};
+  double prediction_extra_s{0.0};
+  double flight_time_s{0.0};
+  double total_prediction_time_s{0.0};
+  double control_latency_s{0.0};
+  double fire_control_compensation_s{0.0};
+  int32_t control_delay_steps{0};
+  bool uses_delayed_b{false};
+  bool double_compensation_risk{false};
+};
+
+/**
  * @brief 云台控制策略抽象基类
  * 
  * 使用组合模式，将可复用的组件组合为完整策略
@@ -76,6 +97,11 @@ public:
    * @brief 获取策略名称
    */
   virtual std::string getName() const = 0;
+
+  /**
+   * @brief 获取上一次策略执行生成的 delay 审计快照
+   */
+  const DelayAuditSnapshot & getLastDelayAudit() const { return last_delay_audit_; }
 
   /**
    * @brief 设置组件 (依赖注入)
@@ -116,6 +142,11 @@ protected:
     double & pitch,
     double & yaw,
     double & flight_time) const;
+
+  void markDelayAuditInvalid(const std::string & strategy_name, bool tracking);
+  void markDelayAuditValid(const DelayAuditSnapshot & snapshot);
+
+  DelayAuditSnapshot last_delay_audit_{};
 };
 
 }  // namespace gimbal_controller

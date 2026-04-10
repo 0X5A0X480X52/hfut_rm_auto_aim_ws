@@ -19,6 +19,7 @@
 #include "gimbal_controller/local_trajectory_compensator.hpp"
 #include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 #include <angles/angles.h>
+#include <algorithm>
 #include <limits>
 
 namespace gimbal_controller
@@ -44,11 +45,13 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
 
   // 无跟踪 → LOST
   if (!normalized_context.is_tracking) {
+    markDelayAuditInvalid(getName(), false);
     resetStateMachine();
     return createIdleCmd();
   }
 
   if (!position_calculator_ || !armor_selector_ || !fire_advisor_) {
+    markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
 
@@ -173,8 +176,9 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
 // =====================================================================
 
 rm_interfaces::msg::GimbalCmd StateMachineStrategy::handleLost(
-  const GimbalControlContext & /* context */)
+  const GimbalControlContext & context)
 {
+  markDelayAuditInvalid(getName(), context.is_tracking);
   return createIdleCmd();
 }
 
@@ -316,7 +320,7 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::handleSpin(
 
 double StateMachineStrategy::computePredictionTime(
   const GimbalControlContext & context,
-  const Eigen::Vector3d & current_center) const
+  const Eigen::Vector3d & current_center)
 {
   double flight_time = 0;
   if (local_compensator_) {
@@ -326,9 +330,21 @@ double StateMachineStrategy::computePredictionTime(
     flight_time = current_center.norm() / context.bullet_speed;
   }
 
-  double processing_delay = (context.current_time - context.target_stamp).seconds();
-  double total = processing_delay + flight_time + prediction_delay_;
-  return std::min(total, max_prediction_time_);
+  delay_management::DelayRawInputs delay_raw;
+  delay_raw.current_time = context.current_time;
+  delay_raw.observation_stamp = context.target_stamp;
+  delay_raw.prediction_extra_s = prediction_delay_;
+  delay_raw.max_processing_delay_s = max_processing_delay_s_;
+
+  const double processing_delay = delay_manager_.computeProcessingDelay(delay_raw);
+  const double total_prediction_time =
+    delay_manager_.computePredictionTime(delay_raw, flight_time, max_prediction_time_);
+
+  last_processing_delay_s_ = processing_delay;
+  last_flight_time_s_ = flight_time;
+  last_total_prediction_time_s_ = total_prediction_time;
+
+  return total_prediction_time;
 }
 
 int StateMachineStrategy::selectBestFacingArmor(
@@ -368,7 +384,7 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::buildCommand(
   const Eigen::Vector3d & control_target,
   const Eigen::Vector3d & fire_target,
   double fire_distance,
-  bool force_fire) const
+  bool force_fire)
 {
   const Eigen::Vector3d target_velocity =
     fyt::auto_aim::robot_description::TrackedRobotUsage::linearVelocity(context.target_robot);
@@ -378,6 +394,7 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::buildCommand(
   if (!computeBallistic(control_target, target_velocity, context.bullet_speed,
                         control_pitch, control_yaw, control_flight))
   {
+    markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
 
@@ -386,6 +403,7 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::buildCommand(
   if (!computeBallistic(fire_target, target_velocity, context.bullet_speed,
                         fire_pitch, fire_yaw, fire_flight))
   {
+    markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
 
@@ -416,6 +434,20 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::buildCommand(
   cmd.distance = fire_distance;
   cmd.fire_advice = fire_advice;
 
+  DelayAuditSnapshot audit;
+  audit.strategy_name = getName();
+  audit.tracking = true;
+  audit.processing_delay_s = last_processing_delay_s_;
+  audit.prediction_extra_s = std::max(prediction_delay_, 0.0);
+  audit.flight_time_s = last_flight_time_s_;
+  audit.total_prediction_time_s = last_total_prediction_time_s_;
+  audit.control_latency_s = 0.0;
+  audit.fire_control_compensation_s = 0.0;
+  audit.control_delay_steps = 0;
+  audit.uses_delayed_b = false;
+  audit.double_compensation_risk = false;
+  markDelayAuditValid(audit);
+
   return cmd;
 }
 
@@ -433,6 +465,9 @@ void StateMachineStrategy::resetStateMachine()
   spin_decision_index_ = -1;
   spin_count_ = 0;
   calm_count_ = 0;
+  last_processing_delay_s_ = 0.0;
+  last_flight_time_s_ = 0.0;
+  last_total_prediction_time_s_ = 0.0;
 }
 
 // =====================================================================
@@ -461,6 +496,11 @@ void StateMachineStrategy::setPredictionParameters(
 {
   prediction_delay_ = prediction_delay;
   max_prediction_time_ = max_prediction_time;
+}
+
+void StateMachineStrategy::setMaxProcessingDelay(double max_processing_delay)
+{
+  max_processing_delay_s_ = max_processing_delay > 0.0 ? max_processing_delay : 0.0;
 }
 
 void StateMachineStrategy::setManualOffset(double pitch_offset, double yaw_offset)

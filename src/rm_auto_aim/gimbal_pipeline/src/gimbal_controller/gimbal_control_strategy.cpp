@@ -93,4 +93,20 @@ bool GimbalControlStrategy::computeBallistic(
   return true;
 }
 
+void GimbalControlStrategy::markDelayAuditInvalid(
+  const std::string & strategy_name,
+  bool tracking)
+{
+  last_delay_audit_ = DelayAuditSnapshot{};
+  last_delay_audit_.strategy_name = strategy_name;
+  last_delay_audit_.tracking = tracking;
+  last_delay_audit_.valid = false;
+}
+
+void GimbalControlStrategy::markDelayAuditValid(const DelayAuditSnapshot & snapshot)
+{
+  last_delay_audit_ = snapshot;
+  last_delay_audit_.valid = true;
+}
+
 }  // namespace gimbal_controller

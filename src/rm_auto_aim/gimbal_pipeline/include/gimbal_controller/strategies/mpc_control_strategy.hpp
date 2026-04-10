@@ -23,6 +23,7 @@
 
 #include <Eigen/Dense>
 
+#include "gimbal_controller/delay_management/delay_semantic_manager.hpp"
 #include "gimbal_controller/gimbal_control_strategy.hpp"
 #include "gimbal_controller/mpc/gimbal_dynamics_model.hpp"
 #include "gimbal_controller/mpc/qp_solver.hpp"
@@ -330,6 +331,9 @@ private:
   double max_processing_delay_s_{0.5};  // processing_delay 上限 (秒)
   double yaw_feedforward_k_s_{0.0};     // yaw 速度前馈等效前瞻时间 (秒)
   double max_yaw_feedforward_s_{0.12};  // yaw 前馈上限 (秒)
+  delay_management::DelaySemanticManager delay_manager_;
+  bool uses_delayed_b_model_{false};
+  bool warned_double_compensation_{false};
 
   // 上一步求解结果 (warmstart)
   Eigen::VectorXd U_prev_;

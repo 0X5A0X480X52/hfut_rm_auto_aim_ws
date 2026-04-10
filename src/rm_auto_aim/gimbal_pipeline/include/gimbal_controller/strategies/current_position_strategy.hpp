@@ -17,6 +17,7 @@
 
 #include "gimbal_controller/gimbal_control_strategy.hpp"
 #include "gimbal_controller/adaptive_delay_controller.hpp"
+#include "gimbal_controller/delay_management/delay_semantic_manager.hpp"
 
 namespace gimbal_controller
 {
@@ -62,6 +63,12 @@ public:
   void setControllerDelay(double controller_delay);
 
   /**
+   * @brief 设置 processing_delay 上限
+   * @param max_processing_delay 最大处理延迟上限 (秒)
+   */
+  void setMaxProcessingDelay(double max_processing_delay);
+
+  /**
    * @brief 配置自适应 delay AIMD 参数（与 PredictedPositionStrategy 同名接口）
    */
   void setAdaptiveDelayParams(
@@ -79,10 +86,12 @@ private:
   double pitch_offset_{0.0};       // pitch手动补偿 (度)
   double yaw_offset_{0.0};         // yaw手动补偿 (度)
   double controller_delay_{0.0};   // 云台前馈延迟 (秒, 0=禁用)
+  double max_processing_delay_s_{0.5};
 
   // 自适应 delay AIMD
   bool adaptive_delay_enabled_{false};
   AdaptiveDelayController adaptive_ctrl_;
+  delay_management::DelaySemanticManager delay_manager_;
 };
 
 }  // namespace gimbal_controller

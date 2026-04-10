@@ -27,6 +27,7 @@
 // ─── rm_interfaces ─────────────────────────────────────────────
 #include <rm_interfaces/msg/armor.hpp>
 #include <rm_interfaces/msg/armors.hpp>
+#include <rm_interfaces/msg/delay_audit.hpp>
 #include <rm_interfaces/msg/gimbal_cmd.hpp>
 #include <rm_interfaces/msg/maneuver_state.hpp>
 #include <rm_interfaces/msg/maneuver_states.hpp>
@@ -58,11 +59,9 @@
 #include "gimbal_controller/armor_selector.hpp"
 #include "gimbal_controller/ballistic_solver_client.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
-#include "gimbal_controller/gimbal_cmd_postprocessor.hpp"
 #include "gimbal_controller/gimbal_cmd_filter.hpp"
 #include "gimbal_controller/gimbal_control_strategy.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
-#include "gimbal_controller/strategy_orchestrator.hpp"
 
 // ─── heartbeat 
 #include "rm_utils/heartbeat.hpp"
@@ -121,10 +120,6 @@ class GimbalPipelineNode : public rclcpp::Node {
   rcl_interfaces::msg::SetParametersResult onSetParameters(
       const std::vector<rclcpp::Parameter> &params);
   bool isValidGimbalStrategyName(const std::string &name) const;
-  void loadOrchestratorConfigFromParams(
-      gimbal_controller::StrategyOrchestratorConfig &config) const;
-  void loadPostprocessorConfigFromParams(
-      gimbal_controller::GimbalCmdPostprocessorConfig &config) const;
   gimbal_controller::GimbalControlStrategy::SharedPtr getGimbalStrategy(
       const std::string &name) const;
 
@@ -183,25 +178,6 @@ class GimbalPipelineNode : public rclcpp::Node {
                      gimbal_controller::GimbalControlStrategy::SharedPtr>
       gimbal_strategies_;
   std::string current_gimbal_strategy_name_{"current"};
-  std::string active_gimbal_strategy_name_{"current"};
-  gimbal_controller::StrategyOrchestrator strategy_orchestrator_;
-  gimbal_controller::StrategyOrchestratorConfig strategy_orchestrator_config_;
-  gimbal_controller::GimbalCmdPostprocessor gimbal_cmd_postprocessor_;
-  gimbal_controller::GimbalCmdPostprocessorConfig
-      gimbal_cmd_postprocessor_config_;
-
-  // Runtime parameter callback: validate + dirty flag only, apply in timer loop.
-  std::mutex runtime_update_mutex_;
-  bool strategy_config_dirty_{false};
-  bool orchestrator_config_dirty_{false};
-  bool postprocessor_config_dirty_{false};
-  std::string pending_gimbal_strategy_name_;
-  gimbal_controller::StrategyOrchestratorConfig
-      pending_strategy_orchestrator_config_;
-  gimbal_controller::GimbalCmdPostprocessorConfig
-      pending_gimbal_cmd_postprocessor_config_;
-  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr
-      parameter_callback_handle_;
 
   double current_yaw_{0.0};
   double current_pitch_{0.0};
@@ -260,6 +236,8 @@ class GimbalPipelineNode : public rclcpp::Node {
   rclcpp::Publisher<rm_interfaces::msg::SelectedTarget>::SharedPtr
       debug_selected_target_pub_;
   rclcpp::Publisher<rm_interfaces::msg::Target>::SharedPtr debug_target_pub_;
+  rclcpp::Publisher<rm_interfaces::msg::DelayAudit>::SharedPtr
+      debug_delay_audit_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
       debug_tracker_marker_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr

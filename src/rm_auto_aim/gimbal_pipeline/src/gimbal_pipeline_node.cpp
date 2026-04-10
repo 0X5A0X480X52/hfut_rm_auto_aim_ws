@@ -12,6 +12,7 @@
 #include <limits>
 #include <rm_utils/heartbeat.hpp>
 #include <sstream>
+#include <unordered_set>
 
 #include "rm_utils/logger/log.hpp"
 
@@ -26,6 +27,144 @@
 #include "gimbal_controller/strategies/mpc_control_strategy.hpp"
 #include "gimbal_controller/strategies/predicted_position_strategy.hpp"
 #include "gimbal_controller/strategies/state_machine_strategy.hpp"
+
+namespace
+{
+
+bool hasParameterOverride(rclcpp::Node & node, const std::string & key)
+{
+  const auto params_interface = node.get_node_parameters_interface();
+  if (!params_interface) {
+    return false;
+  }
+  const auto & overrides = params_interface->get_parameter_overrides();
+  return overrides.find(key) != overrides.end();
+}
+
+bool shouldWarnDeprecatedOnce(const std::string & deprecated_key)
+{
+  static std::unordered_set<std::string> warned_keys;
+  return warned_keys.insert(deprecated_key).second;
+}
+
+double readCompatDoubleParameter(
+  rclcpp::Node & node,
+  const std::string & canonical_key,
+  const std::string & deprecated_key,
+  double conflict_eps = 1e-9)
+{
+  const double canonical_value = node.get_parameter(canonical_key).as_double();
+  const double deprecated_value = node.get_parameter(deprecated_key).as_double();
+  const bool canonical_overridden = hasParameterOverride(node, canonical_key);
+  const bool deprecated_overridden = hasParameterOverride(node, deprecated_key);
+
+  if (deprecated_overridden && !canonical_overridden) {
+    if (shouldWarnDeprecatedOnce(deprecated_key)) {
+      RCLCPP_WARN(
+        node.get_logger(),
+        "Parameter '%s' is deprecated; please use '%s'. Applying deprecated value: %.6f",
+        deprecated_key.c_str(),
+        canonical_key.c_str(),
+        deprecated_value);
+    }
+    return deprecated_value;
+  }
+
+  if (deprecated_overridden && canonical_overridden &&
+    std::abs(canonical_value - deprecated_value) > conflict_eps)
+  {
+    if (shouldWarnDeprecatedOnce(deprecated_key)) {
+      RCLCPP_WARN(
+        node.get_logger(),
+        "Both deprecated '%s' and canonical '%s' are set with different values "
+        "(deprecated=%.6f, canonical=%.6f). Canonical value will be used.",
+        deprecated_key.c_str(),
+        canonical_key.c_str(),
+        deprecated_value,
+        canonical_value);
+    }
+  }
+
+  return canonical_value;
+}
+
+int readCompatIntParameter(
+  rclcpp::Node & node,
+  const std::string & canonical_key,
+  const std::string & deprecated_key)
+{
+  const int canonical_value = node.get_parameter(canonical_key).as_int();
+  const int deprecated_value = node.get_parameter(deprecated_key).as_int();
+  const bool canonical_overridden = hasParameterOverride(node, canonical_key);
+  const bool deprecated_overridden = hasParameterOverride(node, deprecated_key);
+
+  if (deprecated_overridden && !canonical_overridden) {
+    if (shouldWarnDeprecatedOnce(deprecated_key)) {
+      RCLCPP_WARN(
+        node.get_logger(),
+        "Parameter '%s' is deprecated; please use '%s'. Applying deprecated value: %d",
+        deprecated_key.c_str(),
+        canonical_key.c_str(),
+        deprecated_value);
+    }
+    return deprecated_value;
+  }
+
+  if (deprecated_overridden && canonical_overridden && canonical_value != deprecated_value) {
+    if (shouldWarnDeprecatedOnce(deprecated_key)) {
+      RCLCPP_WARN(
+        node.get_logger(),
+        "Both deprecated '%s' and canonical '%s' are set with different values "
+        "(deprecated=%d, canonical=%d). Canonical value will be used.",
+        deprecated_key.c_str(),
+        canonical_key.c_str(),
+        deprecated_value,
+        canonical_value);
+    }
+  }
+
+  return canonical_value;
+}
+
+bool readCompatBoolParameter(
+  rclcpp::Node & node,
+  const std::string & canonical_key,
+  const std::string & deprecated_key)
+{
+  const bool canonical_value = node.get_parameter(canonical_key).as_bool();
+  const bool deprecated_value = node.get_parameter(deprecated_key).as_bool();
+  const bool canonical_overridden = hasParameterOverride(node, canonical_key);
+  const bool deprecated_overridden = hasParameterOverride(node, deprecated_key);
+
+  if (deprecated_overridden && !canonical_overridden) {
+    if (shouldWarnDeprecatedOnce(deprecated_key)) {
+      RCLCPP_WARN(
+        node.get_logger(),
+        "Parameter '%s' is deprecated; please use '%s'. Applying deprecated value: %s",
+        deprecated_key.c_str(),
+        canonical_key.c_str(),
+        deprecated_value ? "true" : "false");
+    }
+    return deprecated_value;
+  }
+
+  if (deprecated_overridden && canonical_overridden && canonical_value != deprecated_value) {
+    if (shouldWarnDeprecatedOnce(deprecated_key)) {
+      RCLCPP_WARN(
+        node.get_logger(),
+        "Both deprecated '%s' and canonical '%s' are set with different values "
+        "(deprecated=%s, canonical=%s). Canonical value will be used.",
+        deprecated_key.c_str(),
+        canonical_key.c_str(),
+        deprecated_value ? "true" : "false",
+        canonical_value ? "true" : "false");
+    }
+  }
+
+  return canonical_value;
+}
+
+}  // namespace
 
 namespace fyt::auto_aim {
 
@@ -146,8 +285,10 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   double shooting_range_h = get_parameter("controller.solver.shooting_range_height").as_double();
   double side_angle = get_parameter("controller.solver.side_angle").as_double();
   double min_switching_v_yaw = get_parameter("controller.solver.min_switching_v_yaw").as_double();
-  double prediction_delay = get_parameter("controller.solver.prediction_delay").as_double();
-  double max_prediction_time = get_parameter("controller.solver.max_prediction_time").as_double();
+  double prediction_delay = readCompatDoubleParameter(
+    *this, "controller.solver.prediction_delay", "solver.prediction_delay");
+  double max_prediction_time = readCompatDoubleParameter(
+    *this, "controller.solver.max_prediction_time", "solver.max_prediction_time");
   double max_tracking_v_yaw = get_parameter("controller.solver.max_tracking_v_yaw").as_double();
   int transfer_thresh = get_parameter("controller.solver.transfer_thresh").as_int();
   double gravity = get_parameter("controller.solver.gravity").as_double();
@@ -163,7 +304,10 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   double radial_dynamic_min_angle_deg = get_parameter("controller.solver.radial_dynamic.min_angle_deg").as_double();
   double radial_dynamic_bias_gain_deg = get_parameter("controller.solver.radial_dynamic.bias_gain_deg").as_double();
   double radial_dynamic_max_bias_deg = get_parameter("controller.solver.radial_dynamic.max_bias_deg").as_double();
-  double controller_delay = get_parameter("controller.solver.controller_delay").as_double();
+  double controller_delay = readCompatDoubleParameter(
+    *this, "controller.solver.controller_delay", "solver.controller_delay");
+  double max_processing_delay_s = readCompatDoubleParameter(
+    *this, "controller.mpc.max_processing_delay_s", "mpc.max_processing_delay_s");
   std::string selection_method_str = get_parameter("controller.solver.selection_method").as_string();
 
   facing_enter_angle_deg_ = facing_enter_angle;
@@ -210,6 +354,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       gimbal_strategies_["predicted"]);
   if (predicted_strategy) {
     predicted_strategy->setPredictionParameters(prediction_delay, max_prediction_time);
+    predicted_strategy->setMaxProcessingDelay(max_processing_delay_s);
     predicted_strategy->setManualOffset(pitch_offset, yaw_offset);
     predicted_strategy->setTrackingCenterParams(max_tracking_v_yaw, transfer_thresh);
     predicted_strategy->setControllerDelay(controller_delay);
@@ -220,6 +365,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   if (current_strategy) {
     current_strategy->setManualOffset(pitch_offset, yaw_offset);
     current_strategy->setControllerDelay(controller_delay);
+    current_strategy->setMaxProcessingDelay(max_processing_delay_s);
   }
 
   // Configure adaptive controller_delay (AIMD)
@@ -262,8 +408,14 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   int sm_spin_enter = get_parameter("controller.state_machine.spin_enter_count").as_int();
   int sm_spin_exit = get_parameter("controller.state_machine.spin_exit_count").as_int();
   double sm_side_angle = get_parameter("controller.state_machine.side_angle").as_double();
-  double sm_prediction_delay = get_parameter("controller.state_machine.prediction_delay").as_double();
-  double sm_max_prediction = get_parameter("controller.state_machine.max_prediction_time").as_double();
+  double sm_prediction_delay = readCompatDoubleParameter(
+    *this,
+    "controller.state_machine.prediction_delay",
+    "state_machine.prediction_delay");
+  double sm_max_prediction = readCompatDoubleParameter(
+    *this,
+    "controller.state_machine.max_prediction_time",
+    "state_machine.max_prediction_time");
 
   auto sm_strategy_ptr = std::dynamic_pointer_cast<
       gimbal_controller::StateMachineStrategy>(
@@ -275,6 +427,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
                                        sm_side_angle);
     sm_strategy_ptr->setPredictionParameters(sm_prediction_delay,
                                              sm_max_prediction);
+    sm_strategy_ptr->setMaxProcessingDelay(max_processing_delay_s);
     sm_strategy_ptr->setManualOffset(pitch_offset, yaw_offset);
   }
 
@@ -372,6 +525,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
             "~/selected_target", rclcpp::SensorDataQoS());
     debug_target_pub_ = create_publisher<rm_interfaces::msg::Target>(
         "~/target", sensor_qos);
+    debug_delay_audit_pub_ = create_publisher<rm_interfaces::msg::DelayAudit>(
+      "~/delay_audit", rclcpp::SensorDataQoS());
     debug_tracker_marker_pub_ =
         create_publisher<visualization_msgs::msg::MarkerArray>(
             "~/tracker_markers", 10);
@@ -585,6 +740,11 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.solver.controller_delay", 0.0);
   declare_parameter("controller.solver.selection_method", std::string("min_movement_with_facing"));
 
+  // Deprecated aliases (for migration from legacy gimbal_controller keys)
+  declare_parameter("solver.prediction_delay", 0.0);
+  declare_parameter("solver.max_prediction_time", 0.5);
+  declare_parameter("solver.controller_delay", 0.0);
+
   // Adaptive controller_delay (AIMD)
   declare_parameter("controller.solver.adaptive_delay.enable",              false);
   declare_parameter("controller.solver.adaptive_delay.fire_wait_threshold", 10);
@@ -606,6 +766,10 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.state_machine.prediction_delay", 0.0);
   declare_parameter("controller.state_machine.max_prediction_time", 0.5);
 
+  // Deprecated aliases (for migration from legacy gimbal_controller keys)
+  declare_parameter("state_machine.prediction_delay", 0.0);
+  declare_parameter("state_machine.max_prediction_time", 0.5);
+
   // MPC strategy
   declare_parameter("controller.mpc.N", 20);
   declare_parameter("controller.mpc.dt", 0.01);
@@ -626,6 +790,13 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.mpc.flight_time_iters", 2);
   declare_parameter("controller.mpc.max_processing_delay_s", 0.5);
   declare_parameter("controller.mpc.yaw_feedforward_k_s", 0.0);
+
+  // Deprecated aliases (for migration from old unscoped mpc delay keys)
+  declare_parameter("mpc.control_delay_s", 0.0);
+  declare_parameter("mpc.enable_delay_compensation", false);
+  declare_parameter("mpc.prediction_delay_s", 0.0);
+  declare_parameter("mpc.flight_time_iters", 2);
+  declare_parameter("mpc.max_processing_delay_s", 0.5);
 
   // MPC 机动自适应权重衰减
   declare_parameter("controller.mpc.maneuver_adapt.enable",  false);
@@ -1406,10 +1577,22 @@ void GimbalPipelineNode::initGimbalStrategies() {
   mpc_s->setComponents(position_calculator_, armor_selector_,
                        ballistic_client_, local_compensator_, fire_advisor_);
   mpc_s->initReferenceGenerator();
+
+  const double mpc_control_delay_s = readCompatDoubleParameter(
+    *this, "controller.mpc.control_delay_s", "mpc.control_delay_s");
+  const bool mpc_enable_delay_compensation = readCompatBoolParameter(
+    *this, "controller.mpc.enable_delay_compensation", "mpc.enable_delay_compensation");
+  const double mpc_prediction_delay_s = readCompatDoubleParameter(
+    *this, "controller.mpc.prediction_delay_s", "mpc.prediction_delay_s");
+  const int mpc_flight_time_iters = readCompatIntParameter(
+    *this, "controller.mpc.flight_time_iters", "mpc.flight_time_iters");
+  const double mpc_max_processing_delay_s = readCompatDoubleParameter(
+    *this, "controller.mpc.max_processing_delay_s", "mpc.max_processing_delay_s");
+
   mpc_s->setMpcParameters(
     get_parameter("controller.mpc.N").as_int(),
     get_parameter("controller.mpc.dt").as_double(),
-    get_parameter("controller.mpc.control_delay_s").as_double(),
+    mpc_control_delay_s,
     get_parameter("controller.mpc.max_accel").as_double(),
     get_parameter("controller.mpc.q_yaw").as_double(),
     get_parameter("controller.mpc.q_pitch").as_double(),
@@ -1420,10 +1603,10 @@ void GimbalPipelineNode::initGimbalStrategies() {
     get_parameter("controller.mpc.s_yaw").as_double(),
     get_parameter("controller.mpc.s_pitch").as_double());
   mpc_s->setDelayCompensation(
-    get_parameter("controller.mpc.enable_delay_compensation").as_bool(),
-    get_parameter("controller.mpc.prediction_delay_s").as_double(),
-    get_parameter("controller.mpc.flight_time_iters").as_int(),
-    get_parameter("controller.mpc.max_processing_delay_s").as_double());
+    mpc_enable_delay_compensation,
+    mpc_prediction_delay_s,
+    mpc_flight_time_iters,
+    mpc_max_processing_delay_s);
   mpc_s->setYawFeedforward(
     get_parameter("controller.mpc.yaw_feedforward_k_s").as_double());
   mpc_s->setManeuverAdaptParameters(
@@ -1650,6 +1833,27 @@ void GimbalPipelineNode::timerCallback() {
   }
 
   auto cmd = strategy->solve(context);
+
+  if (debug_mode_ && debug_delay_audit_pub_) {
+    const auto & audit = strategy->getLastDelayAudit();
+
+    rm_interfaces::msg::DelayAudit msg;
+    msg.header.stamp = context.current_time;
+    msg.header.frame_id = target_frame_;
+    msg.strategy_name = audit.strategy_name.empty() ? strategy->getName() : audit.strategy_name;
+    msg.valid = audit.valid;
+    msg.tracking = audit.tracking;
+    msg.processing_delay_s = audit.processing_delay_s;
+    msg.prediction_extra_s = audit.prediction_extra_s;
+    msg.flight_time_s = audit.flight_time_s;
+    msg.total_prediction_time_s = audit.total_prediction_time_s;
+    msg.control_latency_s = audit.control_latency_s;
+    msg.fire_control_compensation_s = audit.fire_control_compensation_s;
+    msg.control_delay_steps = audit.control_delay_steps;
+    msg.uses_delayed_b = audit.uses_delayed_b;
+    msg.double_compensation_risk = audit.double_compensation_risk;
+    debug_delay_audit_pub_->publish(msg);
+  }
 
   // ── GimbalCmd 输出端保护滤波 ──
   // 目标切换（或从无目标变为有目标）时重置滤波器，允许首帧自由跳变快速锁定

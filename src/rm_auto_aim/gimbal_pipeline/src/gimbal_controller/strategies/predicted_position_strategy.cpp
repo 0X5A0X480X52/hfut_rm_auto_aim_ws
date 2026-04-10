@@ -20,6 +20,8 @@
 #include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 #include <angles/angles.h>
 
+#include <algorithm>
+
 #include <iostream>
 
 namespace gimbal_controller
@@ -30,6 +32,7 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
 {
   // 检查是否在跟踪状态
   if (!context.is_tracking) {
+    markDelayAuditInvalid(getName(), false);
     state_ = TRACKING_ARMOR;
     overflow_count_ = 0;
     if (armor_selector_) {
@@ -44,6 +47,7 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
 
   // 检查组件是否已设置
   if (!position_calculator_ || !armor_selector_ || !fire_advisor_) {
+    markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
 
@@ -68,9 +72,15 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   }
 
   // 计算总预测时间 = 处理延迟 + 飞行时间 + 额外预测延迟
-  double processing_delay = (context.current_time - context.target_stamp).seconds();
-  double total_prediction_time = processing_delay + flight_time + prediction_delay_;
-  total_prediction_time = std::min(total_prediction_time, max_prediction_time_);
+  delay_management::DelayRawInputs delay_raw;
+  delay_raw.current_time = context.current_time;
+  delay_raw.observation_stamp = context.target_stamp;
+  delay_raw.prediction_extra_s = prediction_delay_;
+  delay_raw.max_processing_delay_s = max_processing_delay_s_;
+
+  double processing_delay = delay_manager_.computeProcessingDelay(delay_raw);
+  double total_prediction_time = delay_manager_.computePredictionTime(
+    delay_raw, flight_time, max_prediction_time_);
 
   std::cout << "Processing delay: " << processing_delay
             << " s, Flight time: " << flight_time
@@ -84,6 +94,7 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   auto current_armor_positions = position_calculator_->calculate(robot);
 
   if (predicted_armor_positions.empty() || current_armor_positions.empty()) {
+    markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
 
@@ -116,6 +127,7 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
     context.current_pitch);
 
   if (current_selection.selected_index < 0) {
+    markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
 
@@ -150,6 +162,8 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   // 根据状态选择目标位置
   Eigen::Vector3d control_target_position;
   Eigen::Vector3d fire_target_position = current_selection.position;
+  double applied_control_latency = 0.0;
+  double applied_prediction_time = total_prediction_time;
 
   if (state_ == TRACKING_CENTER) {
     // 高转速时跟踪机器人中心 (预测位置)
@@ -169,6 +183,8 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
       extra_dt = std::min(extra_dt, max_prediction_time_);
       auto extra_positions = position_calculator_->calculatePredicted(robot, extra_dt);
       if (!extra_positions.empty()) {
+        applied_control_latency = std::max(effective_ctrl_delay, 0.0);
+        applied_prediction_time = extra_dt;
         Eigen::Vector3d extra_center =
           fyt::auto_aim::robot_description::TrackedRobotUsage::predictCenter(
           robot,
@@ -195,6 +211,7 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   if (!computeBallistic(control_target_position, target_velocity, context.bullet_speed,
                         control_pitch, control_yaw, control_flight_time))
   {
+    markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
 
@@ -203,6 +220,7 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   if (!computeBallistic(fire_target_position, target_velocity, context.bullet_speed,
                         fire_pitch, fire_yaw, fire_flight_time))
   {
+    markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
 
@@ -247,6 +265,20 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   cmd.distance = current_selection.distance;
   cmd.fire_advice = fire_advice;
 
+  DelayAuditSnapshot audit;
+  audit.strategy_name = getName();
+  audit.tracking = true;
+  audit.processing_delay_s = processing_delay;
+  audit.prediction_extra_s = std::max(prediction_delay_, 0.0);
+  audit.flight_time_s = flight_time;
+  audit.total_prediction_time_s = applied_prediction_time;
+  audit.control_latency_s = applied_control_latency;
+  audit.fire_control_compensation_s = 0.0;
+  audit.control_delay_steps = 0;
+  audit.uses_delayed_b = false;
+  audit.double_compensation_risk = false;
+  markDelayAuditValid(audit);
+
   return cmd;
 }
 
@@ -256,6 +288,11 @@ void PredictedPositionStrategy::setPredictionParameters(
 {
   prediction_delay_ = prediction_delay;
   max_prediction_time_ = max_prediction_time;
+}
+
+void PredictedPositionStrategy::setMaxProcessingDelay(double max_processing_delay)
+{
+  max_processing_delay_s_ = max_processing_delay > 0.0 ? max_processing_delay : 0.0;
 }
 
 void PredictedPositionStrategy::setManualOffset(double pitch_offset, double yaw_offset)

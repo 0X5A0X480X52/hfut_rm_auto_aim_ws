@@ -540,7 +540,8 @@ void MpcControlStrategy::rebuildMatrices()
 {
   dynamics_model_.buildPredictionMatrices(N_, A_pred_, B_ctrl_);
 
-  if (control_delay_s_ > 1e-6) {
+  uses_delayed_b_model_ = (control_delay_s_ > 1e-6);
+  if (uses_delayed_b_model_) {
     B_ctrl_ = dynamics_model_.buildDelayedB(N_, control_delay_s_);
   }
 
@@ -574,6 +575,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
 
   if (!context.is_tracking && !context.is_temp_lost) {
     std::cout << "Target not in tracking/temp_lost state, skipping MPC control.  " << std::endl;
+    markDelayAuditInvalid(getName(), false);
     has_prev_state_ = false;
     U_prev_.resize(0);
     // 机动自适应状态重置：防止旧跟踪历史污染新跟踪
@@ -611,19 +613,49 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   const bool use_delayed_reference =
     enable_delay_compensation_ || (yaw_feedforward_s > 1e-6);
 
+  const bool allow_fire_control_compensation =
+    enable_delay_compensation_ && control_delay_s_ > 1e-6;
+  delay_management::DelayRawInputs delay_raw;
+  delay_raw.current_time = context.current_time;
+  delay_raw.observation_stamp = context.target_stamp;
+  delay_raw.prediction_extra_s = prediction_delay_s_;
+  delay_raw.control_latency_s = control_delay_s_;
+  delay_raw.max_processing_delay_s = max_processing_delay_s_;
+
+  const auto mpc_delay = delay_manager_.computeMpcDelay(
+    delay_raw,
+    dt_,
+    enable_delay_compensation_,
+    uses_delayed_b_model_,
+    allow_fire_control_compensation);
+
+  if (mpc_delay.double_compensation_risk && !warned_double_compensation_) {
+    RCLCPP_WARN(
+      rclcpp::get_logger("MpcControlStrategy"),
+      "Detected potential delay double-compensation: delayed B is active, so fire control delay "
+      "compensation has been disabled.");
+    warned_double_compensation_ = true;
+  }
+
+  DelayAuditSnapshot audit;
+  audit.strategy_name = getName();
+  audit.tracking = context.is_tracking;
+  audit.processing_delay_s = mpc_delay.processing_delay_s;
+  audit.prediction_extra_s = std::max(prediction_delay_s_, 0.0);
+  audit.flight_time_s = 0.0;
+  audit.total_prediction_time_s = mpc_delay.base_reference_delay_s;
+  audit.control_latency_s = mpc_delay.control_latency_s;
+  audit.fire_control_compensation_s = mpc_delay.fire_control_compensation_s;
+  audit.control_delay_steps = mpc_delay.control_delay_steps;
+  audit.uses_delayed_b = mpc_delay.uses_delayed_b;
+  audit.double_compensation_risk = mpc_delay.double_compensation_risk;
+  markDelayAuditValid(audit);
+
   Eigen::VectorXd X_ref;
   if (use_delayed_reference) {
-    // 仅在启用 delay compensation 时使用 processing_delay。
-    // 当仅启用 yaw 前馈时保持 processing_delay=0，避免改变原有处理延迟语义。
-    double processing_delay = 0.0;
-    if (enable_delay_compensation_) {
-      processing_delay = (context.current_time - context.target_stamp).seconds();
-      processing_delay = std::clamp(processing_delay, 0.0, max_processing_delay_s_);
-    }
-
     mpc::DelayCompConfig delay_cfg;
-    delay_cfg.base_delay_s = processing_delay + prediction_delay_s_;
-    delay_cfg.ctrl_delay_s = control_delay_s_;
+    delay_cfg.base_delay_s = mpc_delay.base_reference_delay_s;
+    delay_cfg.ctrl_delay_s = mpc_delay.control_latency_s;
     delay_cfg.flight_time_iters = flight_time_iters_;
 
     X_ref = ref_generator_.generateWithDelay(
@@ -771,11 +803,13 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
 
     bool fire_advice = false;
     if (fire_advisor_) {
-      if (enable_delay_compensation_ && control_delay_s_ > 1e-6) {
+      if (mpc_delay.fire_control_compensation_s > 1e-6) {
         double ref_yaw_dot   = X_ref(2);
         double ref_pitch_dot = X_ref(3);
-        double fire_yaw   = context.current_yaw   + ref_yaw_dot   * control_delay_s_;
-        double fire_pitch = context.current_pitch + ref_pitch_dot * control_delay_s_;
+        double fire_yaw =
+          context.current_yaw + ref_yaw_dot * mpc_delay.fire_control_compensation_s;
+        double fire_pitch =
+          context.current_pitch + ref_pitch_dot * mpc_delay.fire_control_compensation_s;
         fire_advice = fire_advisor_->shouldFire(fire_yaw, fire_pitch, ref_yaw, ref_pitch, distance);
       } else {
         fire_advice = fire_advisor_->shouldFire(
@@ -905,12 +939,14 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
 
   bool fire_advice = false;
   if (fire_advisor_) {
-    if (enable_delay_compensation_ && control_delay_s_ > 1e-6) {
+    if (mpc_delay.fire_control_compensation_s > 1e-6) {
       // 延时补偿开火判断: 预测控制延迟后的云台姿态
       double ref_yaw_dot = X_ref(2);
       double ref_pitch_dot = X_ref(3);
-      double fire_yaw = context.current_yaw + ref_yaw_dot * control_delay_s_;
-      double fire_pitch = context.current_pitch + ref_pitch_dot * control_delay_s_;
+      double fire_yaw =
+        context.current_yaw + ref_yaw_dot * mpc_delay.fire_control_compensation_s;
+      double fire_pitch =
+        context.current_pitch + ref_pitch_dot * mpc_delay.fire_control_compensation_s;
       fire_advice = fire_advisor_->shouldFire(
         fire_yaw, fire_pitch, ref_yaw, ref_pitch, distance);
     } else {
