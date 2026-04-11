@@ -27,6 +27,7 @@
 #include "gimbal_controller/strategies/mpc_control_strategy.hpp"
 #include "gimbal_controller/strategies/predicted_position_strategy.hpp"
 #include "gimbal_controller/strategies/state_machine_strategy.hpp"
+#include "gimbal_controller/fire_advisor.hpp"
 
 namespace
 {
@@ -306,9 +307,18 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   double radial_dynamic_max_bias_deg = get_parameter("controller.solver.radial_dynamic.max_bias_deg").as_double();
   double controller_delay = readCompatDoubleParameter(
     *this, "controller.solver.controller_delay", "solver.controller_delay");
+  double trigger_to_muzzle_s = readCompatDoubleParameter(
+    *this, "controller.solver.trigger_to_muzzle_s", "solver.trigger_to_muzzle_s");
+  if (hasParameterOverride(*this, "controller.fire.trigger_to_muzzle_s")) {
+    trigger_to_muzzle_s = get_parameter("controller.fire.trigger_to_muzzle_s").as_double();
+  }
   double max_processing_delay_s = readCompatDoubleParameter(
     *this, "controller.mpc.max_processing_delay_s", "mpc.max_processing_delay_s");
   std::string selection_method_str = get_parameter("controller.solver.selection_method").as_string();
+  std::string fire_policy = get_parameter("controller.fire.decision_policy").as_string();
+  int fire_flight_time_iters = get_parameter("controller.fire.flight_time_iters").as_int();
+  bool fire_use_gimbal_kinematics =
+    get_parameter("controller.fire.use_gimbal_kinematics").as_bool();
 
   facing_enter_angle_deg_ = facing_enter_angle;
   facing_exit_angle_deg_ = facing_exit_angle;
@@ -345,6 +355,17 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   RCLCPP_INFO(get_logger(), "[GimbalController] selection_method: %s", selection_method_str.c_str());
 
   fire_advisor_->setParameters(shooting_range_w, shooting_range_h);
+  if (fire_policy == "ellipse") {
+    fire_advisor_->setDecisionPolicy(
+      std::make_shared<gimbal_controller::EllipseFireDecisionPolicy>());
+  } else {
+    fire_advisor_->setDecisionPolicy(
+      std::make_shared<gimbal_controller::AxisThresholdFireDecisionPolicy>());
+  }
+  if (fire_advice_engine_) {
+    fire_advice_engine_->setFlightTimeIterations(fire_flight_time_iters);
+    fire_advice_engine_->setUseGimbalKinematics(fire_use_gimbal_kinematics);
+  }
   local_compensator_->setParameters(bullet_speed_, gravity, resistance,
                                     iteration_times);
 
@@ -358,6 +379,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     predicted_strategy->setManualOffset(pitch_offset, yaw_offset);
     predicted_strategy->setTrackingCenterParams(max_tracking_v_yaw, transfer_thresh);
     predicted_strategy->setControllerDelay(controller_delay);
+    predicted_strategy->setTriggerToMuzzleDelay(trigger_to_muzzle_s);
   }
   auto current_strategy = std::dynamic_pointer_cast<
       gimbal_controller::CurrentPositionStrategy>(
@@ -366,6 +388,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     current_strategy->setManualOffset(pitch_offset, yaw_offset);
     current_strategy->setControllerDelay(controller_delay);
     current_strategy->setMaxProcessingDelay(max_processing_delay_s);
+    current_strategy->setTriggerToMuzzleDelay(trigger_to_muzzle_s);
   }
 
   // Configure adaptive controller_delay (AIMD)
@@ -429,6 +452,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
                                              sm_max_prediction);
     sm_strategy_ptr->setMaxProcessingDelay(max_processing_delay_s);
     sm_strategy_ptr->setManualOffset(pitch_offset, yaw_offset);
+    sm_strategy_ptr->setTriggerToMuzzleDelay(trigger_to_muzzle_s);
   }
 
   // ── 配置 GimbalCmd 输出端保护滤波器 ──
@@ -738,12 +762,18 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.solver.radial_dynamic.bias_gain_deg", 0.0);
   declare_parameter("controller.solver.radial_dynamic.max_bias_deg", 0.0);
   declare_parameter("controller.solver.controller_delay", 0.0);
+  declare_parameter("controller.solver.trigger_to_muzzle_s", 0.0);
   declare_parameter("controller.solver.selection_method", std::string("min_movement_with_facing"));
+  declare_parameter("controller.fire.trigger_to_muzzle_s", 0.0);
+  declare_parameter("controller.fire.decision_policy", std::string("axis_threshold"));
+  declare_parameter("controller.fire.flight_time_iters", 2);
+  declare_parameter("controller.fire.use_gimbal_kinematics", false);
 
   // Deprecated aliases (for migration from legacy gimbal_controller keys)
   declare_parameter("solver.prediction_delay", 0.0);
   declare_parameter("solver.max_prediction_time", 0.5);
   declare_parameter("solver.controller_delay", 0.0);
+  declare_parameter("solver.trigger_to_muzzle_s", 0.0);
 
   // Adaptive controller_delay (AIMD)
   declare_parameter("controller.solver.adaptive_delay.enable",              false);
@@ -1556,6 +1586,9 @@ void GimbalPipelineNode::initGimbalComponents() {
   local_compensator_ =
       std::make_shared<gimbal_controller::LocalTrajectoryCompensator>();
   fire_advisor_ = std::make_shared<gimbal_controller::FireAdvisor>();
+  fire_advice_engine_ = std::make_shared<gimbal_controller::FireAdviceEngine>();
+  fire_advice_engine_->setComponents(
+    position_calculator_, ballistic_client_, local_compensator_, fire_advisor_);
 }
 
 void GimbalPipelineNode::initGimbalStrategies() {
@@ -1564,6 +1597,7 @@ void GimbalPipelineNode::initGimbalStrategies() {
   current_s->setComponents(position_calculator_, armor_selector_,
                            ballistic_client_, local_compensator_,
                            fire_advisor_);
+  current_s->setFireAdviceEngine(fire_advice_engine_);
   gimbal_strategies_["current"] = current_s;
 
   auto predicted_s =
@@ -1571,11 +1605,13 @@ void GimbalPipelineNode::initGimbalStrategies() {
   predicted_s->setComponents(position_calculator_, armor_selector_,
                              ballistic_client_, local_compensator_,
                              fire_advisor_);
+  predicted_s->setFireAdviceEngine(fire_advice_engine_);
   gimbal_strategies_["predicted"] = predicted_s;
 
   auto mpc_s = std::make_shared<gimbal_controller::MpcControlStrategy>();
   mpc_s->setComponents(position_calculator_, armor_selector_,
                        ballistic_client_, local_compensator_, fire_advisor_);
+  mpc_s->setFireAdviceEngine(fire_advice_engine_);
   mpc_s->initReferenceGenerator();
 
   const double mpc_control_delay_s = readCompatDoubleParameter(
@@ -1584,6 +1620,11 @@ void GimbalPipelineNode::initGimbalStrategies() {
     *this, "controller.mpc.enable_delay_compensation", "mpc.enable_delay_compensation");
   const double mpc_prediction_delay_s = readCompatDoubleParameter(
     *this, "controller.mpc.prediction_delay_s", "mpc.prediction_delay_s");
+  double mpc_trigger_to_muzzle_s = readCompatDoubleParameter(
+    *this, "controller.solver.trigger_to_muzzle_s", "solver.trigger_to_muzzle_s");
+  if (hasParameterOverride(*this, "controller.fire.trigger_to_muzzle_s")) {
+    mpc_trigger_to_muzzle_s = get_parameter("controller.fire.trigger_to_muzzle_s").as_double();
+  }
   const int mpc_flight_time_iters = readCompatIntParameter(
     *this, "controller.mpc.flight_time_iters", "mpc.flight_time_iters");
   const double mpc_max_processing_delay_s = readCompatDoubleParameter(
@@ -1605,6 +1646,7 @@ void GimbalPipelineNode::initGimbalStrategies() {
   mpc_s->setDelayCompensation(
     mpc_enable_delay_compensation,
     mpc_prediction_delay_s,
+    mpc_trigger_to_muzzle_s,
     mpc_flight_time_iters,
     mpc_max_processing_delay_s);
   mpc_s->setYawFeedforward(
@@ -1675,6 +1717,7 @@ void GimbalPipelineNode::initGimbalStrategies() {
   auto sm_s = std::make_shared<gimbal_controller::StateMachineStrategy>();
   sm_s->setComponents(position_calculator_, armor_selector_,
                       ballistic_client_, local_compensator_, fire_advisor_);
+  sm_s->setFireAdviceEngine(fire_advice_engine_);
   gimbal_strategies_["state_machine"] = sm_s;
 }
 

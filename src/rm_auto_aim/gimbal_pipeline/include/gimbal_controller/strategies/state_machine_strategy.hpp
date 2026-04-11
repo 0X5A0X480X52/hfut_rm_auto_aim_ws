@@ -102,6 +102,12 @@ public:
   void setMaxProcessingDelay(double max_processing_delay);
 
   /**
+   * @brief 设置触发到出膛延迟
+   * @param trigger_to_muzzle_s 出膛延迟 (秒)
+   */
+  void setTriggerToMuzzleDelay(double trigger_to_muzzle_s);
+
+  /**
    * @brief 设置手动补偿参数
    * @param pitch_offset pitch补偿 (度)
    * @param yaw_offset yaw补偿 (度)
@@ -216,6 +222,7 @@ private:
   double last_processing_delay_s_{0.0};
   double last_flight_time_s_{0.0};
   double last_total_prediction_time_s_{0.0};
+  double trigger_to_muzzle_s_{0.0};
 
   // 手动补偿
   double pitch_offset_{0.0};          ///< pitch 手动补偿 (度)

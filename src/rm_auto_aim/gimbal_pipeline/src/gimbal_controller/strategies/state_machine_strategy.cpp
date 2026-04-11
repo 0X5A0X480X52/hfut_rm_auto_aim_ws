@@ -15,6 +15,7 @@
 #include "gimbal_controller/strategies/state_machine_strategy.hpp"
 #include "gimbal_controller/armor_position_calculator.hpp"
 #include "gimbal_controller/armor_selector.hpp"
+#include "gimbal_controller/fire_advice_engine.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
 #include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
@@ -50,7 +51,7 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
     return createIdleCmd();
   }
 
-  if (!position_calculator_ || !armor_selector_ || !fire_advisor_) {
+  if (!position_calculator_ || !armor_selector_ || (!fire_advice_engine_ && !fire_advisor_)) {
     markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
@@ -418,11 +419,41 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::buildCommand(
   double pitch_diff = cmd_pitch - context.current_pitch;
 
   bool fire_advice = force_fire;
-  if (!force_fire && fire_advisor_) {
-    fire_advice = fire_advisor_->shouldFire(
-      context.current_yaw, context.current_pitch,
-      fire_yaw + yaw_offset_rad, fire_pitch + pitch_offset_rad,
-      fire_distance);
+  double fire_compensation_s = trigger_to_muzzle_s_;
+  if (!force_fire && (fire_advice_engine_ || fire_advisor_)) {
+    if (fire_advice_engine_) {
+      FireAdviceEngineRequest fire_request;
+      fire_request.target_robot = context.target_robot;
+      fire_request.current_time = context.current_time;
+      fire_request.observation_stamp = context.target_stamp;
+      fire_request.current_yaw = context.current_yaw;
+      fire_request.current_pitch = context.current_pitch;
+      fire_request.bullet_speed = context.bullet_speed;
+      fire_request.yaw_offset_rad = yaw_offset_rad;
+      fire_request.pitch_offset_rad = pitch_offset_rad;
+      fire_request.timing.prediction_delay_s = std::max(prediction_delay_, 0.0);
+      fire_request.timing.control_latency_s = 0.0;
+      fire_request.timing.trigger_to_muzzle_s = trigger_to_muzzle_s_;
+      fire_request.timing.max_processing_delay_s = max_processing_delay_s_;
+      fire_request.timing.include_processing_delay = true;
+      fire_request.timing.include_control_latency_in_target_prediction = false;
+
+      const auto fire_result = fire_advice_engine_->evaluate(fire_request);
+      if (fire_result.valid) {
+        fire_advice = fire_result.fire_advice;
+        fire_compensation_s = fire_result.timeline.muzzle_delay_s;
+      }
+    } else {
+      const double fire_muzzle_delay_s =
+        std::max(last_processing_delay_s_, 0.0) + std::max(prediction_delay_, 0.0) +
+        trigger_to_muzzle_s_;
+      fire_advice = fire_advisor_->shouldFireWithDelay(
+        context.current_yaw, context.current_pitch,
+        fire_yaw + yaw_offset_rad, fire_pitch + pitch_offset_rad,
+        fire_distance,
+        fire_muzzle_delay_s);
+      fire_compensation_s = trigger_to_muzzle_s_;
+    }
   }
 
   rm_interfaces::msg::GimbalCmd cmd;
@@ -442,7 +473,7 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::buildCommand(
   audit.flight_time_s = last_flight_time_s_;
   audit.total_prediction_time_s = last_total_prediction_time_s_;
   audit.control_latency_s = 0.0;
-  audit.fire_control_compensation_s = 0.0;
+  audit.fire_control_compensation_s = fire_compensation_s;
   audit.control_delay_steps = 0;
   audit.uses_delayed_b = false;
   audit.double_compensation_risk = false;
@@ -501,6 +532,11 @@ void StateMachineStrategy::setPredictionParameters(
 void StateMachineStrategy::setMaxProcessingDelay(double max_processing_delay)
 {
   max_processing_delay_s_ = max_processing_delay > 0.0 ? max_processing_delay : 0.0;
+}
+
+void StateMachineStrategy::setTriggerToMuzzleDelay(double trigger_to_muzzle_s)
+{
+  trigger_to_muzzle_s_ = trigger_to_muzzle_s > 0.0 ? trigger_to_muzzle_s : 0.0;
 }
 
 void StateMachineStrategy::setManualOffset(double pitch_offset, double yaw_offset)

@@ -48,7 +48,7 @@ namespace mpc
 struct DelayCompConfig
 {
   double base_delay_s{0.0};     // processing_delay + prediction_delay
-  double ctrl_delay_s{0.0};     // 控制延迟语义值 (秒), 由上层控制链路建模
+  double ctrl_delay_s{0.0};     // 仅用于控制链路建模, 不参与目标前瞻补偿
   int flight_time_iters{2};     // 飞行时间迭代次数
 };
 

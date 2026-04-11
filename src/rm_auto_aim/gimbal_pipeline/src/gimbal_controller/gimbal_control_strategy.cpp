@@ -18,6 +18,7 @@
 #include "gimbal_controller/ballistic_solver_client.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
+#include "gimbal_controller/fire_advice_engine.hpp"
 
 namespace gimbal_controller
 {
@@ -34,6 +35,12 @@ void GimbalControlStrategy::setComponents(
   ballistic_client_ = ballistic_client;
   local_compensator_ = local_compensator;
   fire_advisor_ = fire_advisor;
+}
+
+void GimbalControlStrategy::setFireAdviceEngine(
+  std::shared_ptr<FireAdviceEngine> fire_advice_engine)
+{
+  fire_advice_engine_ = fire_advice_engine;
 }
 
 rm_interfaces::msg::GimbalCmd GimbalControlStrategy::createIdleCmd() const

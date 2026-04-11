@@ -34,6 +34,7 @@ class ArmorSelector;
 class BallisticSolverClient;
 class LocalTrajectoryCompensator;
 class FireAdvisor;
+class FireAdviceEngine;
 
 /**
  * @brief 云台控制上下文
@@ -113,12 +114,15 @@ public:
     std::shared_ptr<LocalTrajectoryCompensator> local_compensator,
     std::shared_ptr<FireAdvisor> fire_advisor);
 
+  void setFireAdviceEngine(std::shared_ptr<FireAdviceEngine> fire_advice_engine);
+
 protected:
   std::shared_ptr<ArmorPositionCalculator> position_calculator_;
   std::shared_ptr<ArmorSelector> armor_selector_;
   std::shared_ptr<BallisticSolverClient> ballistic_client_;
   std::shared_ptr<LocalTrajectoryCompensator> local_compensator_;
   std::shared_ptr<FireAdvisor> fire_advisor_;
+  std::shared_ptr<FireAdviceEngine> fire_advice_engine_;
 
   /**
    * @brief 创建空闲状态的控制命令

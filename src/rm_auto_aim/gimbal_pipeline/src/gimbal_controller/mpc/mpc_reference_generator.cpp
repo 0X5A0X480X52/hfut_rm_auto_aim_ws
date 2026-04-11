@@ -169,7 +169,7 @@ Eigen::VectorXd MpcReferenceGenerator::generateWithDelay(
   for (int k = 0; k < N; ++k) {
     double t_ahead = (k + 1) * dt;
 
-    // 1. 计算参考时间: base_delay (processing + controller + prediction) + t_ahead
+    // 1. 计算参考时间: base_delay (processing + prediction) + t_ahead
     double t_predict = delay_config.base_delay_s + t_ahead;
 
     // 2. 传播目标状态到未来 t_predict 秒

@@ -58,6 +58,7 @@
 #include "gimbal_controller/armor_position_calculator.hpp"
 #include "gimbal_controller/armor_selector.hpp"
 #include "gimbal_controller/ballistic_solver_client.hpp"
+#include "gimbal_controller/fire_advice_engine.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_controller/gimbal_cmd_filter.hpp"
 #include "gimbal_controller/gimbal_control_strategy.hpp"
@@ -174,6 +175,7 @@ class GimbalPipelineNode : public rclcpp::Node {
   std::shared_ptr<gimbal_controller::BallisticSolverClient> ballistic_client_;
   std::shared_ptr<gimbal_controller::LocalTrajectoryCompensator> local_compensator_;
   std::shared_ptr<gimbal_controller::FireAdvisor> fire_advisor_;
+    std::shared_ptr<gimbal_controller::FireAdviceEngine> fire_advice_engine_;
   std::unordered_map<std::string,
                      gimbal_controller::GimbalControlStrategy::SharedPtr>
       gimbal_strategies_;

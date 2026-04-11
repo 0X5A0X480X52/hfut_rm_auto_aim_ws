@@ -15,6 +15,7 @@
 #include "gimbal_controller/strategies/predicted_position_strategy.hpp"
 #include "gimbal_controller/armor_position_calculator.hpp"
 #include "gimbal_controller/armor_selector.hpp"
+#include "gimbal_controller/fire_advice_engine.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
 #include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
@@ -46,7 +47,7 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   }
 
   // 检查组件是否已设置
-  if (!position_calculator_ || !armor_selector_ || !fire_advisor_) {
+  if (!position_calculator_ || !armor_selector_ || (!fire_advice_engine_ && !fire_advisor_)) {
     markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
@@ -235,13 +236,42 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   double yaw_diff = angles::normalize_angle(cmd_yaw - context.current_yaw);
   double pitch_diff = cmd_pitch - context.current_pitch;
 
-  // 判断是否应该开火 (使用当前位置)
-  bool fire_advice = fire_advisor_->shouldFire(
-    context.current_yaw,
-    context.current_pitch,
-    fire_yaw + yaw_offset_rad,
-    fire_pitch + pitch_offset_rad,
-    current_selection.distance);
+  bool fire_advice = false;
+  double fire_compensation_s = trigger_to_muzzle_s_;
+  if (fire_advice_engine_) {
+    FireAdviceEngineRequest fire_request;
+    fire_request.target_robot = robot;
+    fire_request.current_time = context.current_time;
+    fire_request.observation_stamp = context.target_stamp;
+    fire_request.current_yaw = context.current_yaw;
+    fire_request.current_pitch = context.current_pitch;
+    fire_request.bullet_speed = context.bullet_speed;
+    fire_request.yaw_offset_rad = yaw_offset_rad;
+    fire_request.pitch_offset_rad = pitch_offset_rad;
+    fire_request.timing.prediction_delay_s = std::max(prediction_delay_, 0.0);
+    fire_request.timing.control_latency_s = applied_control_latency;
+    fire_request.timing.trigger_to_muzzle_s = trigger_to_muzzle_s_;
+    fire_request.timing.max_processing_delay_s = max_processing_delay_s_;
+    fire_request.timing.include_processing_delay = true;
+    fire_request.timing.include_control_latency_in_target_prediction = false;
+
+    const auto fire_result = fire_advice_engine_->evaluate(fire_request);
+    if (fire_result.valid) {
+      fire_advice = fire_result.fire_advice;
+      fire_compensation_s = fire_result.timeline.muzzle_delay_s;
+    }
+  } else if (fire_advisor_) {
+    const double fire_muzzle_delay_s =
+      std::max(processing_delay, 0.0) + std::max(prediction_delay_, 0.0) + trigger_to_muzzle_s_;
+    fire_advice = fire_advisor_->shouldFireWithDelay(
+      context.current_yaw,
+      context.current_pitch,
+      fire_yaw + yaw_offset_rad,
+      fire_pitch + pitch_offset_rad,
+      current_selection.distance,
+      fire_muzzle_delay_s);
+    fire_compensation_s = trigger_to_muzzle_s_;
+  }
 
   // 高转速时始终建议开火
   if (state_ == TRACKING_CENTER) {
@@ -273,7 +303,7 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   audit.flight_time_s = flight_time;
   audit.total_prediction_time_s = applied_prediction_time;
   audit.control_latency_s = applied_control_latency;
-  audit.fire_control_compensation_s = 0.0;
+  audit.fire_control_compensation_s = fire_compensation_s;
   audit.control_delay_steps = 0;
   audit.uses_delayed_b = false;
   audit.double_compensation_risk = false;
@@ -304,6 +334,11 @@ void PredictedPositionStrategy::setManualOffset(double pitch_offset, double yaw_
 void PredictedPositionStrategy::setControllerDelay(double controller_delay)
 {
   controller_delay_ = controller_delay;
+}
+
+void PredictedPositionStrategy::setTriggerToMuzzleDelay(double trigger_to_muzzle_s)
+{
+  trigger_to_muzzle_s_ = trigger_to_muzzle_s > 0.0 ? trigger_to_muzzle_s : 0.0;
 }
 
 void PredictedPositionStrategy::setAdaptiveDelayParams(

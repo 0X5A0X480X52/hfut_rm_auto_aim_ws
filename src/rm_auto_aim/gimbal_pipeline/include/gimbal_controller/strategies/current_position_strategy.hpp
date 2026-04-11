@@ -69,6 +69,12 @@ public:
   void setMaxProcessingDelay(double max_processing_delay);
 
   /**
+   * @brief 设置触发到出膛延迟
+   * @param trigger_to_muzzle_s 出膛延迟 (秒)
+   */
+  void setTriggerToMuzzleDelay(double trigger_to_muzzle_s);
+
+  /**
    * @brief 配置自适应 delay AIMD 参数（与 PredictedPositionStrategy 同名接口）
    */
   void setAdaptiveDelayParams(
@@ -86,6 +92,7 @@ private:
   double pitch_offset_{0.0};       // pitch手动补偿 (度)
   double yaw_offset_{0.0};         // yaw手动补偿 (度)
   double controller_delay_{0.0};   // 云台前馈延迟 (秒, 0=禁用)
+  double trigger_to_muzzle_s_{0.0};
   double max_processing_delay_s_{0.5};
 
   // 自适应 delay AIMD

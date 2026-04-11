@@ -22,6 +22,7 @@
 #include <limits>
 #include <utility>
 
+#include "gimbal_controller/fire_advice_engine.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 
@@ -108,11 +109,12 @@ void MpcControlStrategy::initReferenceGenerator()
 }
 
 void MpcControlStrategy::setDelayCompensation(
-  bool enable, double prediction_delay_s, int flight_time_iters,
+  bool enable, double prediction_delay_s, double trigger_to_muzzle_s, int flight_time_iters,
   double max_processing_delay_s)
 {
   enable_delay_compensation_ = enable;
   prediction_delay_s_ = prediction_delay_s;
+  trigger_to_muzzle_s_ = trigger_to_muzzle_s;
   flight_time_iters_ = flight_time_iters;
   max_processing_delay_s_ = max_processing_delay_s;
 }
@@ -613,13 +615,14 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   const bool use_delayed_reference =
     enable_delay_compensation_ || (yaw_feedforward_s > 1e-6);
 
-  const bool allow_fire_control_compensation =
-    enable_delay_compensation_ && control_delay_s_ > 1e-6;
+  const bool allow_muzzle_compensation =
+    enable_delay_compensation_ && trigger_to_muzzle_s_ > 1e-6;
   delay_management::DelayRawInputs delay_raw;
   delay_raw.current_time = context.current_time;
   delay_raw.observation_stamp = context.target_stamp;
   delay_raw.prediction_extra_s = prediction_delay_s_;
   delay_raw.control_latency_s = control_delay_s_;
+  delay_raw.trigger_to_muzzle_s = trigger_to_muzzle_s_;
   delay_raw.max_processing_delay_s = max_processing_delay_s_;
 
   const auto mpc_delay = delay_manager_.computeMpcDelay(
@@ -627,7 +630,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     dt_,
     enable_delay_compensation_,
     uses_delayed_b_model_,
-    allow_fire_control_compensation);
+    allow_muzzle_compensation);
 
   if (mpc_delay.double_compensation_risk && !warned_double_compensation_) {
     RCLCPP_WARN(
@@ -802,19 +805,38 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     double distance  = target_distance;
 
     bool fire_advice = false;
-    if (fire_advisor_) {
-      if (mpc_delay.fire_control_compensation_s > 1e-6) {
-        double ref_yaw_dot   = X_ref(2);
-        double ref_pitch_dot = X_ref(3);
-        double fire_yaw =
-          context.current_yaw + ref_yaw_dot * mpc_delay.fire_control_compensation_s;
-        double fire_pitch =
-          context.current_pitch + ref_pitch_dot * mpc_delay.fire_control_compensation_s;
-        fire_advice = fire_advisor_->shouldFire(fire_yaw, fire_pitch, ref_yaw, ref_pitch, distance);
-      } else {
-        fire_advice = fire_advisor_->shouldFire(
-          context.current_yaw, context.current_pitch, ref_yaw, ref_pitch, distance);
+    if (fire_advice_engine_) {
+      FireAdviceEngineRequest fire_request;
+      fire_request.target_robot = target_robot;
+      fire_request.current_time = context.current_time;
+      fire_request.observation_stamp = context.target_stamp;
+      fire_request.current_yaw = context.current_yaw;
+      fire_request.current_pitch = context.current_pitch;
+      fire_request.current_yaw_rate = x0(2);
+      fire_request.current_pitch_rate = x0(3);
+      fire_request.bullet_speed = context.bullet_speed;
+      fire_request.timing.prediction_delay_s = std::max(prediction_delay_s_, 0.0);
+      fire_request.timing.control_latency_s = std::max(control_delay_s_, 0.0);
+      fire_request.timing.trigger_to_muzzle_s = trigger_to_muzzle_s_;
+      fire_request.timing.max_processing_delay_s = max_processing_delay_s_;
+      fire_request.timing.include_processing_delay = enable_delay_compensation_;
+      fire_request.timing.include_control_latency_in_target_prediction = false;
+
+      const auto fire_result = fire_advice_engine_->evaluate(fire_request);
+      if (fire_result.valid) {
+        fire_advice = fire_result.fire_advice;
+        distance = fire_result.distance;
       }
+    } else if (fire_advisor_) {
+      fire_advice = fire_advisor_->shouldFireWithDelay(
+        context.current_yaw,
+        context.current_pitch,
+        ref_yaw,
+        ref_pitch,
+        distance,
+        mpc_delay.fire_control_compensation_s,
+        X_ref(2),
+        X_ref(3));
     }
 
     rm_interfaces::msg::GimbalCmd cmd;
@@ -938,22 +960,38 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   double distance = target_distance;
 
   bool fire_advice = false;
-  if (fire_advisor_) {
-    if (mpc_delay.fire_control_compensation_s > 1e-6) {
-      // 延时补偿开火判断: 预测控制延迟后的云台姿态
-      double ref_yaw_dot = X_ref(2);
-      double ref_pitch_dot = X_ref(3);
-      double fire_yaw =
-        context.current_yaw + ref_yaw_dot * mpc_delay.fire_control_compensation_s;
-      double fire_pitch =
-        context.current_pitch + ref_pitch_dot * mpc_delay.fire_control_compensation_s;
-      fire_advice = fire_advisor_->shouldFire(
-        fire_yaw, fire_pitch, ref_yaw, ref_pitch, distance);
-    } else {
-      fire_advice = fire_advisor_->shouldFire(
-        context.current_yaw, context.current_pitch,
-        ref_yaw, ref_pitch, distance);
+  if (fire_advice_engine_) {
+    FireAdviceEngineRequest fire_request;
+    fire_request.target_robot = target_robot;
+    fire_request.current_time = context.current_time;
+    fire_request.observation_stamp = context.target_stamp;
+    fire_request.current_yaw = context.current_yaw;
+    fire_request.current_pitch = context.current_pitch;
+    fire_request.current_yaw_rate = x0(2);
+    fire_request.current_pitch_rate = x0(3);
+    fire_request.bullet_speed = context.bullet_speed;
+    fire_request.timing.prediction_delay_s = std::max(prediction_delay_s_, 0.0);
+    fire_request.timing.control_latency_s = std::max(control_delay_s_, 0.0);
+    fire_request.timing.trigger_to_muzzle_s = trigger_to_muzzle_s_;
+    fire_request.timing.max_processing_delay_s = max_processing_delay_s_;
+    fire_request.timing.include_processing_delay = enable_delay_compensation_;
+    fire_request.timing.include_control_latency_in_target_prediction = false;
+
+    const auto fire_result = fire_advice_engine_->evaluate(fire_request);
+    if (fire_result.valid) {
+      fire_advice = fire_result.fire_advice;
+      distance = fire_result.distance;
     }
+  } else if (fire_advisor_) {
+    fire_advice = fire_advisor_->shouldFireWithDelay(
+      context.current_yaw,
+      context.current_pitch,
+      ref_yaw,
+      ref_pitch,
+      distance,
+      mpc_delay.fire_control_compensation_s,
+      X_ref(2),
+      X_ref(3));
   }
 
   // 11) 填充 GimbalCmd (角度以度为单位)
@@ -1055,10 +1093,31 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::fallbackDirectAim(
     fyt::auto_aim::robot_description::TrackedRobotUsage::centerDistance(target_robot);
 
   bool fire_advice = false;
-  if (fire_advisor_) {
-    fire_advice = fire_advisor_->shouldFire(
+  if (fire_advice_engine_) {
+    FireAdviceEngineRequest fire_request;
+    fire_request.target_robot = target_robot;
+    fire_request.current_time = context.current_time;
+    fire_request.observation_stamp = context.target_stamp;
+    fire_request.current_yaw = context.current_yaw;
+    fire_request.current_pitch = context.current_pitch;
+    fire_request.bullet_speed = context.bullet_speed;
+    fire_request.timing.prediction_delay_s = std::max(prediction_delay_s_, 0.0);
+    fire_request.timing.control_latency_s = std::max(control_delay_s_, 0.0);
+    fire_request.timing.trigger_to_muzzle_s = trigger_to_muzzle_s_;
+    fire_request.timing.max_processing_delay_s = max_processing_delay_s_;
+    fire_request.timing.include_processing_delay = enable_delay_compensation_;
+    fire_request.timing.include_control_latency_in_target_prediction = false;
+
+    const auto fire_result = fire_advice_engine_->evaluate(fire_request);
+    if (fire_result.valid) {
+      fire_advice = fire_result.fire_advice;
+      distance = fire_result.distance;
+    }
+  } else if (fire_advisor_) {
+    fire_advice = fire_advisor_->shouldFireWithDelay(
       context.current_yaw, context.current_pitch,
-      ref_yaw, ref_pitch, distance);
+      ref_yaw, ref_pitch, distance,
+      0.0);
   }
 
   rm_interfaces::msg::GimbalCmd cmd;

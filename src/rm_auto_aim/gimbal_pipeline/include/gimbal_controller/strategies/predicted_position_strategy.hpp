@@ -84,6 +84,12 @@ public:
   void setControllerDelay(double controller_delay);
 
   /**
+   * @brief 设置触发到出膛延迟
+   * @param trigger_to_muzzle_s 出膛延迟 (秒)
+   */
+  void setTriggerToMuzzleDelay(double trigger_to_muzzle_s);
+
+  /**
    * @brief 配置自适应 delay AIMD 参数
    * @param enable              是否启用自适应模式（false 时退化为静态 controller_delay）
    * @param initial_delay       初始 delay，即 controller.solver.controller_delay 的值 (秒)
@@ -111,6 +117,7 @@ private:
   double max_prediction_time_{0.5};   // 最大预测时间 (秒)
   double max_processing_delay_s_{0.5};  // processing_delay 上限 (秒)
   double controller_delay_{0.0};      // 云台前馈延迟 (秒, 0=禁用)
+  double trigger_to_muzzle_s_{0.0};
   double pitch_offset_{0.0};          // pitch手动补偿 (度)
   double yaw_offset_{0.0};            // yaw手动补偿 (度)
   double max_tracking_v_yaw_{6.0};    // 触发跟踪中心的角速度阈值

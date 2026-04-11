@@ -55,21 +55,44 @@ double DelaySemanticManager::computePredictionTime(
   return total;
 }
 
+FireTimelineResult DelaySemanticManager::computeFireTimeline(
+  const DelayRawInputs & raw,
+  bool include_processing_delay,
+  bool include_control_latency_in_target_prediction) const
+{
+  FireTimelineResult result;
+
+  result.processing_delay_s = computeProcessingDelay(raw, include_processing_delay);
+  result.prediction_delay_s = clampNonNegative(raw.prediction_extra_s);
+  result.control_latency_s = clampNonNegative(raw.control_latency_s);
+  result.trigger_to_muzzle_s = clampNonNegative(raw.trigger_to_muzzle_s);
+
+  // 按当前语义: 出膛时刻默认不补偿控制链路延迟。
+  result.muzzle_delay_s = result.trigger_to_muzzle_s;
+
+  result.target_prediction_base_s =
+    result.processing_delay_s + result.prediction_delay_s + result.trigger_to_muzzle_s;
+  if (include_control_latency_in_target_prediction) {
+    result.target_prediction_base_s += result.control_latency_s;
+  }
+
+  return result;
+}
+
 MpcDelayResult DelaySemanticManager::computeMpcDelay(
   const DelayRawInputs & raw,
   double dt_s,
   bool include_processing_delay,
   bool use_delayed_b,
-  bool allow_fire_control_compensation) const
+  bool allow_muzzle_compensation) const
 {
   MpcDelayResult result;
 
-  const double processing = computeProcessingDelay(raw, include_processing_delay);
-  const double prediction_extra = clampNonNegative(raw.prediction_extra_s);
-  const double control_latency = clampNonNegative(raw.control_latency_s);
+  const auto timeline = computeFireTimeline(raw, include_processing_delay, false);
+  const double control_latency = timeline.control_latency_s;
 
-  result.processing_delay_s = processing;
-  result.base_reference_delay_s = processing + prediction_extra;
+  result.processing_delay_s = timeline.processing_delay_s;
+  result.base_reference_delay_s = timeline.processing_delay_s + timeline.prediction_delay_s;
   result.control_latency_s = control_latency;
   result.uses_delayed_b = use_delayed_b;
 
@@ -77,11 +100,10 @@ MpcDelayResult DelaySemanticManager::computeMpcDelay(
     result.control_delay_steps = std::max(0, static_cast<int>(std::round(control_latency / dt_s)));
   }
 
-  result.double_compensation_risk =
-    use_delayed_b && allow_fire_control_compensation && control_latency > 1e-6;
+  result.double_compensation_risk = false;
 
   result.fire_control_compensation_s =
-    (allow_fire_control_compensation && !use_delayed_b) ? control_latency : 0.0;
+    allow_muzzle_compensation ? timeline.muzzle_delay_s : 0.0;
 
   return result;
 }

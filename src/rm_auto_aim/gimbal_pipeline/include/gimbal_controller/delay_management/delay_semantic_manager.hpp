@@ -34,13 +34,27 @@ struct DelayRawInputs
 struct MpcDelayResult
 {
   double processing_delay_s{0.0};
-  double base_reference_delay_s{0.0};
+  double base_reference_delay_s{0.0};  // processing_delay + prediction_delay
   double control_latency_s{0.0};
-  double fire_control_compensation_s{0.0};
+  double fire_control_compensation_s{0.0};  // trigger_to_muzzle
 
   int control_delay_steps{0};
   bool uses_delayed_b{false};
   bool double_compensation_risk{false};
+};
+
+struct FireTimelineResult
+{
+  double processing_delay_s{0.0};
+  double prediction_delay_s{0.0};
+  double control_latency_s{0.0};
+  double trigger_to_muzzle_s{0.0};
+
+  // 子弹出膛相对当前控制时刻的偏移
+  double muzzle_delay_s{0.0};
+
+  // 候选目标预测基准时间: d_proc + d_pred (+d_ctrl 可选) + d_trig
+  double target_prediction_base_s{0.0};
 };
 
 class DelaySemanticManager
@@ -58,12 +72,17 @@ public:
     double flight_time_s,
     double max_prediction_time_s) const;
 
+  FireTimelineResult computeFireTimeline(
+    const DelayRawInputs & raw,
+    bool include_processing_delay = true,
+    bool include_control_latency_in_target_prediction = false) const;
+
   MpcDelayResult computeMpcDelay(
     const DelayRawInputs & raw,
     double dt_s,
     bool include_processing_delay,
     bool use_delayed_b,
-    bool allow_fire_control_compensation) const;
+    bool allow_muzzle_compensation) const;
 
 private:
   static double clampNonNegative(double value);
