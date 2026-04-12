@@ -116,14 +116,19 @@ template <int capacity>
 bool FixedPacketTool<capacity>::checkPacket(uint8_t *buffer, int recv_len) {
   // 检查长度
   if (recv_len != capacity) {
+    FYT_WARN("serial_driver", "checkPacket Failed: recv_len != capacity");
     return false;
   }
   // 检查帧头，帧尾,
   if ((buffer[0] != 0xff) || (buffer[capacity - 1] != 0x0d)) {
+    FYT_WARN("serial_driver", "checkPacket Failed: error head or tail");
     return false;
   }
   // TODO(gezp): 检查check_byte(buffer[capacity-2]),可采用异或校验(BCC)
-  if (crc8_ccitt(buffer) != buffer[capacity-2])return false;
+  if (crc8_ccitt(buffer) != buffer[capacity-2]) {
+    FYT_WARN("serial_driver", "checkPacket Failed: CRC failed");
+    return false;
+  }
   return true;
 }
 
