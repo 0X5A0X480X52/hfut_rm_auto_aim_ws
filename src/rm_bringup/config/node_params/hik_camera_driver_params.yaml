@@ -24,9 +24,9 @@
     # - 低帧率 (10fps): 稳定，适合调试，避免MV_E_NODATA错误
     # - 中帧率 (30fps): 平衡性能和稳定性
     # - 高帧率 (50fps+): 需要确保相机和USB带宽充足
-    exposure_time: 2500.0  # Exposure time in microseconds (曝光时间)
+    exposure_time: 4500.0  # Exposure time in microseconds (曝光时间)
     gain: 16.0              # Gain value (0~16) (增益)
-    frame_rate: 180.0       # Frame rate in fps (帧率 - 建议从10开始)
+    frame_rate: 250.0       # Frame rate in fps (帧率 - 建议从10开始)
     
     # Image processing
     flip_image: true      # Whether to flip the image (是否翻转图像)

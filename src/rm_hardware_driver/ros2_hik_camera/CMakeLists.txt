@@ -45,13 +45,25 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 )
 
 # HIKVision SDK library path
-set(HIK_SDK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/hiksdk CACHE PATH "Path to HIKVision SDK")
+# 强制使用系统 /opt/MVS，不使用缓存，彻底解决路径跑偏问题
+set(HIK_SDK_DIR /opt/MVS)
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
-  target_link_directories(${PROJECT_NAME} PUBLIC ${HIK_SDK_DIR}/lib/64)
+  set(HIK_LIB_DIR ${HIK_SDK_DIR}/lib/64)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+  set(HIK_LIB_DIR ${HIK_SDK_DIR}/lib/aarch64)
 else()
   message(FATAL_ERROR "Unsupported host system architecture: ${CMAKE_SYSTEM_PROCESSOR}!")
 endif()
+
+# 让链接器正确搜索库路径
+link_directories(${HIK_LIB_DIR})
+
+# ========== 核心修复：绝对路径导入库，让 ld 百分百找到 ==========
+add_library(MvCameraControl SHARED IMPORTED GLOBAL)
+set_target_properties(MvCameraControl PROPERTIES
+  IMPORTED_LOCATION "${HIK_LIB_DIR}/libMvCameraControl.so"
+)
 
 target_link_libraries(${PROJECT_NAME}
   MvCameraControl

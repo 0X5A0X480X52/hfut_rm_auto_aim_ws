@@ -257,6 +257,9 @@ class GimbalPipelineNode : public rclcpp::Node {
   std::shared_ptr<tf2_ros::Buffer> tf2_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf2_listener_;
 
+  // Heartbeat
+  HeartBeatPublisher::SharedPtr heartbeat_;
+
   /* ================================================================ */
   /*  Prediction logger (optional, controlled by logging.enable)   */
   /* ================================================================ */
