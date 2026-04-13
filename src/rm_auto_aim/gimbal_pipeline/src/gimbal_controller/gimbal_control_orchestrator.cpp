@@ -76,7 +76,10 @@ rm_interfaces::msg::GimbalCmd GimbalControlOrchestrator::finalize(
     cmd.target_id = context.target_robot.robot_id;
   }
 
-  cmd.mode = decideMode(context);
+  // Respect strategy-explicit mode when provided; otherwise infer from context.
+  cmd.mode =
+    (control_cmd.mode != rm_interfaces::msg::GimbalCmd::MODE_UNKNOWN) ?
+    control_cmd.mode : decideMode(context);
 
   if (cmd.mode != rm_interfaces::msg::GimbalCmd::MODE_NORMAL_MEASUREMENT) {
     cmd.distance = 0.0;
@@ -90,7 +93,10 @@ rm_interfaces::msg::GimbalCmd GimbalControlOrchestrator::finalize(
     fyt::auto_aim::robot_description::TrackedRobotUsage::centerDistance(target_robot);
 
   cmd.distance = std::max(control_cmd.distance, 0.0);
-  if (cmd.distance <= 1e-6) {
+  const bool allow_fallback_distance =
+    control_cmd.mode == rm_interfaces::msg::GimbalCmd::MODE_UNKNOWN ||
+    control_cmd.mode == rm_interfaces::msg::GimbalCmd::MODE_NORMAL_MEASUREMENT;
+  if (allow_fallback_distance && cmd.distance <= 1e-6) {
     cmd.distance = std::max(fallback_distance, 0.0);
   }
 

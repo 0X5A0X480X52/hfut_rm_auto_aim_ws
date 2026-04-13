@@ -197,6 +197,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   predict_rate_ = get_parameter("predict_rate").as_double();
   debug_mode_ = get_parameter("debug_mode").as_bool();
   visualization_frame_ = get_parameter("visualization_frame").as_string();
+  tracker_timeout_s_ = std::max(get_parameter("tracker_timeout").as_double(), 1e-3);
 
   tracker_config_ = UnifiedConfig::create_default();
   applyTrackerParamsToConfig();
@@ -220,7 +221,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       get_parameter("default_r1").as_double(),
       get_parameter("default_r2").as_double(),
       get_parameter("default_dza").as_double(),
-      get_parameter("tracker_timeout").as_double(),
+      tracker_timeout_s_,
       get_parameter("enable_oscillation_detection").as_bool());
 
   robot_description_facade_ = std::make_unique<robot_description::RobotDescriptionFacade>();
@@ -1097,19 +1098,19 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
 
 void GimbalPipelineNode::armorsCallback(
     const rm_interfaces::msg::Armors::SharedPtr msg) {
-  if (msg->armors.empty()) {
-    RCLCPP_INFO(get_logger(), "Received empty armors message, skipping tracker update");
-    return;
-  }
-
   rclcpp::Time msg_time(msg->header.stamp);
   double current_time = msg_time.seconds();
+  if (msg->armors.empty()) {
+    RCLCPP_DEBUG_THROTTLE(
+      get_logger(), *get_clock(), 1000,
+      "Received empty armors message, running missing-target update");
+  }
 
   // ── Step 1: Predict all existing trackers ──
   tracker_manager_->predict_all(current_time);
-  auto removed = tracker_manager_->remove_stale(current_time);
-  if (!removed.empty() && debug_mode_) {
-    RCLCPP_INFO(get_logger(), "Removed %zu stale trackers", removed.size());
+  auto removed_stale = tracker_manager_->remove_stale(current_time);
+  if (!removed_stale.empty() && debug_mode_) {
+    RCLCPP_INFO(get_logger(), "Removed %zu stale trackers", removed_stale.size());
   }
 
   // ── Step 2: Group observations by robot ID ──
@@ -1195,14 +1196,6 @@ void GimbalPipelineNode::armorsCallback(
     }
   }
 
-  // Clean up smoothers for removed trackers
-  for (const auto &rid : removed) {
-    smoothers_.erase(rid);
-    last_dual_obs_.erase(rid);
-    outlier_filters_.erase(rid);
-    last_smoothed_outputs_.erase(rid);
-  }
-
   // ── Step 3.5: Notify trackers that did NOT receive observations this frame ──
   // This drives the state machine: TRACKING → TEMP_LOST → LOST for
   // missing targets, preventing "ghost tracking" of disappeared targets.
@@ -1212,6 +1205,25 @@ void GimbalPipelineNode::armorsCallback(
       observed_ids.insert(rid);
     }
     tracker_manager_->notify_missing(observed_ids, current_time);
+  }
+  auto removed_lost = tracker_manager_->remove_lost();
+  if (!removed_lost.empty() && debug_mode_) {
+    RCLCPP_INFO(get_logger(), "Removed %zu lost trackers", removed_lost.size());
+  }
+
+  // Clean up per-robot caches for trackers that no longer exist.
+  std::vector<std::string> removed_ids;
+  removed_ids.reserve(removed_stale.size() + removed_lost.size());
+  removed_ids.insert(removed_ids.end(), removed_stale.begin(), removed_stale.end());
+  removed_ids.insert(removed_ids.end(), removed_lost.begin(), removed_lost.end());
+  for (const auto &rid : removed_ids) {
+    if (tracker_manager_->get(rid) != nullptr) {
+      continue;
+    }
+    smoothers_.erase(rid);
+    last_dual_obs_.erase(rid);
+    outlier_filters_.erase(rid);
+    last_smoothed_outputs_.erase(rid);
   }
 
   // ── Step 4: Build TrackedRobots message (internal) ──
@@ -1810,7 +1822,7 @@ void GimbalPipelineNode::buildControlContextFromCache(
 
   // Cache freshness check: stale target cache should not drive control.
   const double data_age = (context.current_time - data_update_time).seconds();
-  const double max_data_age = 0.5;
+  const double max_data_age = std::max(tracker_timeout_s_, 1e-3);
   if (data_age > max_data_age) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 1000,

@@ -103,15 +103,21 @@ class TrackerManager {
                   << " lost_count=" << entry.tracker->lost_count() << std::endl;
       }
     }
-    // Also clean up trackers that have transitioned to LOST state
+  }
+
+  /// Remove trackers that have transitioned to LOST state.
+  std::vector<std::string> remove_lost() {
+    std::vector<std::string> removed;
     for (auto it = trackers_.begin(); it != trackers_.end();) {
       if (it->second.tracker->is_lost()) {
         std::cout << "[TrackerManager] Removing LOST tracker: robot_id=" << it->first << std::endl;
+        removed.push_back(it->first);
         it = trackers_.erase(it);
       } else {
         ++it;
       }
     }
+    return removed;
   }
 
   /// Predict all active trackers to target_time.

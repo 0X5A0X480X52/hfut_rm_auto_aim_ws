@@ -150,6 +150,7 @@ class GimbalPipelineNode : public rclcpp::Node {
   double predict_rate_;
   bool debug_mode_;
   std::string visualization_frame_;
+  double tracker_timeout_s_{0.5};
 
   std::unique_ptr<TFHandler> tf_handler_;
   std::unique_ptr<TrackerManager> tracker_manager_;

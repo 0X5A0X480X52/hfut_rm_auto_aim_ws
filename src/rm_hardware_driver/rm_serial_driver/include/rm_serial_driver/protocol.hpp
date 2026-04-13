@@ -57,7 +57,21 @@ public:
 
   virtual std::string getErrorMessage() = 0;
 
-private:
+protected:
+  static rm_interfaces::msg::GimbalCmd sanitizeForTransport(
+    const rm_interfaces::msg::GimbalCmd & data)
+  {
+    auto sanitized = data;
+    if (sanitized.mode != rm_interfaces::msg::GimbalCmd::MODE_NORMAL_MEASUREMENT) {
+      sanitized.fire_advice = false;
+      sanitized.distance = 0.0;
+      sanitized.pitch_v = 0.0;
+      sanitized.yaw_v = 0.0;
+      sanitized.pitch_a = 0.0;
+      sanitized.yaw_a = 0.0;
+    }
+    return sanitized;
+  }
 };
 
 }  // namespace protocol

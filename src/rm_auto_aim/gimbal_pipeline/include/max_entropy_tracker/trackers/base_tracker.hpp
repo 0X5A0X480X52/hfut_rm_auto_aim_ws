@@ -85,7 +85,7 @@ class BaseTracker {
 
   void handle_observation_loss(int /*tracking_thres*/, int lost_thres) {
     ++lost_count_;
-    if (lost_count_ >= lost_thres) transition_to(TrackerState::LOST);
+    if (lost_count_ > lost_thres) transition_to(TrackerState::LOST);
     else if (state_ == TrackerState::TRACKING) transition_to(TrackerState::TEMP_LOST);
     else if (state_ == TrackerState::INITIALIZING) transition_to(TrackerState::LOST);
   }
@@ -93,7 +93,7 @@ class BaseTracker {
   void handle_observation_received(int tracking_thres) {
     lost_count_ = 0;
     if (state_ == TrackerState::TEMP_LOST) transition_to(TrackerState::TRACKING);
-    else if (state_ == TrackerState::INITIALIZING && frame_count_ >= tracking_thres)
+    else if (state_ == TrackerState::INITIALIZING && frame_count_ > tracking_thres)
       transition_to(TrackerState::TRACKING);
   }
 
