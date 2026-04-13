@@ -15,8 +15,6 @@
 #include "gimbal_controller/strategies/state_machine_strategy.hpp"
 #include "gimbal_controller/armor_position_calculator.hpp"
 #include "gimbal_controller/armor_selector.hpp"
-#include "gimbal_controller/fire_advice_engine.hpp"
-#include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
 #include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 #include <angles/angles.h>
@@ -51,7 +49,7 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
     return createIdleCmd();
   }
 
-  if (!position_calculator_ || !armor_selector_ || (!fire_advice_engine_ && !fire_advisor_)) {
+  if (!position_calculator_ || !armor_selector_) {
     markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
@@ -387,6 +385,9 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::buildCommand(
   double fire_distance,
   bool force_fire)
 {
+  (void)force_fire;
+  (void)fire_target;
+
   const Eigen::Vector3d target_velocity =
     fyt::auto_aim::robot_description::TrackedRobotUsage::linearVelocity(context.target_robot);
 
@@ -394,15 +395,6 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::buildCommand(
   double control_pitch, control_yaw, control_flight;
   if (!computeBallistic(control_target, target_velocity, context.bullet_speed,
                         control_pitch, control_yaw, control_flight))
-  {
-    markDelayAuditInvalid(getName(), true);
-    return createIdleCmd();
-  }
-
-  // 弹道补偿 (开火判断目标)
-  double fire_pitch, fire_yaw, fire_flight;
-  if (!computeBallistic(fire_target, target_velocity, context.bullet_speed,
-                        fire_pitch, fire_yaw, fire_flight))
   {
     markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
@@ -418,52 +410,15 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::buildCommand(
   double yaw_diff = angles::normalize_angle(cmd_yaw - context.current_yaw);
   double pitch_diff = cmd_pitch - context.current_pitch;
 
-  bool fire_advice = force_fire;
-  double fire_compensation_s = trigger_to_muzzle_s_;
-  if (!force_fire && (fire_advice_engine_ || fire_advisor_)) {
-    if (fire_advice_engine_) {
-      FireAdviceEngineRequest fire_request;
-      fire_request.target_robot = context.target_robot;
-      fire_request.current_time = context.current_time;
-      fire_request.observation_stamp = context.target_stamp;
-      fire_request.current_yaw = context.current_yaw;
-      fire_request.current_pitch = context.current_pitch;
-      fire_request.bullet_speed = context.bullet_speed;
-      fire_request.yaw_offset_rad = yaw_offset_rad;
-      fire_request.pitch_offset_rad = pitch_offset_rad;
-      fire_request.timing.prediction_delay_s = std::max(prediction_delay_, 0.0);
-      fire_request.timing.control_latency_s = 0.0;
-      fire_request.timing.trigger_to_muzzle_s = trigger_to_muzzle_s_;
-      fire_request.timing.max_processing_delay_s = max_processing_delay_s_;
-      fire_request.timing.include_processing_delay = true;
-      fire_request.timing.include_control_latency_in_target_prediction = false;
-
-      const auto fire_result = fire_advice_engine_->evaluate(fire_request);
-      if (fire_result.valid) {
-        fire_advice = fire_result.fire_advice;
-        fire_compensation_s = fire_result.timeline.muzzle_delay_s;
-      }
-    } else {
-      const double fire_muzzle_delay_s =
-        std::max(last_processing_delay_s_, 0.0) + std::max(prediction_delay_, 0.0) +
-        trigger_to_muzzle_s_;
-      fire_advice = fire_advisor_->shouldFireWithDelay(
-        context.current_yaw, context.current_pitch,
-        fire_yaw + yaw_offset_rad, fire_pitch + pitch_offset_rad,
-        fire_distance,
-        fire_muzzle_delay_s);
-      fire_compensation_s = trigger_to_muzzle_s_;
-    }
-  }
+  // 策略层仅输出控制参数；开火建议由主循环统一计算。
+  const double fire_compensation_s = trigger_to_muzzle_s_;
 
   rm_interfaces::msg::GimbalCmd cmd;
-  cmd.header = context.target_robot.header;
   cmd.yaw = cmd_yaw * 180.0 / M_PI;
   cmd.pitch = cmd_pitch * 180.0 / M_PI;
   cmd.yaw_diff = yaw_diff * 180.0 / M_PI;
   cmd.pitch_diff = pitch_diff * 180.0 / M_PI;
-  cmd.distance = fire_distance;
-  cmd.fire_advice = fire_advice;
+  cmd.distance = std::max(fire_distance, 0.0);
 
   DelayAuditSnapshot audit;
   audit.strategy_name = getName();

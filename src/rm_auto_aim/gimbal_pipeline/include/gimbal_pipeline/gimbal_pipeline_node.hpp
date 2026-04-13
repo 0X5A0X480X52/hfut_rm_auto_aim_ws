@@ -60,7 +60,7 @@
 #include "gimbal_controller/ballistic_solver_client.hpp"
 #include "gimbal_controller/fire_advice_engine.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
-#include "gimbal_controller/gimbal_cmd_filter.hpp"
+#include "gimbal_controller/gimbal_control_core.hpp"
 #include "gimbal_controller/gimbal_control_strategy.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
 
@@ -113,6 +113,13 @@ class GimbalPipelineNode : public rclcpp::Node {
   void jointStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg);
   void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg);
   void updateGimbalState();
+  void buildControlContextFromCache(
+      gimbal_controller::GimbalControlContext &context,
+      std::string &selected_id);
+  void publishDelayAuditDebug(
+      const gimbal_controller::GimbalControlContext &context,
+      const gimbal_controller::DelayAuditSnapshot &audit,
+      const std::string &strategy_name);
   void timerCallback();
   void applyPendingRuntimeUpdates();
   void setModeCallback(
@@ -176,6 +183,7 @@ class GimbalPipelineNode : public rclcpp::Node {
   std::shared_ptr<gimbal_controller::LocalTrajectoryCompensator> local_compensator_;
   std::shared_ptr<gimbal_controller::FireAdvisor> fire_advisor_;
     std::shared_ptr<gimbal_controller::FireAdviceEngine> fire_advice_engine_;
+    std::shared_ptr<gimbal_controller::GimbalControlCore> gimbal_control_core_;
   std::unordered_map<std::string,
                      gimbal_controller::GimbalControlStrategy::SharedPtr>
       gimbal_strategies_;
@@ -198,11 +206,6 @@ class GimbalPipelineNode : public rclcpp::Node {
     double radial_dynamic_min_angle_deg_{5.0};
     double radial_dynamic_bias_gain_deg_{0.0};
     double radial_dynamic_max_bias_deg_{0.0};
-
-  // GimbalCmd 输出端保护滤波器
-  gimbal_controller::GimbalCmdFilter cmd_filter_;
-  // 记录上一帧跟踪的目标 ID，用于检测目标切换并 reset 滤波器
-  std::string prev_tracking_target_id_;
 
   /* ================================================================ */
   /*  Shared pipeline state (protected by mutex)                      */
@@ -256,10 +259,7 @@ class GimbalPipelineNode : public rclcpp::Node {
   // TF2
   std::shared_ptr<tf2_ros::Buffer> tf2_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf2_listener_;
-
-  // Heartbeat
-  HeartBeatPublisher::SharedPtr heartbeat_;
-
+  
   /* ================================================================ */
   /*  Prediction logger (optional, controlled by logging.enable)   */
   /* ================================================================ */

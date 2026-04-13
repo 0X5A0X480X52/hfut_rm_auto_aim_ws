@@ -15,11 +15,10 @@
 #include "gimbal_controller/strategies/current_position_strategy.hpp"
 #include "gimbal_controller/armor_position_calculator.hpp"
 #include "gimbal_controller/armor_selector.hpp"
-#include "gimbal_controller/fire_advice_engine.hpp"
-#include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 #include <angles/angles.h>
 #include <algorithm>
+#include <cmath>
 
 namespace gimbal_controller
 {
@@ -41,7 +40,7 @@ rm_interfaces::msg::GimbalCmd CurrentPositionStrategy::solve(
   }
 
   // 检查组件是否已设置
-  if (!position_calculator_ || !armor_selector_ || (!fire_advice_engine_ && !fire_advisor_)) {
+  if (!position_calculator_ || !armor_selector_) {
     markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
@@ -144,58 +143,27 @@ rm_interfaces::msg::GimbalCmd CurrentPositionStrategy::solve(
   double yaw_diff = angles::normalize_angle(cmd_yaw - context.current_yaw);
   double pitch_diff = cmd_pitch - context.current_pitch;
 
-  bool fire_advice = false;
-  double fire_compensation_s = trigger_to_muzzle_s_;
-  if (fire_advice_engine_) {
-    FireAdviceEngineRequest fire_request;
-    fire_request.target_robot = target_robot;
-    fire_request.current_time = context.current_time;
-    fire_request.observation_stamp = context.target_stamp;
-    fire_request.current_yaw = context.current_yaw;
-    fire_request.current_pitch = context.current_pitch;
-    fire_request.bullet_speed = context.bullet_speed;
-    fire_request.yaw_offset_rad = yaw_offset_rad;
-    fire_request.pitch_offset_rad = pitch_offset_rad;
-    fire_request.timing.prediction_delay_s = 0.0;
-    fire_request.timing.control_latency_s = std::max(effective_ctrl_delay, 0.0);
-    fire_request.timing.trigger_to_muzzle_s = trigger_to_muzzle_s_;
-    fire_request.timing.max_processing_delay_s = max_processing_delay_s_;
-    fire_request.timing.include_processing_delay = true;
-    fire_request.timing.include_control_latency_in_target_prediction = false;
-
-    const auto fire_result = fire_advice_engine_->evaluate(fire_request);
-    if (fire_result.valid) {
-      fire_advice = fire_result.fire_advice;
-      fire_compensation_s = fire_result.timeline.muzzle_delay_s;
-    }
-  } else if (fire_advisor_) {
-    const double fire_muzzle_delay_s = std::max(processing_delay, 0.0) + trigger_to_muzzle_s_;
-    fire_advice = fire_advisor_->shouldFireWithDelay(
-      context.current_yaw,
-      context.current_pitch,
-      cmd_yaw,
-      cmd_pitch,
-      fire_selection.distance,
-      fire_muzzle_delay_s);
-    fire_compensation_s = trigger_to_muzzle_s_;
-  }
+  // 策略层仅输出控制参数；开火建议由主循环统一计算。
+  const double fire_compensation_s = trigger_to_muzzle_s_;
 
   // 自适应 delay 更新（根据本帧 fire_advice 和目标速度）
   if (adaptive_delay_enabled_) {
+    constexpr double kFireLikeThreshold = 1.5 * M_PI / 180.0;
+    const bool fire_like =
+      std::abs(yaw_diff) < kFireLikeThreshold &&
+      std::abs(pitch_diff) < kFireLikeThreshold;
     double v_linear  = linear_velocity.norm();
     double v_angular = std::abs(target_yaw_velocity);
-    adaptive_ctrl_.update(fire_advice, v_linear, v_angular);
+    adaptive_ctrl_.update(fire_like, v_linear, v_angular);
   }
 
   // 构建控制命令
   rm_interfaces::msg::GimbalCmd cmd;
-  cmd.header = target_robot.header;
   cmd.yaw = cmd_yaw * 180.0 / M_PI;
   cmd.pitch = cmd_pitch * 180.0 / M_PI;
   cmd.yaw_diff = yaw_diff * 180.0 / M_PI;
   cmd.pitch_diff = pitch_diff * 180.0 / M_PI;
-  cmd.distance = control_distance;
-  cmd.fire_advice = fire_advice;
+  cmd.distance = std::max(control_distance, 0.0);
 
   DelayAuditSnapshot audit;
   audit.strategy_name = getName();

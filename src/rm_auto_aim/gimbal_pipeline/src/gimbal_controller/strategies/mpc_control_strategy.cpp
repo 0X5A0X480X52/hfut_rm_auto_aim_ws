@@ -22,8 +22,6 @@
 #include <limits>
 #include <utility>
 
-#include "gimbal_controller/fire_advice_engine.hpp"
-#include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 
 namespace gimbal_controller
@@ -800,47 +798,9 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     double yaw_diff   = angles::normalize_angle(cmd_yaw   - context.current_yaw);
     double pitch_diff = cmd_pitch - context.current_pitch;
 
-    double ref_yaw   = X_ref(0);
-    double ref_pitch = X_ref(1);
-    double distance  = target_distance;
-
-    bool fire_advice = false;
-    if (fire_advice_engine_) {
-      FireAdviceEngineRequest fire_request;
-      fire_request.target_robot = target_robot;
-      fire_request.current_time = context.current_time;
-      fire_request.observation_stamp = context.target_stamp;
-      fire_request.current_yaw = context.current_yaw;
-      fire_request.current_pitch = context.current_pitch;
-      fire_request.current_yaw_rate = x0(2);
-      fire_request.current_pitch_rate = x0(3);
-      fire_request.bullet_speed = context.bullet_speed;
-      fire_request.timing.prediction_delay_s = std::max(prediction_delay_s_, 0.0);
-      fire_request.timing.control_latency_s = std::max(control_delay_s_, 0.0);
-      fire_request.timing.trigger_to_muzzle_s = trigger_to_muzzle_s_;
-      fire_request.timing.max_processing_delay_s = max_processing_delay_s_;
-      fire_request.timing.include_processing_delay = enable_delay_compensation_;
-      fire_request.timing.include_control_latency_in_target_prediction = false;
-
-      const auto fire_result = fire_advice_engine_->evaluate(fire_request);
-      if (fire_result.valid) {
-        fire_advice = fire_result.fire_advice;
-        distance = fire_result.distance;
-      }
-    } else if (fire_advisor_) {
-      fire_advice = fire_advisor_->shouldFireWithDelay(
-        context.current_yaw,
-        context.current_pitch,
-        ref_yaw,
-        ref_pitch,
-        distance,
-        mpc_delay.fire_control_compensation_s,
-        X_ref(2),
-        X_ref(3));
-    }
+    const double distance = target_distance;
 
     rm_interfaces::msg::GimbalCmd cmd;
-    cmd.header     = target_robot.header;
     cmd.yaw        = cmd_yaw   * 180.0 / M_PI;
     cmd.pitch      = cmd_pitch * 180.0 / M_PI;
     cmd.yaw_diff   = yaw_diff   * 180.0 / M_PI;
@@ -849,9 +809,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     cmd.pitch_v    = x_next(3) * 180.0 / M_PI;
     cmd.yaw_a      = u_opt(0) * 180.0 / M_PI;
     cmd.pitch_a    = u_opt(1) * 180.0 / M_PI;
-    // TEMP_LOST 时无 detector 实际观测，distance 输出 -1 以示无有效测量
-    cmd.distance   = context.is_temp_lost ? -1.0 : distance;
-    cmd.fire_advice = fire_advice;
+    cmd.distance   = std::max(distance, 0.0);
     return cmd;
   }
 
@@ -956,49 +914,10 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   //           << " rad. Command diff: yaw_diff=" << yaw_diff << " rad, pitch_diff=" << pitch_diff
   //           << " rad." << std::endl;
 
-  // 10) 开火判断: 使用参考轨迹第一步的 yaw/pitch 作为开火目标
-  double ref_yaw = X_ref(0);
-  double ref_pitch = X_ref(1);
-  double distance = target_distance;
-
-  bool fire_advice = false;
-  if (fire_advice_engine_) {
-    FireAdviceEngineRequest fire_request;
-    fire_request.target_robot = target_robot;
-    fire_request.current_time = context.current_time;
-    fire_request.observation_stamp = context.target_stamp;
-    fire_request.current_yaw = context.current_yaw;
-    fire_request.current_pitch = context.current_pitch;
-    fire_request.current_yaw_rate = x0(2);
-    fire_request.current_pitch_rate = x0(3);
-    fire_request.bullet_speed = context.bullet_speed;
-    fire_request.timing.prediction_delay_s = std::max(prediction_delay_s_, 0.0);
-    fire_request.timing.control_latency_s = std::max(control_delay_s_, 0.0);
-    fire_request.timing.trigger_to_muzzle_s = trigger_to_muzzle_s_;
-    fire_request.timing.max_processing_delay_s = max_processing_delay_s_;
-    fire_request.timing.include_processing_delay = enable_delay_compensation_;
-    fire_request.timing.include_control_latency_in_target_prediction = false;
-
-    const auto fire_result = fire_advice_engine_->evaluate(fire_request);
-    if (fire_result.valid) {
-      fire_advice = fire_result.fire_advice;
-      distance = fire_result.distance;
-    }
-  } else if (fire_advisor_) {
-    fire_advice = fire_advisor_->shouldFireWithDelay(
-      context.current_yaw,
-      context.current_pitch,
-      ref_yaw,
-      ref_pitch,
-      distance,
-      mpc_delay.fire_control_compensation_s,
-      X_ref(2),
-      X_ref(3));
-  }
+  const double distance = target_distance;
 
   // 11) 填充 GimbalCmd (角度以度为单位)
   rm_interfaces::msg::GimbalCmd cmd;
-  cmd.header = target_robot.header;
   cmd.yaw = cmd_yaw * 180.0 / M_PI;
   cmd.pitch = cmd_pitch * 180.0 / M_PI;
   cmd.yaw_diff = yaw_diff * 180.0 / M_PI;
@@ -1007,9 +926,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   cmd.pitch_v = x_next(3) * 180.0 / M_PI;
   cmd.yaw_a      = u_opt(0) * 180.0 / M_PI;
   cmd.pitch_a    = u_opt(1) * 180.0 / M_PI;
-  // TEMP_LOST 时无 detector 实际观测，distance 输出 -1 以示无有效测量
-  cmd.distance = context.is_temp_lost ? -1.0 : distance;
-  cmd.fire_advice = fire_advice;
+  cmd.distance = std::max(distance, 0.0);
 
   return cmd;
 }
@@ -1096,45 +1013,14 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::fallbackDirectAim(
   double distance =
     fyt::auto_aim::robot_description::TrackedRobotUsage::centerDistance(target_robot);
 
-  bool fire_advice = false;
-  if (fire_advice_engine_) {
-    FireAdviceEngineRequest fire_request;
-    fire_request.target_robot = target_robot;
-    fire_request.current_time = context.current_time;
-    fire_request.observation_stamp = context.target_stamp;
-    fire_request.current_yaw = context.current_yaw;
-    fire_request.current_pitch = context.current_pitch;
-    fire_request.bullet_speed = context.bullet_speed;
-    fire_request.timing.prediction_delay_s = std::max(prediction_delay_s_, 0.0);
-    fire_request.timing.control_latency_s = std::max(control_delay_s_, 0.0);
-    fire_request.timing.trigger_to_muzzle_s = trigger_to_muzzle_s_;
-    fire_request.timing.max_processing_delay_s = max_processing_delay_s_;
-    fire_request.timing.include_processing_delay = enable_delay_compensation_;
-    fire_request.timing.include_control_latency_in_target_prediction = false;
-
-    const auto fire_result = fire_advice_engine_->evaluate(fire_request);
-    if (fire_result.valid) {
-      fire_advice = fire_result.fire_advice;
-      distance = fire_result.distance;
-    }
-  } else if (fire_advisor_) {
-    fire_advice = fire_advisor_->shouldFireWithDelay(
-      context.current_yaw, context.current_pitch,
-      ref_yaw, ref_pitch, distance,
-      0.0);
-  }
-
   rm_interfaces::msg::GimbalCmd cmd;
-  cmd.header = target_robot.header;
   cmd.yaw = ref_yaw * 180.0 / M_PI;
   cmd.pitch = ref_pitch * 180.0 / M_PI;
   cmd.yaw_diff = yaw_diff * 180.0 / M_PI;
   cmd.pitch_diff = pitch_diff * 180.0 / M_PI;
   cmd.yaw_v = 0.0;
   cmd.pitch_v = 0.0;
-  // TEMP_LOST 时无 detector 实际观测，distance 输出 -1 以示无有效测量
-  cmd.distance = context.is_temp_lost ? -1.0 : distance;
-  cmd.fire_advice = fire_advice;
+  cmd.distance = std::max(distance, 0.0);
 
   return cmd;
 }

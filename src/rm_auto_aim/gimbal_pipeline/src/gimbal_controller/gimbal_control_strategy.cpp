@@ -50,10 +50,11 @@ rm_interfaces::msg::GimbalCmd GimbalControlStrategy::createIdleCmd() const
   cmd.pitch = 0;
   cmd.yaw_diff = 0;
   cmd.pitch_diff = 0;
-  cmd.distance = -1;
+  cmd.distance = 0;
   cmd.yaw_v = 0;
   cmd.pitch_v = 0;
   cmd.fire_advice = false;
+  cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_NO_VALID_MEASUREMENT;
   return cmd;
 }
 

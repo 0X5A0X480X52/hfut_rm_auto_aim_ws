@@ -7,10 +7,10 @@
 namespace: ''
 
 # image_source: (video | mindvision | hik)
-image_source: 'hik'
+image_source: 'video'
 
 # true: 虚拟下位机 false: 实车
-virtual_serial: false
+virtual_serial: true
 
 # true: 开启调试模式 (发布可视化markers)
 debug: true

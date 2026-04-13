@@ -366,6 +366,16 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     fire_advice_engine_->setFlightTimeIterations(fire_flight_time_iters);
     fire_advice_engine_->setUseGimbalKinematics(fire_use_gimbal_kinematics);
   }
+  if (gimbal_control_core_) {
+    gimbal_controller::FireDecisionConfig fire_cfg;
+    fire_cfg.prediction_delay_s = std::max(prediction_delay, 0.0);
+    fire_cfg.control_latency_s = std::max(controller_delay, 0.0);
+    fire_cfg.trigger_to_muzzle_s = std::max(trigger_to_muzzle_s, 0.0);
+    fire_cfg.max_processing_delay_s = std::max(max_processing_delay_s, 0.0);
+    fire_cfg.include_processing_delay = true;
+    fire_cfg.include_control_latency_in_target_prediction = false;
+    gimbal_control_core_->setFireDecisionConfig(fire_cfg);
+  }
   local_compensator_->setParameters(bullet_speed_, gravity, resistance,
                                     iteration_times);
 
@@ -477,7 +487,9 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     fcfg.one_euro_min_cutoff         = get_parameter("controller.output_filter.one_euro_min_cutoff").as_double();
     fcfg.one_euro_beta               = get_parameter("controller.output_filter.one_euro_beta").as_double();
     fcfg.one_euro_d_cutoff           = get_parameter("controller.output_filter.one_euro_d_cutoff").as_double();
-    cmd_filter_.setConfig(fcfg);
+    if (gimbal_control_core_) {
+      gimbal_control_core_->setFilterConfig(fcfg);
+    }
     RCLCPP_INFO(get_logger(),
       "[GimbalCmdFilter] clamp=%s(%.1f°,%.1f°) outlier=%s(%.1f°,%.1f°,max%d)"
       " rate=%s(%.1f°,%.1f°) mean=%s(win=%d) ema=%s(a=%.2f) 1euro=%s(f=%.0f,mc=%.2f,b=%.4f)",
@@ -1589,6 +1601,8 @@ void GimbalPipelineNode::initGimbalComponents() {
   fire_advice_engine_ = std::make_shared<gimbal_controller::FireAdviceEngine>();
   fire_advice_engine_->setComponents(
     position_calculator_, ballistic_client_, local_compensator_, fire_advisor_);
+  gimbal_control_core_ = std::make_shared<gimbal_controller::GimbalControlCore>();
+  gimbal_control_core_->setFireModules(fire_advice_engine_, fire_advisor_);
 }
 
 void GimbalPipelineNode::initGimbalStrategies() {
@@ -1597,7 +1611,6 @@ void GimbalPipelineNode::initGimbalStrategies() {
   current_s->setComponents(position_calculator_, armor_selector_,
                            ballistic_client_, local_compensator_,
                            fire_advisor_);
-  current_s->setFireAdviceEngine(fire_advice_engine_);
   gimbal_strategies_["current"] = current_s;
 
   auto predicted_s =
@@ -1605,13 +1618,11 @@ void GimbalPipelineNode::initGimbalStrategies() {
   predicted_s->setComponents(position_calculator_, armor_selector_,
                              ballistic_client_, local_compensator_,
                              fire_advisor_);
-  predicted_s->setFireAdviceEngine(fire_advice_engine_);
   gimbal_strategies_["predicted"] = predicted_s;
 
   auto mpc_s = std::make_shared<gimbal_controller::MpcControlStrategy>();
   mpc_s->setComponents(position_calculator_, armor_selector_,
                        ballistic_client_, local_compensator_, fire_advisor_);
-  mpc_s->setFireAdviceEngine(fire_advice_engine_);
   mpc_s->initReferenceGenerator();
 
   const double mpc_control_delay_s = readCompatDoubleParameter(
@@ -1717,8 +1728,11 @@ void GimbalPipelineNode::initGimbalStrategies() {
   auto sm_s = std::make_shared<gimbal_controller::StateMachineStrategy>();
   sm_s->setComponents(position_calculator_, armor_selector_,
                       ballistic_client_, local_compensator_, fire_advisor_);
-  sm_s->setFireAdviceEngine(fire_advice_engine_);
   gimbal_strategies_["state_machine"] = sm_s;
+
+  if (gimbal_control_core_) {
+    gimbal_control_core_->setStrategies(&gimbal_strategies_);
+  }
 }
 
 /* ================================================================ */
@@ -1745,14 +1759,9 @@ void GimbalPipelineNode::cameraInfoCallback(
   double fov_half_yaw = std::atan(static_cast<double>(msg->width) / (2.0 * fx));
   double fov_half_pitch = std::atan(static_cast<double>(msg->height) / (2.0 * fy));
 
-  // 更新 MPC 策略的 FOV
-  auto mpc_it = gimbal_strategies_.find("mpc");
-  if (mpc_it != gimbal_strategies_.end()) {
-    auto mpc_s = std::dynamic_pointer_cast<gimbal_controller::MpcControlStrategy>(
-        mpc_it->second);
-    if (mpc_s) {
-      mpc_s->updateFov(fov_half_yaw, fov_half_pitch);
-    }
+  // 通过核心类透传 FOV 更新，避免 node 直接耦合具体策略实现。
+  if (gimbal_control_core_) {
+    gimbal_control_core_->updateFov(fov_half_yaw, fov_half_pitch);
   }
 
   RCLCPP_INFO_ONCE(get_logger(),
@@ -1778,44 +1787,15 @@ void GimbalPipelineNode::updateGimbalState() {
   }
 }
 
-/* ================================================================ */
-/*  Timer callback — 250 Hz control loop                             */
-/* ================================================================ */
-
-void GimbalPipelineNode::timerCallback() {
-  if (!enable_) {
-    rm_interfaces::msg::GimbalCmd idle_cmd;
-    idle_cmd.yaw_diff = 0;
-    idle_cmd.pitch_diff = 0;
-    idle_cmd.distance = -1;
-    idle_cmd.fire_advice = false;
-    gimbal_cmd_pub_->publish(idle_cmd);
-    // idle 期间清空滤波器状态，恢复跟踪时允许首帧自由跳变
-    cmd_filter_.reset();
-    prev_tracking_target_id_.clear();
-    return;
-  }
-
-  updateGimbalState();
-
-  auto strategy = getGimbalStrategy(current_gimbal_strategy_name_);
-  if (!strategy) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
-                         "Gimbal strategy '%s' not found",
-                         current_gimbal_strategy_name_.c_str());
-    return;
-  }
-
-  gimbal_controller::GimbalControlContext context;
-  context.current_yaw = current_yaw_;
-  context.current_pitch = current_pitch_;
-  context.bullet_speed = bullet_speed_;
-  context.current_time = now();
+void GimbalPipelineNode::buildControlContextFromCache(
+    gimbal_controller::GimbalControlContext & context,
+    std::string & selected_id) {
   context.is_tracking = false;
+  context.is_temp_lost = false;
+  context.is_maneuvering = false;
 
   // Read shared state (thread-safe)
   rm_interfaces::msg::TrackedRobots::SharedPtr robots;
-  std::string selected_id;
   rclcpp::Time data_update_time{0, 0, RCL_ROS_TIME};
   {
     std::lock_guard<std::mutex> lock(pipeline_mutex_);
@@ -1824,93 +1804,134 @@ void GimbalPipelineNode::timerCallback() {
     data_update_time = latest_update_time_;
   }
 
-  if (robots && !robots->robots.empty()) {
-    // ── Cache freshness check ──
-    // If data is too old (e.g., camera stopped, detection crashed),
-    // treat as no target to prevent chasing stale predictions.
-    double data_age = (now() - data_update_time).seconds();
-    const double max_data_age = 0.5;  // seconds
-    if (data_age > max_data_age) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                           "Stale tracking data (age=%.3fs > %.3fs), ignoring",
-                           data_age, max_data_age);
-      // Fall through — context.is_tracking stays false, idle cmd will be sent
-    } else if (!selected_id.empty()) {
-      for (const auto &robot : robots->robots) {
-        if (robot.robot_id == selected_id) {
-          context.target_robot = robot;
-          // Use local clock timestamp to avoid cross-clock-domain mismatch
-          // (camera hardware stamps vs system wall clock)
-          context.target_stamp = data_update_time;
-          context.is_tracking =
-              (robot.track_state ==
-                   rm_interfaces::msg::TrackedRobot::TRACKING);
-          // TEMP_LOST: hold last command but do NOT actively track
-          context.is_temp_lost =
-              (robot.track_state ==
-                   rm_interfaces::msg::TrackedRobot::TEMP_LOST);
-          {
-            auto *t = tracker_manager_->get(robot.robot_id);
-            context.is_maneuvering = (t && t->is_initialized()) ?
-                t->assess_maneuver().is_maneuvering : false;
-          }
-          break;
-        }
-      }
-    } else {
-      // No selection — use first robot
-      context.target_robot = robots->robots[0];
-      context.target_stamp = data_update_time;
-      context.is_tracking =
-          (context.target_robot.track_state ==
-               rm_interfaces::msg::TrackedRobot::TRACKING);
-      context.is_temp_lost =
-          (context.target_robot.track_state ==
-               rm_interfaces::msg::TrackedRobot::TEMP_LOST);
-      {
-        auto *t = tracker_manager_->get(context.target_robot.robot_id);
-        context.is_maneuvering = (t && t->is_initialized()) ?
-            t->assess_maneuver().is_maneuvering : false;
+  if (!robots || robots->robots.empty()) {
+    return;
+  }
+
+  // Cache freshness check: stale target cache should not drive control.
+  const double data_age = (context.current_time - data_update_time).seconds();
+  const double max_data_age = 0.5;
+  if (data_age > max_data_age) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 1000,
+      "Stale tracking data (age=%.3fs > %.3fs), ignoring",
+      data_age, max_data_age);
+    return;
+  }
+
+  const rm_interfaces::msg::TrackedRobot * selected_robot = nullptr;
+  if (!selected_id.empty()) {
+    for (const auto & robot : robots->robots) {
+      if (robot.robot_id == selected_id) {
+        selected_robot = &robot;
+        break;
       }
     }
+  } else {
+    selected_robot = &robots->robots[0];
+    selected_id = selected_robot->robot_id;
   }
 
-  auto cmd = strategy->solve(context);
+  if (!selected_robot) {
+    return;
+  }
 
+  context.target_robot = *selected_robot;
+  context.target_stamp = data_update_time;
+  context.is_tracking =
+      (selected_robot->track_state == rm_interfaces::msg::TrackedRobot::TRACKING);
+  context.is_temp_lost =
+      (selected_robot->track_state == rm_interfaces::msg::TrackedRobot::TEMP_LOST);
+
+  auto * tracker = tracker_manager_->get(selected_robot->robot_id);
+  context.is_maneuvering = (tracker && tracker->is_initialized()) ?
+    tracker->assess_maneuver().is_maneuvering : false;
+}
+
+void GimbalPipelineNode::publishDelayAuditDebug(
+    const gimbal_controller::GimbalControlContext & context,
+    const gimbal_controller::DelayAuditSnapshot & audit,
+    const std::string & strategy_name) {
+  if (!debug_delay_audit_pub_) {
+    return;
+  }
+
+  rm_interfaces::msg::DelayAudit msg;
+  msg.header.stamp = context.current_time;
+  msg.header.frame_id = target_frame_;
+  msg.strategy_name = audit.strategy_name.empty() ? strategy_name : audit.strategy_name;
+  msg.valid = audit.valid;
+  msg.tracking = audit.tracking;
+  msg.processing_delay_s = audit.processing_delay_s;
+  msg.prediction_extra_s = audit.prediction_extra_s;
+  msg.flight_time_s = audit.flight_time_s;
+  msg.total_prediction_time_s = audit.total_prediction_time_s;
+  msg.control_latency_s = audit.control_latency_s;
+  msg.fire_control_compensation_s = audit.fire_control_compensation_s;
+  msg.control_delay_steps = audit.control_delay_steps;
+  msg.uses_delayed_b = audit.uses_delayed_b;
+  msg.double_compensation_risk = audit.double_compensation_risk;
+  debug_delay_audit_pub_->publish(msg);
+}
+
+/* ================================================================ */
+/*  Timer callback — 250 Hz control loop                             */
+/* ================================================================ */
+
+void GimbalPipelineNode::timerCallback() {
+  // Step 0: 核心类可用性检查
+  if (!gimbal_control_core_) {
+    RCLCPP_ERROR_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "GimbalControlCore is not initialized, skipping control cycle");
+    return;
+  }
+
+  gimbal_controller::GimbalControlContext context;
+  context.current_time = now();
+
+  // Step 1: 控制禁用时发布 idle 命令并早返回
+  if (!enable_) {
+    const auto idle_result = gimbal_control_core_->compute(
+      context, current_gimbal_strategy_name_, std::string(), false);
+    gimbal_cmd_pub_->publish(idle_result.cmd);
+    return;
+  }
+
+  // Step 2: 更新云台姿态并填充控制上下文基础字段
+  updateGimbalState();
+  context.current_yaw = current_yaw_;
+  context.current_pitch = current_pitch_;
+  context.bullet_speed = bullet_speed_;
+
+  // Step 3: 从共享缓存构建目标上下文
+  std::string selected_id;
+  buildControlContextFromCache(context, selected_id);
+
+  // Step 4: 核心类统一生成命令（strategy + finalize + filter + audit）
+  const auto control_result = gimbal_control_core_->compute(
+    context, current_gimbal_strategy_name_, selected_id, true);
+  if (!control_result.strategy_found) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "Gimbal strategy '%s' not found, fallback to idle cmd",
+      current_gimbal_strategy_name_.c_str());
+  }
+
+  // Step 5: 发布控制命令
+  gimbal_cmd_pub_->publish(control_result.cmd);
+
+  // Step 6: 发布调试信息（audit + marker）
   if (debug_mode_ && debug_delay_audit_pub_) {
-    const auto & audit = strategy->getLastDelayAudit();
-
-    rm_interfaces::msg::DelayAudit msg;
-    msg.header.stamp = context.current_time;
-    msg.header.frame_id = target_frame_;
-    msg.strategy_name = audit.strategy_name.empty() ? strategy->getName() : audit.strategy_name;
-    msg.valid = audit.valid;
-    msg.tracking = audit.tracking;
-    msg.processing_delay_s = audit.processing_delay_s;
-    msg.prediction_extra_s = audit.prediction_extra_s;
-    msg.flight_time_s = audit.flight_time_s;
-    msg.total_prediction_time_s = audit.total_prediction_time_s;
-    msg.control_latency_s = audit.control_latency_s;
-    msg.fire_control_compensation_s = audit.fire_control_compensation_s;
-    msg.control_delay_steps = audit.control_delay_steps;
-    msg.uses_delayed_b = audit.uses_delayed_b;
-    msg.double_compensation_risk = audit.double_compensation_risk;
-    debug_delay_audit_pub_->publish(msg);
+    publishDelayAuditDebug(
+      context,
+      control_result.delay_audit,
+      current_gimbal_strategy_name_);
   }
 
-  // ── GimbalCmd 输出端保护滤波 ──
-  // 目标切换（或从无目标变为有目标）时重置滤波器，允许首帧自由跳变快速锁定
-  const std::string &current_target = context.is_tracking ? selected_id : std::string("");
-  if (current_target != prev_tracking_target_id_) {
-    cmd_filter_.reset();
+  if (debug_mode_ && control_result.has_tracking) {
+    publishGimbalMarkers(context.target_robot, control_result.cmd);
   }
-  cmd_filter_.filter(cmd);
-  prev_tracking_target_id_ = current_target;
-
-  gimbal_cmd_pub_->publish(cmd);
-
-  if (debug_mode_ && context.is_tracking)
-    publishGimbalMarkers(context.target_robot, cmd);
 }
 
 /* ================================================================ */
@@ -2025,6 +2046,9 @@ void GimbalPipelineNode::publishGimbalMarkers(
       robot_description::TrackedRobotUsage::yawVelocity(normalized_target);
 
   visualization_msgs::msg::MarkerArray marker_array;
+  const bool has_valid_measurement =
+    cmd.mode == rm_interfaces::msg::GimbalCmd::MODE_NORMAL_MEASUREMENT &&
+    cmd.distance > 0.0;
 
   // Position
   position_marker_.header = target_robot.header;
@@ -2166,7 +2190,7 @@ void GimbalPipelineNode::publishGimbalMarkers(
   }
 
   // Selection target
-  if (cmd.distance > 0) {
+  if (has_valid_measurement) {
     selection_marker_.header = target_robot.header;
     selection_marker_.id = 0;
     selection_marker_.action = visualization_msgs::msg::Marker::ADD;
@@ -2183,7 +2207,7 @@ void GimbalPipelineNode::publishGimbalMarkers(
   }
 
   // Predicted hit (for predicted strategy)
-  if (current_gimbal_strategy_name_ == "predicted" && cmd.distance > 0) {
+  if (current_gimbal_strategy_name_ == "predicted" && has_valid_measurement) {
     predicted_marker_.header = target_robot.header;
     predicted_marker_.id = 0;
     predicted_marker_.action = visualization_msgs::msg::Marker::ADD;
@@ -2193,7 +2217,7 @@ void GimbalPipelineNode::publishGimbalMarkers(
   }
 
   // Trajectory
-  if (cmd.distance > 0) {
+  if (has_valid_measurement) {
     trajectory_marker_.header.frame_id = "gimbal_link";
     trajectory_marker_.header.stamp = target_robot.header.stamp;
     trajectory_marker_.id = 0;

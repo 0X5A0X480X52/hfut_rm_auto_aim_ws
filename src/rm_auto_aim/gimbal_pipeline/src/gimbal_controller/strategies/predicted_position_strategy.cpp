@@ -15,13 +15,12 @@
 #include "gimbal_controller/strategies/predicted_position_strategy.hpp"
 #include "gimbal_controller/armor_position_calculator.hpp"
 #include "gimbal_controller/armor_selector.hpp"
-#include "gimbal_controller/fire_advice_engine.hpp"
-#include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
 #include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 #include <angles/angles.h>
 
 #include <algorithm>
+#include <cmath>
 
 #include <iostream>
 
@@ -47,7 +46,7 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   }
 
   // 检查组件是否已设置
-  if (!position_calculator_ || !armor_selector_ || (!fire_advice_engine_ && !fire_advisor_)) {
+  if (!position_calculator_ || !armor_selector_) {
     markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
@@ -162,7 +161,6 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
 
   // 根据状态选择目标位置
   Eigen::Vector3d control_target_position;
-  Eigen::Vector3d fire_target_position = current_selection.position;
   double applied_control_latency = 0.0;
   double applied_prediction_time = total_prediction_time;
 
@@ -216,15 +214,6 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
     return createIdleCmd();
   }
 
-  // 计算开火判断角度 (使用当前位置)
-  double fire_pitch, fire_yaw, fire_flight_time;
-  if (!computeBallistic(fire_target_position, target_velocity, context.bullet_speed,
-                        fire_pitch, fire_yaw, fire_flight_time))
-  {
-    markDelayAuditInvalid(getName(), true);
-    return createIdleCmd();
-  }
-
   // 应用手动补偿
   double pitch_offset_rad = pitch_offset_ * M_PI / 180.0;
   double yaw_offset_rad = yaw_offset_ * M_PI / 180.0;
@@ -236,64 +225,30 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   double yaw_diff = angles::normalize_angle(cmd_yaw - context.current_yaw);
   double pitch_diff = cmd_pitch - context.current_pitch;
 
-  bool fire_advice = false;
-  double fire_compensation_s = trigger_to_muzzle_s_;
-  if (fire_advice_engine_) {
-    FireAdviceEngineRequest fire_request;
-    fire_request.target_robot = robot;
-    fire_request.current_time = context.current_time;
-    fire_request.observation_stamp = context.target_stamp;
-    fire_request.current_yaw = context.current_yaw;
-    fire_request.current_pitch = context.current_pitch;
-    fire_request.bullet_speed = context.bullet_speed;
-    fire_request.yaw_offset_rad = yaw_offset_rad;
-    fire_request.pitch_offset_rad = pitch_offset_rad;
-    fire_request.timing.prediction_delay_s = std::max(prediction_delay_, 0.0);
-    fire_request.timing.control_latency_s = applied_control_latency;
-    fire_request.timing.trigger_to_muzzle_s = trigger_to_muzzle_s_;
-    fire_request.timing.max_processing_delay_s = max_processing_delay_s_;
-    fire_request.timing.include_processing_delay = true;
-    fire_request.timing.include_control_latency_in_target_prediction = false;
-
-    const auto fire_result = fire_advice_engine_->evaluate(fire_request);
-    if (fire_result.valid) {
-      fire_advice = fire_result.fire_advice;
-      fire_compensation_s = fire_result.timeline.muzzle_delay_s;
-    }
-  } else if (fire_advisor_) {
-    const double fire_muzzle_delay_s =
-      std::max(processing_delay, 0.0) + std::max(prediction_delay_, 0.0) + trigger_to_muzzle_s_;
-    fire_advice = fire_advisor_->shouldFireWithDelay(
-      context.current_yaw,
-      context.current_pitch,
-      fire_yaw + yaw_offset_rad,
-      fire_pitch + pitch_offset_rad,
-      current_selection.distance,
-      fire_muzzle_delay_s);
-    fire_compensation_s = trigger_to_muzzle_s_;
-  }
-
-  // 高转速时始终建议开火
-  if (state_ == TRACKING_CENTER) {
-    fire_advice = true;
+  // 策略层仅输出控制参数；开火建议由主循环统一计算。
+  const double fire_compensation_s = trigger_to_muzzle_s_;
+  bool fire_like = (state_ == TRACKING_CENTER);
+  if (!fire_like) {
+    constexpr double kFireLikeThreshold = 1.5 * M_PI / 180.0;
+    fire_like =
+      std::abs(yaw_diff) < kFireLikeThreshold &&
+      std::abs(pitch_diff) < kFireLikeThreshold;
   }
 
   // 自适应 delay 更新（根据本帧 fire_advice 和目标速度）
   if (adaptive_delay_enabled_) {
     double v_linear  = linear_velocity.norm();
     double v_angular = std::abs(yaw_velocity);
-    adaptive_ctrl_.update(fire_advice, v_linear, v_angular);
+    adaptive_ctrl_.update(fire_like, v_linear, v_angular);
   }
 
   // 构建控制命令
   rm_interfaces::msg::GimbalCmd cmd;
-  cmd.header = robot.header;
   cmd.yaw = cmd_yaw * 180.0 / M_PI;
   cmd.pitch = cmd_pitch * 180.0 / M_PI;
   cmd.yaw_diff = yaw_diff * 180.0 / M_PI;
   cmd.pitch_diff = pitch_diff * 180.0 / M_PI;
-  cmd.distance = current_selection.distance;
-  cmd.fire_advice = fire_advice;
+  cmd.distance = std::max(current_selection.distance, 0.0);
 
   DelayAuditSnapshot audit;
   audit.strategy_name = getName();
