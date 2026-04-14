@@ -16,6 +16,8 @@
 #include "max_entropy_tracker/trackers/base_tracker.hpp"
 #include "max_entropy_tracker/trackers/adaptive_armor_tracker.hpp"
 #include "max_entropy_tracker/trackers/outpost_armor_tracker.hpp"
+#include "max_entropy_tracker/utils/observation_outlier_filter.hpp"
+#include "max_entropy_tracker/utils/output_smoother.hpp"
 
 namespace fyt::auto_aim {
 
@@ -26,6 +28,22 @@ class TrackerManager {
     std::unique_ptr<BaseTracker> tracker;
     double last_update_time = 0.0;
     int observation_count = 0;
+  };
+
+  struct FrameProcessResult {
+    std::vector<std::string> removed_stale_ids;
+    std::vector<std::string> removed_lost_ids;
+  };
+
+  struct PostProcessResult {
+    bool has_smoothed = false;
+    bool is_outlier = false;
+    SmoothedOutput smoothed;
+  };
+
+  struct TrackerConstView {
+    std::string robot_id;
+    const BaseTracker *tracker = nullptr;
   };
 
   explicit TrackerManager(const UnifiedConfig &config, double dt = 0.01,
@@ -40,6 +58,111 @@ class TrackerManager {
         default_dza_(default_dza),
         timeout_(timeout_seconds),
         enable_osc_(enable_oscillation) {}
+
+  /// Unified per-frame entry point for tracker lifecycle orchestration.
+  FrameProcessResult process_frame(
+      const std::unordered_map<std::string, std::vector<ObservationData>>
+          &obs_by_robot,
+      double current_time,
+      const SmootherConfig &smoother_cfg) {
+    FrameProcessResult result;
+
+    // Step 1: predict + stale cleanup
+    predict_all(current_time);
+    result.removed_stale_ids = remove_stale(current_time);
+
+    // Step 2: update observed trackers and ensure per-robot post-process state
+    for (const auto &[rid, obs_list] : obs_by_robot) {
+      last_obs_counts_[rid] = static_cast<int>(obs_list.size());
+      last_dual_obs_[rid] = (obs_list.size() >= 2);
+
+      const bool is_ok = update(rid, obs_list, current_time);
+      if (!is_ok) {
+        continue;
+      }
+
+      auto *tracker = get(rid);
+      if (tracker && tracker->is_initialized()) {
+        ensure_postprocess_state(rid, smoother_cfg, *tracker);
+      }
+    }
+
+    // Step 3: advance state machine for missing robots, then remove LOST trackers
+    std::set<std::string> observed_ids;
+    for (const auto &[rid, _] : obs_by_robot) {
+      observed_ids.insert(rid);
+    }
+    notify_missing(observed_ids, current_time);
+    result.removed_lost_ids = remove_lost();
+
+    // Step 4: clear post-process resources for removed trackers
+    std::vector<std::string> removed_ids;
+    removed_ids.reserve(result.removed_stale_ids.size() +
+                        result.removed_lost_ids.size());
+    removed_ids.insert(removed_ids.end(), result.removed_stale_ids.begin(),
+                       result.removed_stale_ids.end());
+    removed_ids.insert(removed_ids.end(), result.removed_lost_ids.begin(),
+                       result.removed_lost_ids.end());
+    for (const auto &rid : removed_ids) {
+      if (get(rid) != nullptr) {
+        continue;
+      }
+      erase_runtime_cache(rid);
+    }
+
+    return result;
+  }
+
+  /// Apply outlier filter + smoother for one robot and return processed output.
+  PostProcessResult post_process_output(const std::string &robot_id,
+                                        double timestamp_seconds,
+                                        const SmootherConfig &smoother_cfg) {
+    PostProcessResult result;
+
+    auto *tracker = get(robot_id);
+    if (!tracker || !tracker->is_initialized()) {
+      return result;
+    }
+
+    ensure_postprocess_state(robot_id, smoother_cfg, *tracker);
+
+    const auto pos = tracker->get_center_position();
+    const auto &filter = tracker->spin_filter();
+    const auto idx = filter.state_idx();
+    const auto &x = filter.x();
+    const Eigen::Vector3d vel = tracker->get_publish_velocity();
+    const double yaw = tracker->get_yaw();
+    const double v_yaw = x(idx.DELTA_RATE());
+    const auto [r1, r2] = tracker->get_radii();
+    const double dza = filter.get_dza();
+    const bool is_dual = is_last_dual_observation(robot_id);
+
+    if (smoother_cfg.enable_outlier_filter) {
+      auto of_it = outlier_filters_.find(robot_id);
+      if (of_it != outlier_filters_.end()) {
+        result.is_outlier = of_it->second.update(pos, yaw);
+      }
+    }
+
+    if (result.is_outlier) {
+      auto prev_it = last_smoothed_outputs_.find(robot_id);
+      if (prev_it != last_smoothed_outputs_.end()) {
+        result.smoothed = prev_it->second;
+        result.has_smoothed = true;
+      }
+      return result;
+    }
+
+    auto sm_it = smoothers_.find(robot_id);
+    if (sm_it != smoothers_.end() && smoother_cfg.enable) {
+      result.smoothed = sm_it->second.smooth(
+          pos, yaw, vel, v_yaw, r1, r2, dza, is_dual, timestamp_seconds);
+      result.has_smoothed = true;
+      last_smoothed_outputs_[robot_id] = result.smoothed;
+    }
+
+    return result;
+  }
 
   /// Get existing tracker or create+initialize a new one.
   BaseTracker *get_or_create(
@@ -119,6 +242,7 @@ class TrackerManager {
       if (it->second.tracker->is_lost()) {
         std::cout << "[TrackerManager] Removing LOST tracker: robot_id=" << it->first << std::endl;
         removed.push_back(it->first);
+        erase_runtime_cache(it->first);
         it = trackers_.erase(it);
       } else {
         ++it;
@@ -146,6 +270,7 @@ class TrackerManager {
                   << ", current_time=" << t << std::endl;
         std::cout << "delay=" << (t - it->second.last_update_time) << "s exceeds timeout=" << timeout_ << "s" << std::endl;
         removed.push_back(it->first);
+        erase_runtime_cache(it->first);
         it = trackers_.erase(it);
       } else {
         ++it;
@@ -161,6 +286,18 @@ class TrackerManager {
 
   const std::unordered_map<std::string, TrackerEntry> &trackers() const {
     return trackers_;
+  }
+
+  std::vector<TrackerConstView> initialized_tracker_views() const {
+    std::vector<TrackerConstView> views;
+    views.reserve(trackers_.size());
+    for (const auto &[robot_id, entry] : trackers_) {
+      if (!entry.tracker || !entry.tracker->is_initialized()) {
+        continue;
+      }
+      views.push_back(TrackerConstView{robot_id, entry.tracker.get()});
+    }
+    return views;
   }
 
   /// Returns IDs of trackers in TRACKING state only.
@@ -180,8 +317,31 @@ class TrackerManager {
     return ids;
   }
 
+  int visible_observation_count(const std::string &robot_id) const {
+    auto it = last_obs_counts_.find(robot_id);
+    if (it == last_obs_counts_.end()) {
+      return 0;
+    }
+    return it->second;
+  }
+
+  bool is_last_dual_observation(const std::string &robot_id) const {
+    auto it = last_dual_obs_.find(robot_id);
+    if (it == last_dual_obs_.end()) {
+      return false;
+    }
+    return it->second;
+  }
+
   int num_trackers() const { return static_cast<int>(trackers_.size()); }
-  void clear() { trackers_.clear(); }
+  void clear() {
+    trackers_.clear();
+    smoothers_.clear();
+    last_obs_counts_.clear();
+    last_dual_obs_.clear();
+    outlier_filters_.clear();
+    last_smoothed_outputs_.clear();
+  }
 
  private:
   static double now() {
@@ -195,6 +355,51 @@ class TrackerManager {
   double dt_, default_r1_, default_r2_, default_dza_, timeout_;
   bool enable_osc_;
   std::unordered_map<std::string, TrackerEntry> trackers_;
+
+  // Per-robot post-process resources and caches.
+  std::unordered_map<std::string, OutputSmoother> smoothers_;
+  std::unordered_map<std::string, int> last_obs_counts_;
+  std::unordered_map<std::string, bool> last_dual_obs_;
+  std::unordered_map<std::string, ObservationOutlierFilter> outlier_filters_;
+  std::unordered_map<std::string, SmoothedOutput> last_smoothed_outputs_;
+
+  static OutlierFilterConfig make_outlier_config(const SmootherConfig &cfg) {
+    OutlierFilterConfig ocfg;
+    ocfg.enable = cfg.enable_outlier_filter;
+    ocfg.method = cfg.outlier_method;
+    ocfg.window_size = cfg.outlier_window_size;
+    ocfg.min_samples = cfg.outlier_min_samples;
+    ocfg.mad_k = cfg.outlier_mad_k;
+    ocfg.iqr_k = cfg.outlier_iqr_k;
+    ocfg.mahal_threshold = cfg.outlier_mahal_threshold;
+    return ocfg;
+  }
+
+  void ensure_postprocess_state(const std::string &robot_id,
+                                const SmootherConfig &smoother_cfg,
+                                BaseTracker &tracker) {
+    if (smoothers_.find(robot_id) == smoothers_.end()) {
+      OutputSmoother sm(smoother_cfg);
+      auto [r1, r2] = tracker.get_radii();
+      const double dza = tracker.spin_filter().get_dza();
+      sm.initialize(r1, r2, dza);
+      smoothers_.emplace(robot_id, std::move(sm));
+    }
+
+    if (outlier_filters_.find(robot_id) == outlier_filters_.end()) {
+      outlier_filters_.emplace(robot_id,
+                               ObservationOutlierFilter(
+                                   make_outlier_config(smoother_cfg)));
+    }
+  }
+
+  void erase_runtime_cache(const std::string &robot_id) {
+    smoothers_.erase(robot_id);
+    last_obs_counts_.erase(robot_id);
+    last_dual_obs_.erase(robot_id);
+    outlier_filters_.erase(robot_id);
+    last_smoothed_outputs_.erase(robot_id);
+  }
 };
 
 }  // namespace fyt::auto_aim

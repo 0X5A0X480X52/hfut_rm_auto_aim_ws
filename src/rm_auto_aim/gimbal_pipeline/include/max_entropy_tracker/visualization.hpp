@@ -16,7 +16,6 @@
 
 #include <cmath>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include <tf2/LinearMath/Quaternion.h>
@@ -31,14 +30,18 @@ namespace fyt::auto_aim {
 /// Build a MarkerArray visualising every initialised tracker.
 inline visualization_msgs::msg::MarkerArray build_tracker_markers(
     const std::string &target_frame,
-    const std::unordered_map<std::string, TrackerManager::TrackerEntry> &trackers,
+    const std::vector<TrackerManager::TrackerConstView> &tracker_views,
     const rclcpp::Time &stamp) {
   using Marker = visualization_msgs::msg::Marker;
   visualization_msgs::msg::MarkerArray marker_array;
   int id = 0;
 
-  for (const auto &[robot_id, entry] : trackers) {
-    auto &tracker = *entry.tracker;
+  for (const auto &view : tracker_views) {
+    if (!view.tracker) {
+      continue;
+    }
+    const auto &robot_id = view.robot_id;
+    const auto &tracker = *view.tracker;
     if (!tracker.is_initialized()) continue;
 
     // ---------- gather state ----------

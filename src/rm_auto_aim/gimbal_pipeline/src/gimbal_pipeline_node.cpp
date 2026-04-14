@@ -1192,14 +1192,7 @@ void GimbalPipelineNode::armorsCallback(
       "Received empty armors message, running missing-target update");
   }
 
-  // ── Step 1: Predict all existing trackers ──
-  tracker_manager_->predict_all(current_time);
-  auto removed_stale = tracker_manager_->remove_stale(current_time);
-  if (!removed_stale.empty() && debug_mode_) {
-    RCLCPP_INFO(get_logger(), "Removed %zu stale trackers", removed_stale.size());
-  }
-
-  // ── Step 2: Group observations by robot ID ──
+  // ── Step 1: Group observations by robot ID ──
   std::unordered_map<std::string, std::vector<ObservationData>> obs_by_robot;
   std::string sf =
       msg->header.frame_id.empty() ? source_frame_ : msg->header.frame_id;
@@ -1252,67 +1245,19 @@ void GimbalPipelineNode::armorsCallback(
     }
   }
 
-  // ── Step 3: Update trackers ──
-  for (auto &[rid, obs_list] : obs_by_robot) {
-    last_obs_counts_[rid] = static_cast<int>(obs_list.size());
-    last_dual_obs_[rid] = (obs_list.size() >= 2);
-    bool is_ok = tracker_manager_->update(rid, obs_list, current_time);
-
-    if (is_ok) {
-      auto *t = tracker_manager_->get(rid);
-      if (t && t->is_initialized() &&
-          smoothers_.find(rid) == smoothers_.end()) {
-        OutputSmoother sm(smoother_config_);
-        auto [r1, r2] = t->get_radii();
-        double dza = t->spin_filter().get_dza();
-        sm.initialize(r1, r2, dza);
-        smoothers_.emplace(rid, std::move(sm));
-
-        // Co-initialise outlier filter for this robot
-        OutlierFilterConfig ocfg;
-        ocfg.enable          = smoother_config_.enable_outlier_filter;
-        ocfg.method          = smoother_config_.outlier_method;
-        ocfg.window_size     = smoother_config_.outlier_window_size;
-        ocfg.min_samples     = smoother_config_.outlier_min_samples;
-        ocfg.mad_k           = smoother_config_.outlier_mad_k;
-        ocfg.iqr_k           = smoother_config_.outlier_iqr_k;
-        ocfg.mahal_threshold = smoother_config_.outlier_mahal_threshold;
-        outlier_filters_.emplace(rid, ObservationOutlierFilter(ocfg));
-      }
-    }
+  // ── Step 2: Run tracker core frame process in manager ──
+  auto frame_result = tracker_manager_->process_frame(
+      obs_by_robot, current_time, smoother_config_);
+  if (!frame_result.removed_stale_ids.empty() && debug_mode_) {
+    RCLCPP_INFO(get_logger(), "Removed %zu stale trackers",
+                frame_result.removed_stale_ids.size());
+  }
+  if (!frame_result.removed_lost_ids.empty() && debug_mode_) {
+    RCLCPP_INFO(get_logger(), "Removed %zu lost trackers",
+                frame_result.removed_lost_ids.size());
   }
 
-  // ── Step 3.5: Notify trackers that did NOT receive observations this frame ──
-  // This drives the state machine: TRACKING → TEMP_LOST → LOST for
-  // missing targets, preventing "ghost tracking" of disappeared targets.
-  {
-    std::set<std::string> observed_ids;
-    for (const auto &[rid, _] : obs_by_robot) {
-      observed_ids.insert(rid);
-    }
-    tracker_manager_->notify_missing(observed_ids, current_time);
-  }
-  auto removed_lost = tracker_manager_->remove_lost();
-  if (!removed_lost.empty() && debug_mode_) {
-    RCLCPP_INFO(get_logger(), "Removed %zu lost trackers", removed_lost.size());
-  }
-
-  // Clean up per-robot caches for trackers that no longer exist.
-  std::vector<std::string> removed_ids;
-  removed_ids.reserve(removed_stale.size() + removed_lost.size());
-  removed_ids.insert(removed_ids.end(), removed_stale.begin(), removed_stale.end());
-  removed_ids.insert(removed_ids.end(), removed_lost.begin(), removed_lost.end());
-  for (const auto &rid : removed_ids) {
-    if (tracker_manager_->get(rid) != nullptr) {
-      continue;
-    }
-    smoothers_.erase(rid);
-    last_dual_obs_.erase(rid);
-    outlier_filters_.erase(rid);
-    last_smoothed_outputs_.erase(rid);
-  }
-
-  // ── Step 4: Build TrackedRobots message (internal) ──
+  // ── Step 3: Build TrackedRobots message (internal) ──
   auto tracked_msg = buildTrackedRobotsMsg(msg->header);
 
   // ── Log tracker posterior states (after update, before selection) ──
@@ -1394,13 +1339,13 @@ void GimbalPipelineNode::armorsCallback(
     }
   }
 
-  // ── Step 5: Target selection (direct C++ call, no ROS topic!) ──
+  // ── Step 4: Target selection (direct C++ call, no ROS topic!) ──
   SelectionResult sel_result;
   if (!tracked_msg.robots.empty()) {
     sel_result = selectTargetInternal(tracked_msg);
   }
 
-  // ── Step 6: Store results for timerCallback (thread-safe) ──
+  // ── Step 5: Store results for timerCallback (thread-safe) ──
   {
     std::lock_guard<std::mutex> lock(pipeline_mutex_);
     latest_tracked_robots_ =
@@ -1410,7 +1355,8 @@ void GimbalPipelineNode::armorsCallback(
     latest_update_time_ = now();  // record local clock for processing_delay
   }
 
-  // ── Step 7: Debug publishing ──
+  // ── Step 6: Debug publishing ──
+  const auto tracker_views = tracker_manager_->initialized_tracker_views();
   if (debug_mode_) {
     if (debug_tracked_robots_pub_ && !tracked_msg.robots.empty())
       debug_tracked_robots_pub_->publish(tracked_msg);
@@ -1428,7 +1374,7 @@ void GimbalPipelineNode::armorsCallback(
     if (debug_tracker_marker_pub_) {
       rclcpp::Time stamp(msg->header.stamp);
       auto marker_array = build_tracker_markers(
-          visualization_frame_, tracker_manager_->trackers(), stamp);
+          visualization_frame_, tracker_views, stamp);
       debug_tracker_marker_pub_->publish(marker_array);
     }
 
@@ -1437,17 +1383,17 @@ void GimbalPipelineNode::armorsCallback(
     }
   }
 
-  // ── Step 8: Publish maneuver states (always-on, for chart monitoring) ──
+  // ── Step 7: Publish maneuver states (always-on, for chart monitoring) ──
   if (maneuver_states_pub_) {
     rm_interfaces::msg::ManeuverStates states_msg;
     states_msg.header.stamp    = msg->header.stamp;
     states_msg.header.frame_id = target_frame_;
-    for (const auto &[robot_id, entry] : tracker_manager_->trackers()) {
-      if (!entry.tracker || !entry.tracker->is_initialized()) continue;
-      const auto result = entry.tracker->assess_maneuver();
-      const auto &ukf   = entry.tracker->spin_filter();
+    for (const auto &view : tracker_views) {
+      if (!view.tracker) continue;
+      const auto result = view.tracker->assess_maneuver();
+      const auto &ukf   = view.tracker->spin_filter();
       rm_interfaces::msg::ManeuverState s;
-      s.robot_id        = robot_id;
+      s.robot_id        = view.robot_id;
       s.is_maneuvering  = result.is_maneuvering;
       s.nis             = result.nis;
       s.innov_norm      = result.innov_norm;
@@ -1474,73 +1420,21 @@ rm_interfaces::msg::TrackedRobots GimbalPipelineNode::buildTrackedRobotsMsg(
     auto *tracker = tracker_manager_->get(rid);
     if (!tracker || (!tracker->is_tracking() && !tracker->is_temp_lost())) continue;
 
-    // ── Extract raw tracker state ─────────────────────────────────
-    const auto pos  = tracker->get_center_position();
-    const auto &filter = tracker->spin_filter();
-    const auto idx  = filter.state_idx();
-    const auto &x   = filter.x();
-    Eigen::Vector3d vel = tracker->get_publish_velocity();
-    const double yaw   = tracker->get_yaw();
-    const double v_yaw = x(idx.DELTA_RATE());
-    const auto [r1, r2] = tracker->get_radii();
-    const double dza  = filter.get_dza();
-
-    bool is_dual = false;
-    {
-      auto dual_it = last_dual_obs_.find(rid);
-      if (dual_it != last_dual_obs_.end()) is_dual = dual_it->second;
-    }
     const rclcpp::Time stamp(header.stamp);
     const double ts = stamp.seconds();
-
-    // ── Stage 1: Outlier detection (independent of smoother.enable) ──
-    // If an outlier is detected, hold the last valid SmoothedOutput so
-    // the One-Euro filter internal state is never corrupted by a jump.
-    SmoothedOutput smoothed;
-    bool has_smoothed = false;
-    bool is_outlier   = false;
-
-    if (smoother_config_.enable_outlier_filter) {
-      auto of_it = outlier_filters_.find(rid);
-      if (of_it != outlier_filters_.end()) {
-        is_outlier = of_it->second.update(pos, yaw);
-      }
-    }
-
-    if (is_outlier) {
-      // Hold strategy: reuse last valid smoothed output
-      auto prev_it = last_smoothed_outputs_.find(rid);
-      if (prev_it != last_smoothed_outputs_.end()) {
-        smoothed     = prev_it->second;
-        has_smoothed = true;
-      }
-      // If no previous smoothed output exists (outlier on very first frame)
-      // fall through with has_smoothed = false → raw output is used downstream
-    } else {
-      // ── Stage 2: Output smoothing (independent switch) ────────────
-      auto sm_it = smoothers_.find(rid);
-      if (sm_it != smoothers_.end() && smoother_config_.enable) {
-        smoothed = sm_it->second.smooth(pos, yaw, vel, v_yaw, r1, r2, dza,
-                                         is_dual, ts);
-        has_smoothed = true;
-      }
-      // Update hold-cache with valid (non-outlier) smoothed result
-      if (has_smoothed) {
-        last_smoothed_outputs_[rid] = smoothed;
-      }
-    }
+    auto post = tracker_manager_->post_process_output(rid, ts, smoother_config_);
+    const SmoothedOutput *smoothed = post.has_smoothed ? &post.smoothed : nullptr;
+    const int visible_armor_count =
+        tracker_manager_->visible_observation_count(rid);
 
     // Publish target for debug
     if (debug_mode_ && debug_target_pub_) {
-      auto target = has_smoothed
-          ? buildTargetMessage(header, rid, *tracker, &smoothed)
-          : buildTargetMessage(header, rid, *tracker, nullptr);
+      auto target = buildTargetMessage(header, rid, *tracker, smoothed);
       debug_target_pub_->publish(target);
     }
 
-    auto robot = has_smoothed
-        ? buildTrackedRobotMessage(header, rid, *tracker, &smoothed)
-        : buildTrackedRobotMessage(header, rid, *tracker, nullptr);
+    auto robot = buildTrackedRobotMessage(
+        header, rid, *tracker, smoothed, visible_armor_count);
 
     if (robot.robot_id.empty()) {
       continue;
@@ -1615,7 +1509,8 @@ rm_interfaces::msg::Target GimbalPipelineNode::buildTargetMessage(
 
 rm_interfaces::msg::TrackedRobot GimbalPipelineNode::buildTrackedRobotMessage(
     const std_msgs::msg::Header &header, const std::string &robot_id,
-  BaseTracker &tracker, const SmoothedOutput *smoothed) {
+  BaseTracker &tracker, const SmoothedOutput *smoothed,
+  int visible_armor_count) {
   rm_interfaces::msg::TrackedRobot empty_msg;
 
   if (!robot_description_facade_) {
@@ -1623,12 +1518,6 @@ rm_interfaces::msg::TrackedRobot GimbalPipelineNode::buildTrackedRobotMessage(
       get_logger(), *get_clock(), 2000,
       "RobotDescriptionFacade is not initialized, skip TrackedRobot build");
     return empty_msg;
-  }
-
-  int visible_armor_count = 0;
-  auto obs_it = last_obs_counts_.find(robot_id);
-  if (obs_it != last_obs_counts_.end()) {
-    visible_armor_count = obs_it->second;
   }
 
   robot_description::TrackedRobotBuildInput input{
@@ -2374,11 +2263,12 @@ void GimbalPipelineNode::publishManeuverMarkers(
 
   int id = 0;
 
-  for (const auto &[robot_id, entry] : tracker_manager_->trackers()) {
-    if (!entry.tracker || !entry.tracker->is_initialized()) continue;
+  const auto tracker_views = tracker_manager_->initialized_tracker_views();
+  for (const auto &view : tracker_views) {
+    if (!view.tracker) continue;
 
-    const auto result = entry.tracker->assess_maneuver();
-    const auto pos    = entry.tracker->get_center_position();
+    const auto result = view.tracker->assess_maneuver();
+    const auto pos    = view.tracker->get_center_position();
 
     // Estimate robot top: center pos + half robot height (~0.25 m)
     const double top_z = pos.z() + 0.25;
