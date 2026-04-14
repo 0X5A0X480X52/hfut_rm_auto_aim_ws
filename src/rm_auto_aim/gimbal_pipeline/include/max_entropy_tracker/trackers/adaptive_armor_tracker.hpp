@@ -12,6 +12,7 @@
 #include "max_entropy_tracker/association/panel_mismatch_detector.hpp"
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/filters/dual_radius_spin_ukf.hpp"
+#include "max_entropy_tracker/filters/spin_filter_interface.hpp"
 #include "max_entropy_tracker/trackers/base_tracker.hpp"
 #include "max_entropy_tracker/utils/maneuver_detector.hpp"
 
@@ -35,19 +36,11 @@ class AdaptiveArmorTracker : public BaseTracker {
   double get_yaw() const override;
   std::pair<double, double> get_radii() const override;
 
-  /* ---------- Extra queries ---------- */
-  double get_dza() const;
-  int get_k() const;
-  double get_delta() const;
-  int get_panel_id() const { return current_panel_id_; }
-  HeightLabel get_height_label() const { return height_label_; }
-  double get_height_confidence() const { return height_confidence_; }
-
-  DualRadiusSpinUKF &ukf() { return ukf_; }
-  const DualRadiusSpinUKF &ukf() const { return ukf_; }
+  SpinFilterInterface &spin_filter() override { return ukf_; }
+  const SpinFilterInterface &spin_filter() const override { return ukf_; }
 
   /// Assess whether the tracked robot is currently maneuvering.
-  ManeuverResult assess_maneuver() const;
+  ManeuverResult assess_maneuver() const override;
 
  private:
   bool update_single(const ObservationData &obs,

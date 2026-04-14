@@ -33,7 +33,7 @@
 namespace fyt::auto_aim
 {
 
-class AdaptiveArmorTracker;
+class BaseTracker;
 struct SmoothedOutput;
 
 namespace robot_description
@@ -63,7 +63,7 @@ struct TrackedRobotBuildInput
   const std_msgs::msg::Header & header;
   const std::string & target_frame;
   const std::string & robot_id;
-  AdaptiveArmorTracker & tracker;
+  BaseTracker & tracker;
   const SmoothedOutput * smoothed{nullptr};
   int visible_armor_count{0};
 };

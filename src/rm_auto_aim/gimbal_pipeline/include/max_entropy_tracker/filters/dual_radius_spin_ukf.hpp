@@ -10,6 +10,7 @@
 
 #include "max_entropy_tracker/filters/base_ukf.hpp"
 #include "max_entropy_tracker/filters/process_models/composite.hpp"
+#include "max_entropy_tracker/filters/spin_filter_interface.hpp"
 
 namespace fyt::auto_aim {
 
@@ -19,7 +20,7 @@ namespace fyt::auto_aim {
  * yaw decomposition: yaw = k*π + delta,  k ∈ {0,1}, delta ∈ [-π/2, π/2]
  * State vector dimension depends on process model (default Singer+CV → 14D).
  */
-class DualRadiusSpinUKF : public BaseUKF {
+class DualRadiusSpinUKF : public BaseUKF, public SpinFilterInterface {
  public:
   static constexpr int N_PANELS = 4;
   static constexpr double PANEL_ANGLE_STEP = M_PI / 2.0;
@@ -46,29 +47,34 @@ class DualRadiusSpinUKF : public BaseUKF {
               double panel_angle = 0.0) override;
 
   /* ---------- State queries ---------- */
-  double get_yaw() const;
-  double get_delta() const;
-  int get_k() const { return k_; }
-  Eigen::Vector3d get_center_position() const;
-  std::pair<double, double> get_radii() const;
-  double get_dza() const;
+    double get_yaw() const override;
+    double get_delta() const override;
+    int get_k() const override { return k_; }
+    Eigen::Vector3d get_center_position() const override;
+    std::pair<double, double> get_radii() const override;
+    double get_dza() const override;
   bool is_dza_converged(double var_threshold = 0.01,
                         double min_value = 0.005) const;
 
   const CompositeProcessModel &process_model() const { return *motion_model_; }
-  const DynamicStateIndex &state_idx() const { return state_idx_; }
+    const DynamicStateIndex &state_idx() const override { return state_idx_; }
+
+    const Eigen::VectorXd &x() const override { return BaseUKF::x(); }
+    Eigen::VectorXd &x() override { return BaseUKF::x(); }
+    const Eigen::MatrixXd &P() const override { return BaseUKF::P(); }
+    Eigen::MatrixXd &P() override { return BaseUKF::P(); }
 
   /* ---------- Maneuver detection getters ---------- */
   /// 3-D position innovation from the last update(); size-0 if no update yet.
-  const Eigen::VectorXd &last_innov_xyz() const { return last_innov_xyz_; }
+    const Eigen::VectorXd &last_innov_xyz() const override { return last_innov_xyz_; }
   /// yaw innovation (single-obs only; 0 for dual-obs or no-update).
-  double last_innov_yaw() const { return last_innov_yaw_; }
+    double last_innov_yaw() const override { return last_innov_yaw_; }
   /// z-dimension innovation from the last single-obs update (innov(2)).
   double last_z_innovation() const { return last_innov_xyz_.size() >= 3 ? last_innov_xyz_(2) : 0.0; }
   /// Normalized Innovation Squared (NIS); -1 = no update since last predict().
-  double last_nis() const { return last_nis_; }
+    double last_nis() const override { return last_nis_; }
   /// Update type: 0=none, 1=single-observation, 2=dual-observation.
-  int last_update_type() const { return last_update_type_; }
+    int last_update_type() const override { return last_update_type_; }
 
   /* ---------- Panel mismatch correction ---------- */
   /**

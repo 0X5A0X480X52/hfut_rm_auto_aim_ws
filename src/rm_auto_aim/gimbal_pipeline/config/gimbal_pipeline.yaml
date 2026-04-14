@@ -66,6 +66,39 @@ gimbal_pipeline:
     constraints.min_dz: -1.0
     constraints.max_dz: 1.0
 
+    # Outpost tracker (known 3-armor geometry + max-entropy mode switch)
+    outpost.translation_model: "CV"   # "CV" | "CA" | "Singer"
+    outpost.rotation_model: "CV"      # "CV" | "CA"
+    outpost.singer_alpha: 0.0          # <=0: fallback to motion.singer_alpha
+    outpost.singer_sigma: 0.0          # <=0: fallback to motion.singer_sigma
+    outpost.spin_process_noise_theta_rate: 0.0  # <=0: fallback to spin.spin_process_noise_delta_rate
+    outpost.spin_process_noise_theta_acc: 0.0   # <=0: fallback to spin.spin_process_noise_delta_acc
+    outpost.radius: 0.26
+    outpost.z_offset_0: -0.06
+    outpost.z_offset_1: 0.00
+    outpost.z_offset_2: 0.06
+    outpost.panel_angle_step: 2.0943951023931953
+    outpost.softmax_temperature: 1.5
+    outpost.weight_yaw: 1.0
+    outpost.weight_z_state: 6.0
+    outpost.weight_z_history: 2.0
+    outpost.entropy_enter: 0.75
+    outpost.entropy_exit: 0.55
+    outpost.max_prob_enter: 0.60
+    outpost.max_prob_exit: 0.75
+    outpost.stable_frames: 4
+    outpost.z_history_window: 15
+    outpost.single_mode_confidence_scale: 0.70
+    outpost.alpha_pos: 0.65
+    outpost.beta_vel: 0.30
+    outpost.alpha_yaw: 0.60
+    outpost.beta_yaw_rate: 0.25
+    outpost.assume_static_center: true
+    outpost.linear_velocity_damping: 0.90
+    outpost.yaw_rate_damping: 0.98
+    outpost.max_center_speed: 1.00
+    outpost.max_yaw_rate: 12.0
+
     # Panel mismatch detection
     panel_mismatch.enable: true
     panel_mismatch.window_size: 8

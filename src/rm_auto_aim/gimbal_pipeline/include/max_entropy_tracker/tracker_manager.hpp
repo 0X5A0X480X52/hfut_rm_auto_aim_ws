@@ -13,15 +13,17 @@
 
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/core/observation.hpp"
+#include "max_entropy_tracker/trackers/base_tracker.hpp"
 #include "max_entropy_tracker/trackers/adaptive_armor_tracker.hpp"
+#include "max_entropy_tracker/trackers/outpost_armor_tracker.hpp"
 
 namespace fyt::auto_aim {
 
-/// Manages per-robot AdaptiveArmorTracker instances.
+/// Manages per-robot tracker instances.
 class TrackerManager {
  public:
   struct TrackerEntry {
-    std::unique_ptr<AdaptiveArmorTracker> tracker;
+    std::unique_ptr<BaseTracker> tracker;
     double last_update_time = 0.0;
     int observation_count = 0;
   };
@@ -40,7 +42,7 @@ class TrackerManager {
         enable_osc_(enable_oscillation) {}
 
   /// Get existing tracker or create+initialize a new one.
-  AdaptiveArmorTracker *get_or_create(
+  BaseTracker *get_or_create(
       const std::string &robot_id,
       const std::vector<ObservationData> &initial_obs,
       double current_time) {
@@ -48,7 +50,12 @@ class TrackerManager {
     if (it != trackers_.end()) return it->second.tracker.get();
     if (initial_obs.empty()) return nullptr;
 
-    auto t = std::make_unique<AdaptiveArmorTracker>(config_, dt_, enable_osc_);
+    std::unique_ptr<BaseTracker> t;
+    if (robot_id == "outpost") {
+      t = std::make_unique<OutpostArmorTracker>(config_, dt_, enable_osc_);
+    } else {
+      t = std::make_unique<AdaptiveArmorTracker>(config_, dt_, enable_osc_);
+    }
     t->initialize(initial_obs, default_r1_, default_r2_, default_dza_);
 
     auto *ptr = t.get();
@@ -147,7 +154,7 @@ class TrackerManager {
     return removed;
   }
 
-  AdaptiveArmorTracker *get(const std::string &id) {
+  BaseTracker *get(const std::string &id) {
     auto it = trackers_.find(id);
     return (it != trackers_.end()) ? it->second.tracker.get() : nullptr;
   }

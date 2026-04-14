@@ -4,12 +4,15 @@
 
 #include <Eigen/Dense>
 #include <algorithm>
+#include <geometry_msgs/msg/pose.hpp>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "max_entropy_tracker/core/observation.hpp"
+#include "max_entropy_tracker/filters/spin_filter_interface.hpp"
+#include "max_entropy_tracker/utils/maneuver_detector.hpp"
 
 namespace fyt::auto_aim {
 
@@ -43,6 +46,31 @@ class BaseTracker {
   virtual Eigen::Vector3d get_center_position() const = 0;
   virtual double get_yaw() const = 0;
   virtual std::pair<double, double> get_radii() const = 0;
+  virtual SpinFilterInterface &spin_filter() = 0;
+  virtual const SpinFilterInterface &spin_filter() const = 0;
+  virtual ManeuverResult assess_maneuver() const = 0;
+
+  /// Tracker output velocity in the same semantic frame as get_center_position().
+  virtual Eigen::Vector3d get_publish_velocity() const {
+    const auto &filter = spin_filter();
+    const auto idx = filter.state_idx();
+    const auto &x = filter.x();
+    return Eigen::Vector3d(x(idx.VX()), x(idx.VY()), x(idx.VZ()));
+  }
+
+  /// Runtime ambiguity status. Default trackers are not in single-armor ambiguity mode.
+  virtual bool is_ambiguous_single_mode() const { return false; }
+
+  /// Runtime armor count hint. <=0 means caller should use profile/default count.
+  virtual int effective_num_armors() const { return 0; }
+
+  /// Confidence multiplier for external publishing.
+  virtual double confidence_scale() const { return 1.0; }
+
+  /// Optional runtime armor offsets. Empty means caller should use fallback profile.
+  virtual std::vector<geometry_msgs::msg::Pose> build_armors_offset_for_message() const {
+    return {};
+  }
 
   /* ---------- state machine ---------- */
   TrackerState state() const { return state_; }

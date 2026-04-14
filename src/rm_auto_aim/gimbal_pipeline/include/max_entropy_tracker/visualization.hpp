@@ -45,13 +45,12 @@ inline visualization_msgs::msg::MarkerArray build_tracker_markers(
     auto pos  = tracker.get_center_position();
     double yaw = tracker.get_yaw();
     auto [r1, r2] = tracker.get_radii();
-    double dza = tracker.get_dza();
-
-    auto idx = tracker.ukf().state_idx();
-    const auto &x = tracker.ukf().x();
-    double vx = x(idx.VX());
-    double vy = x(idx.VY());
-    double vz = x(idx.VZ());
+    const auto &filter = tracker.spin_filter();
+    double dza = filter.get_dza();
+    const auto vel = tracker.get_publish_velocity();
+    double vx = vel.x();
+    double vy = vel.y();
+    double vz = vel.z();
 
     // ---------- 1. Robot center SPHERE ----------
     {
@@ -119,6 +118,9 @@ inline visualization_msgs::msg::MarkerArray build_tracker_markers(
       if (rtype == T::OUTPOST_3 || rtype == T::BASE) n_armors = 3;
       else if (rtype == T::BALANCE_2) n_armors = 2;
 
+      const int runtime_num_armors = tracker.effective_num_armors();
+      if (runtime_num_armors > 0) n_armors = runtime_num_armors;
+
       // Armor size heuristic (same as robot_pose_estimator)
       bool is_large = (rtype == T::BALANCE_2 || rtype == T::HERO_4 ||
                        rtype == T::OUTPOST_3 || rtype == T::BASE);
@@ -130,7 +132,10 @@ inline visualization_msgs::msg::MarkerArray build_tracker_markers(
         double r  = r1;
         double pz = pos.z();
 
-        if (n_armors == 4) {
+        if (n_armors == 1) {
+          r = 0.0;
+          pz = pos.z();
+        } else if (n_armors == 4) {
           r  = is_current_pair ? r1 : r2;
           pz = pos.z() + (is_current_pair ? -dza : dza);
           is_current_pair = !is_current_pair;

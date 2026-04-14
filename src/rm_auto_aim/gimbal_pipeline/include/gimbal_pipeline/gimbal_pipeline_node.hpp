@@ -93,10 +93,10 @@ class GimbalPipelineNode : public rclcpp::Node {
       const std_msgs::msg::Header &header);
   rm_interfaces::msg::Target buildTargetMessage(
       const std_msgs::msg::Header &header, const std::string &robot_id,
-      AdaptiveArmorTracker &tracker, const SmoothedOutput *smoothed = nullptr);
+      BaseTracker &tracker, const SmoothedOutput *smoothed = nullptr);
   rm_interfaces::msg::TrackedRobot buildTrackedRobotMessage(
       const std_msgs::msg::Header &header, const std::string &robot_id,
-      AdaptiveArmorTracker &tracker, const SmoothedOutput *smoothed = nullptr);
+      BaseTracker &tracker, const SmoothedOutput *smoothed = nullptr);
 
   /* ================================================================ */
   /*  Target selection logic (from TargetSelectorNode)                */

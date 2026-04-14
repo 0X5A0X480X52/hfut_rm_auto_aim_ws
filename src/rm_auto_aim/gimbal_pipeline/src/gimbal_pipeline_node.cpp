@@ -684,6 +684,39 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("constraints.min_dz", -1.0);
   declare_parameter("constraints.max_dz", 1.0);
 
+  // Outpost-specific (known 3-armor geometry + max-entropy mode switch)
+  declare_parameter("outpost.translation_model", "CV");
+  declare_parameter("outpost.rotation_model", "CV");
+  declare_parameter("outpost.singer_alpha", 0.0);
+  declare_parameter("outpost.singer_sigma", 0.0);
+  declare_parameter("outpost.spin_process_noise_theta_rate", 0.0);
+  declare_parameter("outpost.spin_process_noise_theta_acc", 0.0);
+  declare_parameter("outpost.radius", 0.26);
+  declare_parameter("outpost.z_offset_0", -0.06);
+  declare_parameter("outpost.z_offset_1", 0.0);
+  declare_parameter("outpost.z_offset_2", 0.06);
+  declare_parameter("outpost.panel_angle_step", 2.0 * M_PI / 3.0);
+  declare_parameter("outpost.softmax_temperature", 1.5);
+  declare_parameter("outpost.weight_yaw", 1.0);
+  declare_parameter("outpost.weight_z_state", 6.0);
+  declare_parameter("outpost.weight_z_history", 2.0);
+  declare_parameter("outpost.entropy_enter", 0.75);
+  declare_parameter("outpost.entropy_exit", 0.55);
+  declare_parameter("outpost.max_prob_enter", 0.60);
+  declare_parameter("outpost.max_prob_exit", 0.75);
+  declare_parameter("outpost.stable_frames", 4);
+  declare_parameter("outpost.z_history_window", 15);
+  declare_parameter("outpost.single_mode_confidence_scale", 0.70);
+  declare_parameter("outpost.alpha_pos", 0.65);
+  declare_parameter("outpost.beta_vel", 0.30);
+  declare_parameter("outpost.alpha_yaw", 0.60);
+  declare_parameter("outpost.beta_yaw_rate", 0.25);
+  declare_parameter("outpost.assume_static_center", true);
+  declare_parameter("outpost.linear_velocity_damping", 0.90);
+  declare_parameter("outpost.yaw_rate_damping", 0.98);
+  declare_parameter("outpost.max_center_speed", 1.00);
+  declare_parameter("outpost.max_yaw_rate", 12.0);
+
   // Maneuver detection
   declare_parameter("maneuver.enable", true);
   declare_parameter("maneuver.nis_threshold_single", 238.807);
@@ -1025,6 +1058,59 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
   c.panel_mismatch.reinit_count =
       get_parameter("panel_mismatch.reinit_count").as_int();
 
+    c.outpost.translation_model = translation_model_from_string(
+      get_parameter("outpost.translation_model").as_string());
+    c.outpost.rotation_model = rotation_model_from_string(
+      get_parameter("outpost.rotation_model").as_string());
+    c.outpost.singer_alpha = get_parameter("outpost.singer_alpha").as_double();
+    c.outpost.singer_sigma = get_parameter("outpost.singer_sigma").as_double();
+    c.outpost.spin_process_noise_theta_rate =
+      get_parameter("outpost.spin_process_noise_theta_rate").as_double();
+    c.outpost.spin_process_noise_theta_acc =
+      get_parameter("outpost.spin_process_noise_theta_acc").as_double();
+    c.outpost.radius = get_parameter("outpost.radius").as_double();
+    c.outpost.z_offset_0 = get_parameter("outpost.z_offset_0").as_double();
+    c.outpost.z_offset_1 = get_parameter("outpost.z_offset_1").as_double();
+    c.outpost.z_offset_2 = get_parameter("outpost.z_offset_2").as_double();
+    c.outpost.panel_angle_step =
+      get_parameter("outpost.panel_angle_step").as_double();
+    c.outpost.softmax_temperature =
+      get_parameter("outpost.softmax_temperature").as_double();
+    c.outpost.weight_yaw = get_parameter("outpost.weight_yaw").as_double();
+    c.outpost.weight_z_state =
+      get_parameter("outpost.weight_z_state").as_double();
+    c.outpost.weight_z_history =
+      get_parameter("outpost.weight_z_history").as_double();
+    c.outpost.entropy_enter =
+      get_parameter("outpost.entropy_enter").as_double();
+    c.outpost.entropy_exit =
+      get_parameter("outpost.entropy_exit").as_double();
+    c.outpost.max_prob_enter =
+      get_parameter("outpost.max_prob_enter").as_double();
+    c.outpost.max_prob_exit =
+      get_parameter("outpost.max_prob_exit").as_double();
+    c.outpost.stable_frames =
+      get_parameter("outpost.stable_frames").as_int();
+    c.outpost.z_history_window =
+      get_parameter("outpost.z_history_window").as_int();
+    c.outpost.single_mode_confidence_scale =
+      get_parameter("outpost.single_mode_confidence_scale").as_double();
+    c.outpost.alpha_pos = get_parameter("outpost.alpha_pos").as_double();
+    c.outpost.beta_vel = get_parameter("outpost.beta_vel").as_double();
+    c.outpost.alpha_yaw = get_parameter("outpost.alpha_yaw").as_double();
+    c.outpost.beta_yaw_rate =
+      get_parameter("outpost.beta_yaw_rate").as_double();
+    c.outpost.assume_static_center =
+      get_parameter("outpost.assume_static_center").as_bool();
+    c.outpost.linear_velocity_damping =
+      get_parameter("outpost.linear_velocity_damping").as_double();
+    c.outpost.yaw_rate_damping =
+      get_parameter("outpost.yaw_rate_damping").as_double();
+    c.outpost.max_center_speed =
+      get_parameter("outpost.max_center_speed").as_double();
+    c.outpost.max_yaw_rate =
+      get_parameter("outpost.max_yaw_rate").as_double();
+
   // Output smoother
   smoother_config_.enable = get_parameter("smoother.enable").as_bool();
   smoother_config_.enable_position_smooth =
@@ -1178,7 +1264,7 @@ void GimbalPipelineNode::armorsCallback(
           smoothers_.find(rid) == smoothers_.end()) {
         OutputSmoother sm(smoother_config_);
         auto [r1, r2] = t->get_radii();
-        double dza = t->get_dza();
+        double dza = t->spin_filter().get_dza();
         sm.initialize(r1, r2, dza);
         smoothers_.emplace(rid, std::move(sm));
 
@@ -1257,7 +1343,7 @@ void GimbalPipelineNode::armorsCallback(
       // ── 机动检测指标：从对应 tracker 的 UKF 内部读取 ──
       auto *tracker = tracker_manager_->get(robot.robot_id);
       if (tracker && tracker->is_initialized()) {
-        const auto &ukf = tracker->ukf();
+        const auto &ukf = tracker->spin_filter();
         const auto &idx = ukf.state_idx();
         const auto &xv  = ukf.x();
         const auto &Pv  = ukf.P();
@@ -1359,7 +1445,7 @@ void GimbalPipelineNode::armorsCallback(
     for (const auto &[robot_id, entry] : tracker_manager_->trackers()) {
       if (!entry.tracker || !entry.tracker->is_initialized()) continue;
       const auto result = entry.tracker->assess_maneuver();
-      const auto &ukf   = entry.tracker->ukf();
+      const auto &ukf   = entry.tracker->spin_filter();
       rm_interfaces::msg::ManeuverState s;
       s.robot_id        = robot_id;
       s.is_maneuvering  = result.is_maneuvering;
@@ -1390,13 +1476,14 @@ rm_interfaces::msg::TrackedRobots GimbalPipelineNode::buildTrackedRobotsMsg(
 
     // ── Extract raw tracker state ─────────────────────────────────
     const auto pos  = tracker->get_center_position();
-    const auto idx  = tracker->ukf().state_idx();
-    const auto &x   = tracker->ukf().x();
-    const Eigen::Vector3d vel(x(idx.VX()), x(idx.VY()), x(idx.VZ()));
+    const auto &filter = tracker->spin_filter();
+    const auto idx  = filter.state_idx();
+    const auto &x   = filter.x();
+    Eigen::Vector3d vel = tracker->get_publish_velocity();
     const double yaw   = tracker->get_yaw();
     const double v_yaw = x(idx.DELTA_RATE());
     const auto [r1, r2] = tracker->get_radii();
-    const double dza  = tracker->get_dza();
+    const double dza  = filter.get_dza();
 
     bool is_dual = false;
     {
@@ -1471,13 +1558,22 @@ rm_interfaces::msg::TrackedRobots GimbalPipelineNode::buildTrackedRobotsMsg(
 
 rm_interfaces::msg::Target GimbalPipelineNode::buildTargetMessage(
     const std_msgs::msg::Header &header, const std::string &robot_id,
-    AdaptiveArmorTracker &tracker, const SmoothedOutput *smoothed) {
+  BaseTracker &tracker, const SmoothedOutput *smoothed) {
   rm_interfaces::msg::Target target;
   target.header = header;
   target.header.frame_id = target_frame_;
   target.tracking = true;
   target.id = robot_id;
+
+  // Keep debug target semantic aligned with tracked robot profile.
   target.armors_num = 4;
+  if (robot_id == "outpost" || robot_id == "base") {
+    target.armors_num = 3;
+  }
+  const int runtime_num_armors = tracker.effective_num_armors();
+  if (runtime_num_armors > 0) {
+    target.armors_num = runtime_num_armors;
+  }
 
   if (smoothed) {
     target.position.x = smoothed->center_position.x();
@@ -1496,17 +1592,19 @@ rm_interfaces::msg::Target GimbalPipelineNode::buildTargetMessage(
     target.position.x = pos.x();
     target.position.y = pos.y();
     target.position.z = pos.z();
-    auto idx = tracker.ukf().state_idx();
-    const auto &x = tracker.ukf().x();
-    target.velocity.x = x(idx.VX());
-    target.velocity.y = x(idx.VY());
-    target.velocity.z = x(idx.VZ());
+    const auto &filter = tracker.spin_filter();
+    auto idx = filter.state_idx();
+    const auto &x = filter.x();
+    const auto pub_vel = tracker.get_publish_velocity();
+    target.velocity.x = pub_vel.x();
+    target.velocity.y = pub_vel.y();
+    target.velocity.z = pub_vel.z();
     target.yaw = tracker.get_yaw();
     target.v_yaw = x(idx.DELTA_RATE());
     auto [r1, r2] = tracker.get_radii();
     target.radius_1 = r1;
     target.radius_2 = r2;
-    target.d_za = tracker.get_dza();
+    target.d_za = filter.get_dza();
   }
 
   target.d_zc = 0.0;
@@ -1517,7 +1615,7 @@ rm_interfaces::msg::Target GimbalPipelineNode::buildTargetMessage(
 
 rm_interfaces::msg::TrackedRobot GimbalPipelineNode::buildTrackedRobotMessage(
     const std_msgs::msg::Header &header, const std::string &robot_id,
-    AdaptiveArmorTracker &tracker, const SmoothedOutput *smoothed) {
+  BaseTracker &tracker, const SmoothedOutput *smoothed) {
   rm_interfaces::msg::TrackedRobot empty_msg;
 
   if (!robot_description_facade_) {

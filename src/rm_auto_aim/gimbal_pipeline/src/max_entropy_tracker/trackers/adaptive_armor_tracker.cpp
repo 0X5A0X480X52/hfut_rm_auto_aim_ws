@@ -345,8 +345,5 @@ double AdaptiveArmorTracker::get_yaw() const { return ukf_.get_yaw(); }
 std::pair<double, double> AdaptiveArmorTracker::get_radii() const {
   return ukf_.get_radii();
 }
-double AdaptiveArmorTracker::get_dza() const { return ukf_.get_dza(); }
-int AdaptiveArmorTracker::get_k() const { return ukf_.get_k(); }
-double AdaptiveArmorTracker::get_delta() const { return ukf_.get_delta(); }
 
 }  // namespace fyt::auto_aim

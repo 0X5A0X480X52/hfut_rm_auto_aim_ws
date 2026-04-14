@@ -17,7 +17,7 @@
 #include <algorithm>
 #include <utility>
 
-#include "max_entropy_tracker/trackers/adaptive_armor_tracker.hpp"
+#include "max_entropy_tracker/trackers/base_tracker.hpp"
 #include "max_entropy_tracker/utils/output_smoother.hpp"
 
 namespace fyt::auto_aim::robot_description
@@ -70,8 +70,9 @@ public:
       msg.track_state = rm_interfaces::msg::TrackedRobot::DETECTING;
     }
 
-    auto idx = input.tracker.ukf().state_idx();
-    const auto & x = input.tracker.ukf().x();
+    const auto & filter = input.tracker.spin_filter();
+    auto idx = filter.state_idx();
+    const auto & x = filter.x();
 
     if (input.smoothed != nullptr) {
       msg.center_position.x = input.smoothed->center_position.x();
@@ -90,15 +91,16 @@ public:
       msg.center_position.x = pos.x();
       msg.center_position.y = pos.y();
       msg.center_position.z = pos.z();
-      msg.center_velocity.x = x(idx.VX());
-      msg.center_velocity.y = x(idx.VY());
-      msg.center_velocity.z = x(idx.VZ());
+      const auto pub_vel = input.tracker.get_publish_velocity();
+      msg.center_velocity.x = pub_vel.x();
+      msg.center_velocity.y = pub_vel.y();
+      msg.center_velocity.z = pub_vel.z();
       msg.yaw = input.tracker.get_yaw();
       msg.yaw_velocity = x(idx.DELTA_RATE());
       auto [r1, r2] = input.tracker.get_radii();
       msg.radius = r1;
       msg.radius_2 = r2;
-      msg.d_za = input.tracker.get_dza();
+      msg.d_za = filter.get_dza();
     }
 
     if (idx.has("AX")) {
@@ -113,21 +115,27 @@ public:
 
     msg.yaw_acceleration = idx.has("DELTA_ACC") ? x(idx.get("DELTA_ACC")) : 0.0;
     msg.d_zc = 0.0;
-    msg.num_armors = num_armors_;
+    const int runtime_num_armors = input.tracker.effective_num_armors();
+    msg.num_armors = runtime_num_armors > 0 ? runtime_num_armors : num_armors_;
 
     const double off_r1 = input.smoothed ? input.smoothed->r1 : msg.radius;
     const double off_r2 = input.smoothed ? input.smoothed->r2 : msg.radius_2;
     const double off_dza = input.smoothed ? input.smoothed->dza : msg.d_za;
 
-    msg.armors_offset = TrackedRobotUsage::generateArmorsOffsetFromProfile(
-      msg.num_armors,
-      off_r1,
-      off_r2,
-      off_dza,
-      msg.d_zc);
+    const auto runtime_offsets = input.tracker.build_armors_offset_for_message();
+    if (!runtime_offsets.empty()) {
+      msg.armors_offset = runtime_offsets;
+    } else {
+      msg.armors_offset = TrackedRobotUsage::generateArmorsOffsetFromProfile(
+        msg.num_armors,
+        off_r1,
+        off_r2,
+        off_dza,
+        msg.d_zc);
+    }
 
     try {
-      const auto & P = input.tracker.ukf().P();
+      const auto & P = filter.P();
       int dim = static_cast<int>(P.rows());
       msg.covariance_dim = dim;
       msg.state_covariance.resize(dim * dim);
@@ -150,6 +158,8 @@ public:
     } else {
       msg.confidence = 0.3;
     }
+
+    msg.confidence *= input.tracker.confidence_scale();
 
     msg.is_visible = input.tracker.is_tracking() || input.tracker.is_temp_lost();
     msg.visible_armor_count = msg.is_visible ? std::max(0, input.visible_armor_count) : 0;
