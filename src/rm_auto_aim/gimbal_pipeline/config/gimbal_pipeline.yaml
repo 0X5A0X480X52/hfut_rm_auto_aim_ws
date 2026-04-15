@@ -299,10 +299,10 @@ gimbal_pipeline:
     controller.mpc.q_pitch: 100.0    
     controller.mpc.q_yaw_vel: 1.0    
     controller.mpc.q_pitch_vel: 1.0
-    controller.mpc.r_yaw: 0.1    
-    controller.mpc.r_pitch: 0.1    
-    controller.mpc.s_yaw: 0.1    
-    controller.mpc.s_pitch: 0.1
+    controller.mpc.r_yaw: 0.01    
+    controller.mpc.r_pitch: 0.01    
+    controller.mpc.s_yaw: 0.01    
+    controller.mpc.s_pitch: 0.01
 
     # MPC 数值稳健性: 统一 Q/R/S 量纲归一化
     # mode:
