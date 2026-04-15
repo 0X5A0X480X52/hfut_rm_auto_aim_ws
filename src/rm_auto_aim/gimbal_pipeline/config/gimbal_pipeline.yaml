@@ -30,18 +30,18 @@ gimbal_pipeline:
 
     # Motion model
     motion.translation_model: "Singer"  # "CV" | "Singer"
-    motion.cv_process_noise_vel: 1.00
-    motion.ca_process_noise_acc: 0.01
-    motion.singer_alpha: 1.0
-    motion.singer_sigma: 0.050
+    motion.cv_process_noise_vel: 1.20
+    motion.ca_process_noise_acc: 0.1
+    motion.singer_alpha: 1.5
+    motion.singer_sigma: 0.30
     motion.process_noise_r: 0.002
     motion.process_noise_dz: 0.00005
 
     # Spin model
-    spin.spin_process_noise_yaw_rate: 1.0
-    spin.spin_process_noise_yaw_acc: 10.0
-    spin.spin_process_noise_delta_rate: 1.0
-    spin.spin_process_noise_delta_acc: 30.0
+    spin.spin_process_noise_yaw_rate: 3.5
+    spin.spin_process_noise_yaw_acc: 18.0
+    spin.spin_process_noise_delta_rate: 3.50
+    spin.spin_process_noise_delta_acc: 45.0
 
   #$
     # Entropy
