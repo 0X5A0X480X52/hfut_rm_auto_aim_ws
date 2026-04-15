@@ -116,6 +116,12 @@ public:
 
   void setFireAdviceEngine(std::shared_ptr<FireAdviceEngine> fire_advice_engine);
 
+  /**
+   * @brief 设置弹道求解模式
+   * @param mode "service" 或 "local"（其他值按 service 处理）
+   */
+  void setBallisticMode(const std::string & mode);
+
 protected:
   std::shared_ptr<ArmorPositionCalculator> position_calculator_;
   std::shared_ptr<ArmorSelector> armor_selector_;
@@ -123,6 +129,7 @@ protected:
   std::shared_ptr<LocalTrajectoryCompensator> local_compensator_;
   std::shared_ptr<FireAdvisor> fire_advisor_;
   std::shared_ptr<FireAdviceEngine> fire_advice_engine_;
+  bool prefer_local_ballistic_{false};
 
   /**
    * @brief 创建空闲状态的控制命令

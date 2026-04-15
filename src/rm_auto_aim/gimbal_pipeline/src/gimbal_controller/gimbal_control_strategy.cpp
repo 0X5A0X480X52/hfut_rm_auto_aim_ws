@@ -43,6 +43,11 @@ void GimbalControlStrategy::setFireAdviceEngine(
   fire_advice_engine_ = fire_advice_engine;
 }
 
+void GimbalControlStrategy::setBallisticMode(const std::string & mode)
+{
+  prefer_local_ballistic_ = (mode == "local");
+}
+
 rm_interfaces::msg::GimbalCmd GimbalControlStrategy::createIdleCmd() const
 {
   rm_interfaces::msg::GimbalCmd cmd;
@@ -66,14 +71,17 @@ bool GimbalControlStrategy::computeBallistic(
   double & yaw,
   double & flight_time) const
 {
-  // 首先尝试使用 ballistic_solver 服务
-  if (ballistic_client_ && ballistic_client_->isServiceAvailable()) {
-    auto result = ballistic_client_->solve(target_position, target_velocity, bullet_speed);
-    if (result.success) {
-      pitch = result.pitch;
-      yaw = result.yaw;
-      flight_time = result.flight_time;
-      return true;
+  // service 模式: 优先使用 ballistic_solver 服务
+  // local 模式: 完全跳过 service，避免 timeout 告警。
+  if (!prefer_local_ballistic_) {
+    if (ballistic_client_ && ballistic_client_->isServiceAvailable()) {
+      auto result = ballistic_client_->solve(target_position, target_velocity, bullet_speed);
+      if (result.success) {
+        pitch = result.pitch;
+        yaw = result.yaw;
+        flight_time = result.flight_time;
+        return true;
+      }
     }
   }
 

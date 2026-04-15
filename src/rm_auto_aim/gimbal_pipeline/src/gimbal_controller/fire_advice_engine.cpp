@@ -99,13 +99,16 @@ bool CandidateImpactSolver::solveBallistic(
 {
   const double bounded_bullet_speed = std::max(bullet_speed, kMinBulletSpeed);
 
-  if (ballistic_client_ && ballistic_client_->isServiceAvailable()) {
-    auto result = ballistic_client_->solve(target_position, target_velocity, bounded_bullet_speed);
-    if (result.success) {
-      pitch = result.pitch;
-      yaw = result.yaw;
-      flight_time = result.flight_time;
-      return true;
+  // service 模式: 优先使用 service；local 模式: 完全跳过 service。
+  if (!prefer_local_ballistic_) {
+    if (ballistic_client_ && ballistic_client_->isServiceAvailable()) {
+      auto result = ballistic_client_->solve(target_position, target_velocity, bounded_bullet_speed);
+      if (result.success) {
+        pitch = result.pitch;
+        yaw = result.yaw;
+        flight_time = result.flight_time;
+        return true;
+      }
     }
   }
 

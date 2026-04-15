@@ -1600,6 +1600,7 @@ void GimbalPipelineNode::initGimbalComponents() {
   fire_advice_engine_ = std::make_shared<gimbal_controller::FireAdviceEngine>();
   fire_advice_engine_->setComponents(
     position_calculator_, ballistic_client_, local_compensator_, fire_advisor_);
+  fire_advice_engine_->setBallisticMode(ballistic_mode_);
   gimbal_control_core_ = std::make_shared<gimbal_controller::GimbalControlCore>();
   gimbal_control_core_->setFireModules(fire_advice_engine_, fire_advisor_);
 }
@@ -1610,6 +1611,7 @@ void GimbalPipelineNode::initGimbalStrategies() {
   current_s->setComponents(position_calculator_, armor_selector_,
                            ballistic_client_, local_compensator_,
                            fire_advisor_);
+  current_s->setBallisticMode(ballistic_mode_);
   gimbal_strategies_["current"] = current_s;
 
   auto predicted_s =
@@ -1617,11 +1619,13 @@ void GimbalPipelineNode::initGimbalStrategies() {
   predicted_s->setComponents(position_calculator_, armor_selector_,
                              ballistic_client_, local_compensator_,
                              fire_advisor_);
+  predicted_s->setBallisticMode(ballistic_mode_);
   gimbal_strategies_["predicted"] = predicted_s;
 
   auto mpc_s = std::make_shared<gimbal_controller::MpcControlStrategy>();
   mpc_s->setComponents(position_calculator_, armor_selector_,
                        ballistic_client_, local_compensator_, fire_advisor_);
+  mpc_s->setBallisticMode(ballistic_mode_);
   mpc_s->initReferenceGenerator();
 
   const double mpc_control_delay_s = readCompatDoubleParameter(
@@ -1727,6 +1731,7 @@ void GimbalPipelineNode::initGimbalStrategies() {
   auto sm_s = std::make_shared<gimbal_controller::StateMachineStrategy>();
   sm_s->setComponents(position_calculator_, armor_selector_,
                       ballistic_client_, local_compensator_, fire_advisor_);
+  sm_s->setBallisticMode(ballistic_mode_);
   gimbal_strategies_["state_machine"] = sm_s;
 
   if (gimbal_control_core_) {

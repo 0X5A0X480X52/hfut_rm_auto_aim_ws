@@ -131,6 +131,11 @@ public:
   CandidateImpactSolver() = default;
   ~CandidateImpactSolver() = default;
 
+  void setBallisticMode(const std::string & mode)
+  {
+    prefer_local_ballistic_ = (mode == "local");
+  }
+
   void setComponents(
     std::shared_ptr<ArmorPositionCalculator> position_calculator,
     std::shared_ptr<BallisticSolverClient> ballistic_client,
@@ -160,6 +165,7 @@ private:
   std::shared_ptr<ArmorPositionCalculator> position_calculator_;
   std::shared_ptr<BallisticSolverClient> ballistic_client_;
   std::shared_ptr<LocalTrajectoryCompensator> local_compensator_;
+  bool prefer_local_ballistic_{false};
 };
 
 class FireAdviceEngine
@@ -182,6 +188,11 @@ public:
   void setUseGimbalKinematics(bool use_gimbal_kinematics)
   {
     use_gimbal_kinematics_ = use_gimbal_kinematics;
+  }
+
+  void setBallisticMode(const std::string & mode)
+  {
+    candidate_solver_.setBallisticMode(mode);
   }
 
   FireAdviceEngineResult evaluate(const FireAdviceEngineRequest & request) const;
