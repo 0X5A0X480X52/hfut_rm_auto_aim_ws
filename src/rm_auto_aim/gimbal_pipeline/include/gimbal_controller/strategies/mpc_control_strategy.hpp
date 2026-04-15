@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstdint>
 #include <deque>
+#include <string>
 
 #include <Eigen/Dense>
 
@@ -119,13 +120,19 @@ public:
     double sigma_beta, double gamma);
 
   /**
-   * @brief 设置在线 RMS 归一化参数
+   * @brief 设置数值归一化参数
    *
-   * 对 Q/R/S 对应量做滑动窗口 RMS 归一化：
-   *   w_norm = w / (rms^2 + eps)
+   * - mode=rms: 对 Q/R/S 对应量做滑动窗口 RMS 归一化
+   * - mode=typical: 用典型值做静态归一化
+   *
+   * 统一公式: w_norm = w / (scale^2 + eps)
    */
   void setNumericalNormalizationParameters(
-    bool enable, int window_size, int min_samples, double rms_epsilon);
+    bool enable, int window_size, int min_samples, double rms_epsilon,
+    const std::string & mode,
+    const Eigen::Vector4d & state_typical,
+    const Eigen::Vector2d & control_typical,
+    const Eigen::Vector2d & delta_control_typical);
 
   /**
    * @brief 设置 Hessian 自适应对角正则参数
@@ -265,6 +272,12 @@ private:
     int rank_h{0};
   };
 
+  enum class NormalizationMode
+  {
+    RMS,
+    TYPICAL
+  };
+
   Eigen::VectorXd buildWeightingVector(
     const GimbalControlContext & context,
     const Eigen::VectorXd & X_ref);
@@ -364,11 +377,15 @@ private:
   Eigen::VectorXd prev_w_steps_;
   bool has_prev_w_steps_{false};
 
-  // 在线 RMS 归一化参数与状态
-  bool enable_rms_normalization_{false};
+  // 数值归一化参数与状态
+  bool enable_normalization_{false};
+  NormalizationMode normalization_mode_{NormalizationMode::RMS};
   int rms_window_size_{80};
   int rms_min_samples_{10};
   double rms_epsilon_{1e-6};
+  Eigen::Vector4d state_typical_{Eigen::Vector4d::Ones()};
+  Eigen::Vector2d control_typical_{Eigen::Vector2d::Ones()};
+  Eigen::Vector2d delta_control_typical_{Eigen::Vector2d::Ones()};
   std::array<SlidingRms, mpc::GimbalDynamicsModel::STATE_DIM> state_rms_trackers_;
   std::array<SlidingRms, mpc::GimbalDynamicsModel::CONTROL_DIM> control_rms_trackers_;
   std::array<SlidingRms, mpc::GimbalDynamicsModel::CONTROL_DIM> delta_control_rms_trackers_;

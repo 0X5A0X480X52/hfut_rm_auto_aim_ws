@@ -17,9 +17,11 @@
 #include <Eigen/Eigenvalues>
 #include <angles/angles.h>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <string>
 #include <utility>
 
 #include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
@@ -161,12 +163,37 @@ void MpcControlStrategy::setWeightingParameters(
 }
 
 void MpcControlStrategy::setNumericalNormalizationParameters(
-  bool enable, int window_size, int min_samples, double rms_epsilon)
+  bool enable, int window_size, int min_samples, double rms_epsilon,
+  const std::string & mode,
+  const Eigen::Vector4d & state_typical,
+  const Eigen::Vector2d & control_typical,
+  const Eigen::Vector2d & delta_control_typical)
 {
-  enable_rms_normalization_ = enable;
+  enable_normalization_ = enable;
   rms_window_size_ = std::max(1, window_size);
   rms_min_samples_ = std::max(1, min_samples);
   rms_epsilon_ = std::max(rms_epsilon, 1e-12);
+
+  std::string mode_lower = mode;
+  std::transform(
+    mode_lower.begin(), mode_lower.end(), mode_lower.begin(),
+    [](unsigned char ch) {return static_cast<char>(std::tolower(ch));});
+  if (mode_lower == "typical") {
+    normalization_mode_ = NormalizationMode::TYPICAL;
+  } else {
+    normalization_mode_ = NormalizationMode::RMS;
+    if (mode_lower != "rms") {
+      RCLCPP_WARN(
+        rclcpp::get_logger("MpcControlStrategy"),
+        "Unknown normalization mode '%s', fallback to 'rms'.", mode.c_str());
+    }
+  }
+
+  state_typical_ = state_typical.cwiseAbs().cwiseMax(Eigen::Vector4d::Constant(1e-12));
+  control_typical_ = control_typical.cwiseAbs().cwiseMax(Eigen::Vector2d::Constant(1e-12));
+  delta_control_typical_ =
+    delta_control_typical.cwiseAbs().cwiseMax(Eigen::Vector2d::Constant(1e-12));
+
   configureRmsWindows();
   resetNumericalStates();
 }
@@ -670,11 +697,22 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   Eigen::Vector4d state_rms = Eigen::Vector4d::Ones();
   Eigen::Vector2d control_rms = Eigen::Vector2d::Ones();
   Eigen::Vector2d delta_control_rms = Eigen::Vector2d::Ones();
-  if (enable_rms_normalization_) {
+  const bool use_normalization = enable_normalization_;
+  const bool use_rms_normalization =
+    use_normalization && normalization_mode_ == NormalizationMode::RMS;
+
+  Eigen::Vector4d state_scale = state_typical_;
+  Eigen::Vector2d control_scale = control_typical_;
+  Eigen::Vector2d delta_control_scale = delta_control_typical_;
+
+  if (use_rms_normalization) {
     const Eigen::VectorXd free_error = A_pred_ * x0 - X_ref;
     state_rms = updateAndGetStateRms(free_error);
     control_rms = getControlRms();
     delta_control_rms = getDeltaControlRms();
+    state_scale = state_rms;
+    control_scale = control_rms;
+    delta_control_scale = delta_control_rms;
   }
 
   // 5) 构造 QP
@@ -702,10 +740,10 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
 
     // 构建自适应权重矩阵
     Eigen::MatrixXd Q_eff;
-    if (enable_rms_normalization_) {
+    if (use_normalization) {
       Q_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightQ(
         N_, q_yaw_, q_pitch_, q_yaw_vel_, q_pitch_vel_,
-        alpha_ema_, tau_, state_rms, rms_epsilon_);
+        alpha_ema_, tau_, state_scale, rms_epsilon_);
     } else {
       Q_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightQ(
         N_, q_yaw_, q_pitch_, q_yaw_vel_, q_pitch_vel_, alpha_ema_, tau_);
@@ -715,15 +753,16 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
       mpc::GimbalDynamicsModel::scaleBlockDiagonalQ(Q_eff, w_steps);
     }
     Eigen::MatrixXd R_eff;
-    if (enable_rms_normalization_) {
+    if (use_normalization) {
       R_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightR(
-        N_, r_yaw_, r_pitch_, alpha_ema_, r_scale_maneuver_, control_rms, rms_epsilon_);
+        N_, r_yaw_, r_pitch_, alpha_ema_, r_scale_maneuver_, control_scale, rms_epsilon_);
     } else {
       R_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightR(
         N_, r_yaw_, r_pitch_, alpha_ema_, r_scale_maneuver_);
     }
-    Eigen::MatrixXd S_eff = enable_rms_normalization_
-      ? mpc::GimbalDynamicsModel::buildWeightS(N_, s_yaw_, s_pitch_, delta_control_rms, rms_epsilon_)
+    Eigen::MatrixXd S_eff = use_normalization
+      ? mpc::GimbalDynamicsModel::buildWeightS(
+      N_, s_yaw_, s_pitch_, delta_control_scale, rms_epsilon_)
       : S_blk_;
 
     Eigen::MatrixXd H;
@@ -788,7 +827,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
 
     // 8) 提取首步控制量
     mpc::GimbalDynamicsModel::ControlVector u_opt(result.U(0), result.U(1));
-    if (enable_rms_normalization_) {
+    if (use_rms_normalization) {
       updateControlHistory(u_opt);
     }
     auto x_next = dynamics_model_.predict(x0, u_opt);
@@ -818,19 +857,20 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   alpha_ema_ = 0.0;
   Eigen::MatrixXd H;
   Eigen::VectorXd f;
-  Eigen::MatrixXd Q_eff = enable_rms_normalization_
+  Eigen::MatrixXd Q_eff = use_normalization
     ? mpc::GimbalDynamicsModel::buildWeightQ(
-    N_, q_yaw_, q_pitch_, q_yaw_vel_, q_pitch_vel_, state_rms, rms_epsilon_)
+    N_, q_yaw_, q_pitch_, q_yaw_vel_, q_pitch_vel_, state_scale, rms_epsilon_)
     : Q_blk_;
   if (enable_weighting_) {
     Eigen::VectorXd w_steps = buildWeightingVector(context, X_ref);
     mpc::GimbalDynamicsModel::scaleBlockDiagonalQ(Q_eff, w_steps);
   }
-  Eigen::MatrixXd R_eff = enable_rms_normalization_
-    ? mpc::GimbalDynamicsModel::buildWeightR(N_, r_yaw_, r_pitch_, control_rms, rms_epsilon_)
+  Eigen::MatrixXd R_eff = use_normalization
+    ? mpc::GimbalDynamicsModel::buildWeightR(N_, r_yaw_, r_pitch_, control_scale, rms_epsilon_)
     : R_blk_;
-  Eigen::MatrixXd S_eff = enable_rms_normalization_
-    ? mpc::GimbalDynamicsModel::buildWeightS(N_, s_yaw_, s_pitch_, delta_control_rms, rms_epsilon_)
+  Eigen::MatrixXd S_eff = use_normalization
+    ? mpc::GimbalDynamicsModel::buildWeightS(
+    N_, s_yaw_, s_pitch_, delta_control_scale, rms_epsilon_)
     : S_blk_;
   mpc::GimbalDynamicsModel::buildQP(A_pred_, B_ctrl_, D_, Q_eff, R_eff, S_eff, x0, X_ref, H, f);
 
@@ -894,7 +934,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
 
   // 8) 提取首步控制量, 推算期望 yaw/pitch
   mpc::GimbalDynamicsModel::ControlVector u_opt(result.U(0), result.U(1));
-  if (enable_rms_normalization_) {
+  if (use_rms_normalization) {
     updateControlHistory(u_opt);
   }
   auto x_next = dynamics_model_.predict(x0, u_opt);

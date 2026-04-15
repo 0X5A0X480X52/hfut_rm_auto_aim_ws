@@ -913,9 +913,18 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
 
   // MPC 数值稳健性: 在线 RMS 归一化
   declare_parameter("controller.mpc.normalization.enable", false);
+  declare_parameter("controller.mpc.normalization.mode", std::string("rms"));
   declare_parameter("controller.mpc.normalization.window_size", 80);
   declare_parameter("controller.mpc.normalization.min_samples", 10);
   declare_parameter("controller.mpc.normalization.rms_epsilon", 1e-6);
+  declare_parameter("controller.mpc.normalization.typical_state.yaw", 1.0);
+  declare_parameter("controller.mpc.normalization.typical_state.pitch", 1.0);
+  declare_parameter("controller.mpc.normalization.typical_state.yaw_vel", 1.0);
+  declare_parameter("controller.mpc.normalization.typical_state.pitch_vel", 1.0);
+  declare_parameter("controller.mpc.normalization.typical_control.yaw_acc", 1.0);
+  declare_parameter("controller.mpc.normalization.typical_control.pitch_acc", 1.0);
+  declare_parameter("controller.mpc.normalization.typical_delta_control.yaw_acc", 1.0);
+  declare_parameter("controller.mpc.normalization.typical_delta_control.pitch_acc", 1.0);
 
   // MPC 数值稳健性: Hessian 自适应对角正则
   declare_parameter("controller.mpc.regularization.enable", false);
@@ -1709,7 +1718,19 @@ void GimbalPipelineNode::initGimbalStrategies() {
     get_parameter("controller.mpc.normalization.enable").as_bool(),
     get_parameter("controller.mpc.normalization.window_size").as_int(),
     get_parameter("controller.mpc.normalization.min_samples").as_int(),
-    get_parameter("controller.mpc.normalization.rms_epsilon").as_double());
+    get_parameter("controller.mpc.normalization.rms_epsilon").as_double(),
+    get_parameter("controller.mpc.normalization.mode").as_string(),
+    Eigen::Vector4d(
+      get_parameter("controller.mpc.normalization.typical_state.yaw").as_double(),
+      get_parameter("controller.mpc.normalization.typical_state.pitch").as_double(),
+      get_parameter("controller.mpc.normalization.typical_state.yaw_vel").as_double(),
+      get_parameter("controller.mpc.normalization.typical_state.pitch_vel").as_double()),
+    Eigen::Vector2d(
+      get_parameter("controller.mpc.normalization.typical_control.yaw_acc").as_double(),
+      get_parameter("controller.mpc.normalization.typical_control.pitch_acc").as_double()),
+    Eigen::Vector2d(
+      get_parameter("controller.mpc.normalization.typical_delta_control.yaw_acc").as_double(),
+      get_parameter("controller.mpc.normalization.typical_delta_control.pitch_acc").as_double()));
   mpc_s->setHessianRegularizationParameters(
     get_parameter("controller.mpc.regularization.enable").as_bool(),
     get_parameter("controller.mpc.regularization.epsilon_abs").as_double(),

@@ -304,12 +304,26 @@ gimbal_pipeline:
     controller.mpc.s_yaw: 0.1    
     controller.mpc.s_pitch: 0.1
 
-    # MPC 数值稳健性: 在线 RMS 归一化（统一 Q/R/S 量纲）
+    # MPC 数值稳健性: 统一 Q/R/S 量纲归一化
+    # mode:
+    #   - "rms": 在线滑窗 RMS 归一化（原实现）
+    #   - "typical": 基于典型值的静态归一化（更稳健，适合避免 RMS 抖动放大）
     # enable=false 时保持原行为
     controller.mpc.normalization.enable: true
+    controller.mpc.normalization.mode: "rms"
     controller.mpc.normalization.window_size: 80
     controller.mpc.normalization.min_samples: 10
     controller.mpc.normalization.rms_epsilon: 1e-6
+    # typical 模式参数（单位: yaw/pitch=rad, yaw_vel/pitch_vel=rad/s, acc=rad/s^2）
+    # scale 统一公式: w_norm = w / (typical^2 + eps)
+    controller.mpc.normalization.typical_state.yaw: 1.0
+    controller.mpc.normalization.typical_state.pitch: 1.0
+    controller.mpc.normalization.typical_state.yaw_vel: 1.0
+    controller.mpc.normalization.typical_state.pitch_vel: 1.0
+    controller.mpc.normalization.typical_control.yaw_acc: 1.0
+    controller.mpc.normalization.typical_control.pitch_acc: 1.0
+    controller.mpc.normalization.typical_delta_control.yaw_acc: 1.0
+    controller.mpc.normalization.typical_delta_control.pitch_acc: 1.0
 
     # MPC 数值稳健性: Hessian 自适应对角正则
     # H <- H + eps*I, eps=max(epsilon_abs, epsilon_rel*mean(diag(H)))
@@ -537,6 +551,12 @@ gimbal_pipeline:
     # controller.mpc.control_delay_s: 控制延时 (s)
     # controller.mpc.max_accel: 最大角加速度 (rad/s^2)
     # controller.mpc.q_* / r_* / s_*: Q,R,S 矩阵基准值
+    # controller.mpc.normalization.enable: 归一化总开关
+    # controller.mpc.normalization.mode: "rms" | "typical"
+    # controller.mpc.normalization.window_size / min_samples / rms_epsilon: rms 模式参数
+    # controller.mpc.normalization.typical_state.*: typical 模式下状态典型值
+    # controller.mpc.normalization.typical_control.*: typical 模式下控制量典型值
+    # controller.mpc.normalization.typical_delta_control.*: typical 模式下控制增量典型值
     # controller.mpc.enable_delay_compensation: 启用延迟补偿参考轨迹
     # controller.mpc.prediction_delay_s: 额外预测延迟
     # controller.mpc.flight_time_iters: 子弹飞行时间迭代次数
