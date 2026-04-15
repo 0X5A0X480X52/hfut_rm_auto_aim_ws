@@ -407,6 +407,30 @@ TEST_F(TestQPSolver, HotstartConsistency)
   EXPECT_NEAR(r1.U(1), r2.U(1), 1e-8);
 }
 
+TEST_F(TestQPSolver, HessianChangeReinitializes)
+{
+  // 首次问题: H = I, f = [-1, -1], 解析解 x = [1, 1]
+  Eigen::MatrixXd H1 = Eigen::MatrixXd::Identity(2, 2);
+  Eigen::VectorXd f(2);
+  f << -1.0, -1.0;
+
+  Eigen::VectorXd lb(2), ub(2);
+  lb << -10.0, -10.0;
+  ub << 10.0, 10.0;
+
+  const auto r1 = solver_.solve(H1, f, lb, ub);
+  ASSERT_TRUE(r1.success);
+  EXPECT_NEAR(r1.U(0), 1.0, 1e-6);
+  EXPECT_NEAR(r1.U(1), 1.0, 1e-6);
+
+  // 同维度但 Hessian 改变: H = 100I, 解应变为 x = [0.01, 0.01]
+  Eigen::MatrixXd H2 = 100.0 * Eigen::MatrixXd::Identity(2, 2);
+  const auto r2 = solver_.solve(H2, f, lb, ub);
+  ASSERT_TRUE(r2.success);
+  EXPECT_NEAR(r2.U(0), 0.01, 1e-4);
+  EXPECT_NEAR(r2.U(1), 0.01, 1e-4);
+}
+
 TEST_F(TestQPSolver, FourVariableMPC)
 {
   // 模拟 1 步双轴 MPC: 4 变量 (2 步 × 2 轴)
