@@ -9,7 +9,7 @@ gimbal_pipeline:
     default_r1: 0.15
     default_r2: 0.20
     default_dza: 0.0
-    tracker_timeout: 0.10
+    tracker_timeout: 0.50
     debug_mode: true
     enable_oscillation_detection: false
     visualization_frame: "odom"
@@ -295,18 +295,18 @@ gimbal_pipeline:
     controller.mpc.dt: 0.05    
     controller.mpc.control_delay_s: 0.01    
     controller.mpc.max_accel: 30.0    
-    controller.mpc.q_yaw: 800000.0    
-    controller.mpc.q_pitch: 1200.0    
-    controller.mpc.q_yaw_vel: 150.0    
-    controller.mpc.q_pitch_vel: 1.5
-    controller.mpc.r_yaw: 0.005    
-    controller.mpc.r_pitch: 0.0015    
-    controller.mpc.s_yaw: 0.0005    
-    controller.mpc.s_pitch: 0.0002
+    controller.mpc.q_yaw: 1000.0    
+    controller.mpc.q_pitch: 100.0    
+    controller.mpc.q_yaw_vel: 1.0    
+    controller.mpc.q_pitch_vel: 1.0
+    controller.mpc.r_yaw: 0.1    
+    controller.mpc.r_pitch: 0.1    
+    controller.mpc.s_yaw: 0.1    
+    controller.mpc.s_pitch: 0.1
 
     # MPC 数值稳健性: 在线 RMS 归一化（统一 Q/R/S 量纲）
     # enable=false 时保持原行为
-    controller.mpc.normalization.enable: false
+    controller.mpc.normalization.enable: true
     controller.mpc.normalization.window_size: 80
     controller.mpc.normalization.min_samples: 10
     controller.mpc.normalization.rms_epsilon: 1e-6
@@ -321,7 +321,7 @@ gimbal_pipeline:
     controller.mpc.regularization.retry_scale: 10.0
 
     # MPC 分层诊断: 低成本常开，高成本抽样
-    controller.mpc.diagnostics.enable: false
+    controller.mpc.diagnostics.enable: true
     controller.mpc.diagnostics.low_cost_always: true
     controller.mpc.diagnostics.high_cost_enable: false
     controller.mpc.diagnostics.high_cost_sample_every: 20
