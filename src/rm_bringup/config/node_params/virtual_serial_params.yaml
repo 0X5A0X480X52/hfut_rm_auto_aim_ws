@@ -3,4 +3,4 @@
     roll: 0.0
     pitch: 0.0
     yaw: 180.0
-    vision_mode: 0
+    vision_mode: 1

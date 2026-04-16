@@ -9,7 +9,7 @@ gimbal_pipeline:
     default_r1: 0.15
     default_r2: 0.20
     default_dza: 0.0
-    tracker_timeout: 0.50
+    tracker_timeout: 2.50
     debug_mode: true
     enable_oscillation_detection: false
     visualization_frame: "odom"
@@ -71,10 +71,10 @@ gimbal_pipeline:
     outpost.singer_sigma: 0.0          # <=0: fallback to motion.singer_sigma
     outpost.spin_process_noise_theta_rate: 0.0  # <=0: fallback to spin.spin_process_noise_delta_rate
     outpost.spin_process_noise_theta_acc: 0.0   # <=0: fallback to spin.spin_process_noise_delta_acc
-    outpost.radius: 0.26
-    outpost.z_offset_0: -0.06
+    outpost.radius: 0.275
+    outpost.z_offset_0: 0.16
     outpost.z_offset_1: 0.00
-    outpost.z_offset_2: 0.06
+    outpost.z_offset_2: -0.16
     outpost.panel_angle_step: 2.0943951023931953
     outpost.softmax_temperature: 1.5
     outpost.weight_yaw: 1.0
