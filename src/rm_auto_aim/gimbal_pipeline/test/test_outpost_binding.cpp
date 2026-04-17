@@ -19,15 +19,21 @@
 #include <limits>
 #include <vector>
 
+#include "gimbal_controller/armor_position_calculator.hpp"
+#include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/core/observation.hpp"
 #include "max_entropy_tracker/trackers/outpost_armor_tracker.hpp"
+#include "std_msgs/msg/header.hpp"
 
 namespace {
 
 using fyt::auto_aim::ObservationData;
 using fyt::auto_aim::OutpostArmorTracker;
 using fyt::auto_aim::UnifiedConfig;
+using fyt::auto_aim::robot_description::RobotDescriptionFacade;
+using fyt::auto_aim::robot_description::TrackedRobotBuildInput;
+using fyt::auto_aim::robot_description::TrackedRobotUsage;
 
 std::array<double, 3> panelAngles(double step) {
   const double s = std::abs(step);
@@ -229,4 +235,72 @@ TEST(OutpostBinding, StructuredYawAndOffsetsMatchObservedArmorPosition) {
   EXPECT_NEAR(reconstructed.x(), obs_same.x, 0.05);
   EXPECT_NEAR(reconstructed.y(), obs_same.y, 0.05);
   EXPECT_NEAR(reconstructed.z(), obs_same.z, 0.05);
+}
+
+TEST(OutpostBinding, BuilderEncodesOutpostOffsetsAndFallbackSummary) {
+  auto cfg = makeTestConfig();
+  cfg.outpost.stable_frames = 1;
+  cfg.outpost.entropy_exit = 1.0;
+  cfg.outpost.max_prob_exit = 0.0;
+
+  OutpostArmorTracker tracker(cfg, 0.05, false);
+
+  const auto init_obs = makeOutpostObservation(cfg, 0.2, -0.1, 0.3, 0.1, 0, 0.00);
+  tracker.initialize({init_obs});
+  const auto obs_same = makeOutpostObservation(cfg, 0.2, -0.1, 0.3, 0.1, 0, 0.05);
+  ASSERT_TRUE(tracker.update({obs_same}));
+  ASSERT_FALSE(tracker.is_ambiguous_single_mode());
+
+  RobotDescriptionFacade facade;
+  std_msgs::msg::Header header;
+  header.frame_id = "odom";
+  const std::string target_frame = "odom";
+  const std::string robot_id = "outpost";
+
+  TrackedRobotBuildInput input{
+    header,
+    target_frame,
+    robot_id,
+    tracker,
+    nullptr,
+    1};
+
+  const auto result = facade.tryBuildTrackedRobot(input);
+  ASSERT_TRUE(result.ok());
+  const auto &robot = result.robot;
+
+  ASSERT_EQ(robot.robot_type, rm_interfaces::msg::TrackedRobot::OUTPOST_3);
+  ASSERT_EQ(robot.armors_offset.size(), 3u);
+  EXPECT_NEAR(robot.armors_offset[0].position.z, cfg.outpost.z_offset_0, 1e-6);
+  EXPECT_NEAR(robot.armors_offset[1].position.z, cfg.outpost.z_offset_1, 1e-6);
+  EXPECT_NEAR(robot.armors_offset[2].position.z, cfg.outpost.z_offset_2, 1e-6);
+
+  const double expected_dza =
+      0.5 * (cfg.outpost.z_offset_0 - cfg.outpost.z_offset_2);
+  const double expected_dzc =
+      (cfg.outpost.z_offset_0 + cfg.outpost.z_offset_1 + cfg.outpost.z_offset_2) /
+      3.0;
+  EXPECT_NEAR(robot.d_za, expected_dza, 1e-6);
+  EXPECT_NEAR(robot.d_zc, expected_dzc, 1e-6);
+}
+
+TEST(OutpostBinding, OutpostFallbackGeneratorsKeepTriLayerHeights) {
+  constexpr double radius = 0.28;
+  constexpr double dza = 0.10;
+  constexpr double dzc = 0.00;
+
+  const auto profile_offsets = TrackedRobotUsage::generateArmorsOffsetFromProfile(
+      3, radius, radius, dza, dzc);
+  ASSERT_EQ(profile_offsets.size(), 3u);
+  EXPECT_NEAR(profile_offsets[0].position.z, dzc + dza, 1e-9);
+  EXPECT_NEAR(profile_offsets[1].position.z, dzc, 1e-9);
+  EXPECT_NEAR(profile_offsets[2].position.z, dzc - dza, 1e-9);
+
+  const auto controller_offsets = gimbal_controller::ArmorPositionCalculator::
+      generateDefaultOffsets(rm_interfaces::msg::TrackedRobot::OUTPOST_3,
+                             3, radius, radius, dza, dzc);
+  ASSERT_EQ(controller_offsets.size(), 3u);
+  EXPECT_NEAR(controller_offsets[0].z(), dzc + dza, 1e-9);
+  EXPECT_NEAR(controller_offsets[1].z(), dzc, 1e-9);
+  EXPECT_NEAR(controller_offsets[2].z(), dzc - dza, 1e-9);
 }

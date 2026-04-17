@@ -125,6 +125,23 @@ public:
     const auto runtime_offsets = input.tracker.build_armors_offset_for_message();
     if (!runtime_offsets.empty()) {
       msg.armors_offset = runtime_offsets;
+
+      // For outpost, also encode a fallback-compatible tri-layer summary.
+      // This allows downstream modules to recover non-flat 3-armor heights
+      // even if armors_offset is missing in intermediate transport.
+      if (msg.robot_type == rm_interfaces::msg::TrackedRobot::OUTPOST_3 &&
+          runtime_offsets.size() >= 3) {
+        double z_min = runtime_offsets.front().position.z;
+        double z_max = z_min;
+        double z_sum = 0.0;
+        for (const auto &pose : runtime_offsets) {
+          z_min = std::min(z_min, pose.position.z);
+          z_max = std::max(z_max, pose.position.z);
+          z_sum += pose.position.z;
+        }
+        msg.d_za = 0.5 * (z_max - z_min);
+        msg.d_zc = z_sum / static_cast<double>(runtime_offsets.size());
+      }
     } else {
       msg.armors_offset = TrackedRobotUsage::generateArmorsOffsetFromProfile(
         msg.num_armors,
