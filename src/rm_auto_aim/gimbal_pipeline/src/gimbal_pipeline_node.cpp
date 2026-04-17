@@ -705,6 +705,8 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("outpost.weight_yaw", 1.0);
   declare_parameter("outpost.weight_z_state", 6.0);
   declare_parameter("outpost.weight_z_history", 2.0);
+  declare_parameter("outpost.weight_xy_residual", 2.5);
+  declare_parameter("outpost.weight_switch_penalty", 0.05);
   declare_parameter("outpost.entropy_enter", 0.75);
   declare_parameter("outpost.entropy_exit", 0.55);
   declare_parameter("outpost.max_prob_enter", 0.60);
@@ -716,9 +718,15 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("outpost.binding_transition_confirm_frames", 3);
   declare_parameter("outpost.binding_same_panel_yaw_gate", 0.35);
   declare_parameter("outpost.binding_same_panel_z_gate", 0.08);
+  declare_parameter("outpost.binding_same_panel_xy_gate", 0.18);
+  declare_parameter("outpost.binding_min_candidate_prob", 0.40);
+  declare_parameter("outpost.binding_min_candidate_margin", 0.12);
+  declare_parameter("outpost.binding_switch_strong_score", 0.60);
   declare_parameter("outpost.binding_period_window", 12);
   declare_parameter("outpost.binding_period_weight", 0.60);
   declare_parameter("outpost.binding_period_min_spin_rate", 0.8);
+  declare_parameter("outpost.binding_period_update_min_confidence", 0.55);
+  declare_parameter("outpost.binding_period_update_min_jump", 0.015);
   declare_parameter("outpost.binding_dz_ema_alpha", 0.20);
   declare_parameter("outpost.binding_confidence_floor", 0.15);
   declare_parameter("outpost.alpha_pos", 0.65);
@@ -1115,6 +1123,10 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("outpost.weight_z_state").as_double();
     c.outpost.weight_z_history =
       get_parameter("outpost.weight_z_history").as_double();
+    c.outpost.weight_xy_residual =
+      get_parameter("outpost.weight_xy_residual").as_double();
+    c.outpost.weight_switch_penalty =
+      get_parameter("outpost.weight_switch_penalty").as_double();
     c.outpost.entropy_enter =
       get_parameter("outpost.entropy_enter").as_double();
     c.outpost.entropy_exit =
@@ -1137,12 +1149,24 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("outpost.binding_same_panel_yaw_gate").as_double();
     c.outpost.binding_same_panel_z_gate =
       get_parameter("outpost.binding_same_panel_z_gate").as_double();
+    c.outpost.binding_same_panel_xy_gate =
+      get_parameter("outpost.binding_same_panel_xy_gate").as_double();
+    c.outpost.binding_min_candidate_prob =
+      get_parameter("outpost.binding_min_candidate_prob").as_double();
+    c.outpost.binding_min_candidate_margin =
+      get_parameter("outpost.binding_min_candidate_margin").as_double();
+    c.outpost.binding_switch_strong_score =
+      get_parameter("outpost.binding_switch_strong_score").as_double();
     c.outpost.binding_period_window =
       get_parameter("outpost.binding_period_window").as_int();
     c.outpost.binding_period_weight =
       get_parameter("outpost.binding_period_weight").as_double();
     c.outpost.binding_period_min_spin_rate =
       get_parameter("outpost.binding_period_min_spin_rate").as_double();
+    c.outpost.binding_period_update_min_confidence =
+      get_parameter("outpost.binding_period_update_min_confidence").as_double();
+    c.outpost.binding_period_update_min_jump =
+      get_parameter("outpost.binding_period_update_min_jump").as_double();
     c.outpost.binding_dz_ema_alpha =
       get_parameter("outpost.binding_dz_ema_alpha").as_double();
     c.outpost.binding_confidence_floor =
@@ -1169,15 +1193,29 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       std::max(1e-3, c.outpost.binding_same_panel_yaw_gate);
     c.outpost.binding_same_panel_z_gate =
       std::max(1e-3, c.outpost.binding_same_panel_z_gate);
+    c.outpost.binding_same_panel_xy_gate =
+      std::max(1e-3, c.outpost.binding_same_panel_xy_gate);
+    c.outpost.binding_min_candidate_prob =
+      std::clamp(c.outpost.binding_min_candidate_prob, 0.0, 1.0);
+    c.outpost.binding_min_candidate_margin =
+      std::clamp(c.outpost.binding_min_candidate_margin, 0.0, 1.0);
+    c.outpost.binding_switch_strong_score =
+      std::clamp(c.outpost.binding_switch_strong_score, 0.0, 1.0);
     c.outpost.binding_period_window = std::max(3, c.outpost.binding_period_window);
     c.outpost.binding_period_weight =
       std::max(0.0, c.outpost.binding_period_weight);
     c.outpost.binding_period_min_spin_rate =
       std::max(0.0, c.outpost.binding_period_min_spin_rate);
+    c.outpost.binding_period_update_min_confidence =
+      std::clamp(c.outpost.binding_period_update_min_confidence, 0.0, 1.0);
+    c.outpost.binding_period_update_min_jump =
+      std::max(0.0, c.outpost.binding_period_update_min_jump);
     c.outpost.binding_dz_ema_alpha =
       std::clamp(c.outpost.binding_dz_ema_alpha, 0.01, 1.0);
     c.outpost.binding_confidence_floor =
       std::clamp(c.outpost.binding_confidence_floor, 0.0, 0.95);
+    c.outpost.weight_xy_residual = std::max(0.0, c.outpost.weight_xy_residual);
+    c.outpost.weight_switch_penalty = std::max(0.0, c.outpost.weight_switch_penalty);
 
   const bool z_descending =
       (c.outpost.z_offset_0 > c.outpost.z_offset_1) &&
@@ -1440,8 +1478,13 @@ void GimbalPipelineNode::armorsCallback(
               st.outpost_mode = snap.track_mode;
               st.estimated_id = snap.estimated_id;
               st.runtime_panel_id = snap.runtime_panel_id;
+              st.bound_height_label = snap.bound_height_label;
               st.obs_inferred_id = snap.obs_inferred_id;
               st.obs_inferred_id_z = snap.obs_inferred_id_z;
+              st.candidate_panel_id = snap.candidate_panel_id;
+              st.candidate_prob = snap.candidate_prob;
+              st.candidate_margin = snap.candidate_margin;
+              st.selected_xy_residual = snap.selected_xy_residual;
               st.outpost_entropy = snap.entropy_norm;
               st.outpost_max_prob = snap.max_prob;
               st.hyp_cost_0 = snap.hyp_costs[0];
@@ -1463,8 +1506,10 @@ void GimbalPipelineNode::armorsCallback(
               st.obs_z_audit_cost_2 = snap.obs_z_audit_costs[2];
               st.binding_confidence = snap.binding_confidence;
               st.switch_event = snap.switch_event;
+              st.switch_reason = snap.switch_reason;
               st.transition_state = snap.transition_state;
               st.period_confidence = snap.period_confidence;
+              st.period_update_applied = snap.period_update_applied;
               st.period_phase_index = snap.period_phase_index;
               st.spin_direction = snap.spin_direction;
               st.dz_small_est = snap.dz_small_est;

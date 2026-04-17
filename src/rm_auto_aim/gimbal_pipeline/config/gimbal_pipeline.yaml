@@ -51,8 +51,8 @@ gimbal_pipeline:
 
     # Tracker logic
     tracker.tracking_thres: 2
-    tracker.lost_thres: 8
-    tracker.temp_lost_thres: 3
+    tracker.lost_thres: 40
+    tracker.temp_lost_thres: 30
     tracker.max_match_distance: 2.0
     tracker.max_match_yaw_diff: 1.0
     tracker.n_panels: 4
@@ -88,6 +88,8 @@ gimbal_pipeline:
     outpost.weight_yaw: 1.0
     outpost.weight_z_state: 6.0
     outpost.weight_z_history: 2.0
+    outpost.weight_xy_residual: 2.5
+    outpost.weight_switch_penalty: 0.05
     outpost.entropy_enter: 0.75
     outpost.entropy_exit: 0.60
     outpost.max_prob_enter: 0.60
@@ -99,9 +101,15 @@ gimbal_pipeline:
     outpost.binding_transition_confirm_frames: 3
     outpost.binding_same_panel_yaw_gate: 0.35
     outpost.binding_same_panel_z_gate: 0.08
+    outpost.binding_same_panel_xy_gate: 0.18
+    outpost.binding_min_candidate_prob: 0.40
+    outpost.binding_min_candidate_margin: 0.12
+    outpost.binding_switch_strong_score: 0.60
     outpost.binding_period_window: 12
     outpost.binding_period_weight: 0.60
     outpost.binding_period_min_spin_rate: 0.8
+    outpost.binding_period_update_min_confidence: 0.55
+    outpost.binding_period_update_min_jump: 0.015
     outpost.binding_dz_ema_alpha: 0.20
     outpost.binding_confidence_floor: 0.15
     outpost.alpha_pos: 0.65

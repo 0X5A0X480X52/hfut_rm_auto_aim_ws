@@ -107,10 +107,17 @@ void OutpostArmorTracker::initialize(const std::vector<ObservationData> &obs,
   transition_candidate_panel_ = -1;
   transition_confirm_count_ = 0;
   switch_event_ = 0;
+  switch_reason_ = 0;
   binding_confidence_ = max_prob_;
+  bound_height_label_ = semantic_from_panel(init_panel);
+  candidate_panel_id_ = init_panel;
+  candidate_prob_ = 1.0 / 3.0;
+  candidate_margin_ = 0.0;
+  selected_xy_residual_ = std::numeric_limits<double>::quiet_NaN();
   dz_jump_history_.clear();
   dz_small_est_ = std::numeric_limits<double>::quiet_NaN();
   dz_large_est_ = std::numeric_limits<double>::quiet_NaN();
+  period_update_applied_ = 0;
   period_phase_index_ = -1;
   period_confidence_ = std::numeric_limits<double>::quiet_NaN();
   spin_direction_ = 0;
@@ -143,8 +150,13 @@ void OutpostArmorTracker::initialize(const std::vector<ObservationData> &obs,
   debug_snapshot_.track_mode = static_cast<int>(mode_);
   debug_snapshot_.estimated_id = is_ambiguous_single_mode() ? -1 : selected_panel_id_;
   debug_snapshot_.runtime_panel_id = selected_panel_id_;
+  debug_snapshot_.bound_height_label = bound_height_label_;
   debug_snapshot_.obs_inferred_id = infer_panel_id_from_hypotheses(init_hyps);
   debug_snapshot_.obs_inferred_id_z = z_audit.panel_id;
+  debug_snapshot_.candidate_panel_id = candidate_panel_id_;
+  debug_snapshot_.candidate_prob = candidate_prob_;
+  debug_snapshot_.candidate_margin = candidate_margin_;
+  debug_snapshot_.selected_xy_residual = selected_xy_residual_;
   debug_snapshot_.entropy_norm = entropy_norm_;
   debug_snapshot_.max_prob = max_prob_;
   debug_snapshot_.hyp_costs = {0.0, 0.0, 0.0};
@@ -160,9 +172,11 @@ void OutpostArmorTracker::initialize(const std::vector<ObservationData> &obs,
   debug_snapshot_.obs_z_audit_costs = z_audit.costs;
   debug_snapshot_.binding_confidence = binding_confidence_;
   debug_snapshot_.switch_event = switch_event_;
+  debug_snapshot_.switch_reason = switch_reason_;
   debug_snapshot_.transition_state =
       static_cast<int>(binding_transition_state_);
   debug_snapshot_.period_confidence = period_confidence_;
+  debug_snapshot_.period_update_applied = period_update_applied_;
   debug_snapshot_.period_phase_index = period_phase_index_;
   debug_snapshot_.spin_direction = spin_direction_;
   debug_snapshot_.dz_small_est = dz_small_est_;
@@ -192,13 +206,24 @@ bool OutpostArmorTracker::update(const std::vector<ObservationData> &obs) {
   // selected observation will overwrite these fields.
   const double kNaN = std::numeric_limits<double>::quiet_NaN();
   switch_event_ = 0;
+  switch_reason_ = 0;
+  period_update_applied_ = 0;
+  candidate_panel_id_ = -1;
+  candidate_prob_ = kNaN;
+  candidate_margin_ = kNaN;
+  selected_xy_residual_ = kNaN;
   debug_snapshot_.valid = true;
   debug_snapshot_.track_mode = static_cast<int>(mode_);
   debug_snapshot_.estimated_id =
       is_ambiguous_single_mode() ? -1 : selected_panel_id_;
   debug_snapshot_.runtime_panel_id = selected_panel_id_;
+  debug_snapshot_.bound_height_label = bound_height_label_;
   debug_snapshot_.obs_inferred_id = -1;
   debug_snapshot_.obs_inferred_id_z = -1;
+  debug_snapshot_.candidate_panel_id = -1;
+  debug_snapshot_.candidate_prob = kNaN;
+  debug_snapshot_.candidate_margin = kNaN;
+  debug_snapshot_.selected_xy_residual = kNaN;
   debug_snapshot_.hyp_costs = {kNaN, kNaN, kNaN};
   debug_snapshot_.hyp_probs = {kNaN, kNaN, kNaN};
   debug_snapshot_.has_observation = false;
@@ -211,9 +236,11 @@ bool OutpostArmorTracker::update(const std::vector<ObservationData> &obs) {
   debug_snapshot_.obs_z_audit_costs = {kNaN, kNaN, kNaN};
   debug_snapshot_.binding_confidence = binding_confidence_;
   debug_snapshot_.switch_event = switch_event_;
+  debug_snapshot_.switch_reason = switch_reason_;
   debug_snapshot_.transition_state =
       static_cast<int>(binding_transition_state_);
   debug_snapshot_.period_confidence = period_confidence_;
+  debug_snapshot_.period_update_applied = period_update_applied_;
   debug_snapshot_.period_phase_index = period_phase_index_;
   debug_snapshot_.spin_direction = spin_direction_;
   debug_snapshot_.dz_small_est = dz_small_est_;
@@ -298,41 +325,98 @@ bool OutpostArmorTracker::update(const std::vector<ObservationData> &obs) {
     }
   }
 
-  update_periodic_evidence(z_audit.z_jump);
+  compute_probabilities(hyps);
+
+  int best_idx_pre = 0;
+  int second_idx_pre = 1;
+  if (hyps[second_idx_pre].probability > hyps[best_idx_pre].probability) {
+    std::swap(best_idx_pre, second_idx_pre);
+  }
+  for (int i = 2; i < 3; ++i) {
+    if (hyps[i].probability > hyps[best_idx_pre].probability) {
+      second_idx_pre = best_idx_pre;
+      best_idx_pre = i;
+    } else if (hyps[i].probability > hyps[second_idx_pre].probability) {
+      second_idx_pre = i;
+    }
+  }
+
+  const double candidate_prob_pre = hyps[best_idx_pre].probability;
+  const double candidate_margin_pre =
+      std::max(0.0, hyps[best_idx_pre].probability -
+                        hyps[second_idx_pre].probability);
+  const bool allow_period_update =
+      candidate_prob_pre >= config_.outpost.binding_period_update_min_confidence &&
+      candidate_margin_pre >= config_.outpost.binding_min_candidate_margin;
+
+  update_periodic_evidence(z_audit.z_jump, allow_period_update);
   apply_periodic_jump_prior(hyps, z_audit.z_jump);
 
   compute_probabilities(hyps);
 
   int best_idx = 0;
-  for (int i = 1; i < 3; ++i) {
-    if (hyps[i].probability > hyps[best_idx].probability) best_idx = i;
+  int second_idx = 1;
+  if (hyps[second_idx].probability > hyps[best_idx].probability) {
+    std::swap(best_idx, second_idx);
+  }
+  for (int i = 2; i < 3; ++i) {
+    if (hyps[i].probability > hyps[best_idx].probability) {
+      second_idx = best_idx;
+      best_idx = i;
+    } else if (hyps[i].probability > hyps[second_idx].probability) {
+      second_idx = i;
+    }
   }
 
-  const int candidate_panel = hyps[best_idx].panel_id;
-  const double candidate_prob = hyps[best_idx].probability;
-  const double same_panel_score =
-      compute_same_panel_score(hyps[best_idx], center_position_est_.z());
+  candidate_panel_id_ = hyps[best_idx].panel_id;
+  candidate_prob_ = hyps[best_idx].probability;
+  candidate_margin_ =
+      std::max(0.0, hyps[best_idx].probability - hyps[second_idx].probability);
+
+    const int current_idx = (bound_panel_id_ >= 0)
+                  ? hypothesis_index_for_panel(hyps, bound_panel_id_)
+                  : best_idx;
+    const double current_panel_score =
+      compute_same_panel_score(hyps[current_idx], center_position_est_.z());
   const double switch_base =
-      (bound_panel_id_ >= 0 && candidate_panel != bound_panel_id_)
-          ? candidate_prob
+      (bound_panel_id_ >= 0 && candidate_panel_id_ != bound_panel_id_)
+          ? candidate_prob_
           : 0.0;
   const double z_audit_switch_support =
-      (z_audit.panel_id >= 0 && candidate_panel == z_audit.panel_id &&
-       candidate_panel != bound_panel_id_)
+      (z_audit.panel_id >= 0 && candidate_panel_id_ == z_audit.panel_id &&
+       candidate_panel_id_ != bound_panel_id_)
           ? 1.0
           : 0.0;
   const double switch_score =
-      clamp01(0.65 * switch_base + 0.20 * period_confidence_ +
-              0.15 * z_audit_switch_support);
+      clamp01(0.50 * switch_base + 0.20 * period_confidence_ +
+              0.10 * z_audit_switch_support + 0.20 * candidate_margin_);
 
-  update_binding_state_machine(candidate_panel, candidate_prob, same_panel_score,
+  update_binding_state_machine(candidate_panel_id_, candidate_prob_,
+                   candidate_margin_, current_panel_score,
                                switch_score);
-  selected_panel_id_ = (bound_panel_id_ >= 0) ? bound_panel_id_ : candidate_panel;
+  if (bound_panel_id_ >= 0) {
+    if (binding_transition_state_ == BindingTransitionState::TRANSITION_CANDIDATE &&
+        transition_candidate_panel_ >= 0) {
+      selected_panel_id_ = transition_candidate_panel_;
+    } else {
+      selected_panel_id_ = bound_panel_id_;
+    }
+  } else {
+    selected_panel_id_ = candidate_panel_id_;
+  }
+  bound_height_label_ =
+      (bound_panel_id_ >= 0)
+          ? semantic_from_panel(bound_panel_id_)
+          : semantic_from_panel(selected_panel_id_);
 
   const int selected_idx = hypothesis_index_for_panel(hyps, selected_panel_id_);
   max_prob_ = hyps[selected_idx].probability;
+  selected_xy_residual_ = hyps[selected_idx].xy_residual;
+    const double selected_panel_score =
+      compute_same_panel_score(hyps[selected_idx], center_position_est_.z());
   binding_confidence_ =
-      binding_confidence_from_scores(max_prob_, same_panel_score, switch_score);
+      binding_confidence_from_scores(max_prob_, candidate_margin_,
+                     selected_panel_score, switch_score);
 
   double entropy = 0.0;
   for (const auto &h : hyps) {
@@ -347,8 +431,13 @@ bool OutpostArmorTracker::update(const std::vector<ObservationData> &obs) {
     debug_snapshot_.track_mode = static_cast<int>(mode_);
     debug_snapshot_.estimated_id = is_ambiguous_single_mode() ? -1 : selected_panel_id_;
     debug_snapshot_.runtime_panel_id = selected_panel_id_;
+    debug_snapshot_.bound_height_label = bound_height_label_;
     debug_snapshot_.obs_inferred_id = infer_panel_id_from_hypotheses(hyps);
     debug_snapshot_.obs_inferred_id_z = z_audit.panel_id;
+    debug_snapshot_.candidate_panel_id = candidate_panel_id_;
+    debug_snapshot_.candidate_prob = candidate_prob_;
+    debug_snapshot_.candidate_margin = candidate_margin_;
+    debug_snapshot_.selected_xy_residual = selected_xy_residual_;
     debug_snapshot_.entropy_norm = entropy_norm_;
     debug_snapshot_.max_prob = max_prob_;
     debug_snapshot_.hyp_costs = {hyps[0].cost, hyps[1].cost, hyps[2].cost};
@@ -365,9 +454,11 @@ bool OutpostArmorTracker::update(const std::vector<ObservationData> &obs) {
     debug_snapshot_.obs_z_audit_costs = z_audit.costs;
     debug_snapshot_.binding_confidence = binding_confidence_;
     debug_snapshot_.switch_event = switch_event_;
+    debug_snapshot_.switch_reason = switch_reason_;
     debug_snapshot_.transition_state =
         static_cast<int>(binding_transition_state_);
     debug_snapshot_.period_confidence = period_confidence_;
+    debug_snapshot_.period_update_applied = period_update_applied_;
     debug_snapshot_.period_phase_index = period_phase_index_;
     debug_snapshot_.spin_direction = spin_direction_;
     debug_snapshot_.dz_small_est = dz_small_est_;
@@ -386,8 +477,13 @@ bool OutpostArmorTracker::update(const std::vector<ObservationData> &obs) {
   debug_snapshot_.track_mode = static_cast<int>(mode_);
   debug_snapshot_.estimated_id = is_ambiguous_single_mode() ? -1 : selected_panel_id_;
   debug_snapshot_.runtime_panel_id = selected_panel_id_;
+  debug_snapshot_.bound_height_label = bound_height_label_;
   debug_snapshot_.obs_inferred_id = infer_panel_id_from_hypotheses(hyps);
   debug_snapshot_.obs_inferred_id_z = z_audit.panel_id;
+  debug_snapshot_.candidate_panel_id = candidate_panel_id_;
+  debug_snapshot_.candidate_prob = candidate_prob_;
+  debug_snapshot_.candidate_margin = candidate_margin_;
+  debug_snapshot_.selected_xy_residual = selected_xy_residual_;
   debug_snapshot_.entropy_norm = entropy_norm_;
   debug_snapshot_.max_prob = max_prob_;
   debug_snapshot_.hyp_costs = {hyps[0].cost, hyps[1].cost, hyps[2].cost};
@@ -404,9 +500,11 @@ bool OutpostArmorTracker::update(const std::vector<ObservationData> &obs) {
   debug_snapshot_.obs_z_audit_costs = z_audit.costs;
   debug_snapshot_.binding_confidence = binding_confidence_;
   debug_snapshot_.switch_event = switch_event_;
+  debug_snapshot_.switch_reason = switch_reason_;
   debug_snapshot_.transition_state =
       static_cast<int>(binding_transition_state_);
   debug_snapshot_.period_confidence = period_confidence_;
+  debug_snapshot_.period_update_applied = period_update_applied_;
   debug_snapshot_.period_phase_index = period_phase_index_;
   debug_snapshot_.spin_direction = spin_direction_;
   debug_snapshot_.dz_small_est = dz_small_est_;
@@ -424,7 +522,11 @@ double OutpostArmorTracker::get_yaw() const {
   if (is_ambiguous_single_mode()) {
     return normalize_angle(center_yaw_est_ + panel_angles_[selected_panel_id_]);
   }
-  return center_yaw_est_;
+  // Published TrackedRobot uses armors_offset profile convention where
+  // offsets are expressed with a pi-shifted local frame. Keep structured
+  // outpost yaw aligned with that convention to avoid 180-deg reconstruction
+  // mismatch when consumers recover full armor geometry from (center,yaw,offsets).
+  return normalize_angle(center_yaw_est_ + M_PI);
 }
 
 std::pair<double, double> OutpostArmorTracker::get_radii() const {
@@ -658,7 +760,10 @@ OutpostArmorTracker::infer_panel_id_from_z_jump_audit(
   return result;
 }
 
-void OutpostArmorTracker::update_periodic_evidence(double z_jump) {
+void OutpostArmorTracker::update_periodic_evidence(
+    double z_jump, bool allow_model_update) {
+  period_update_applied_ = 0;
+
   const double spin_gate =
       std::max(0.0, config_.outpost.binding_period_min_spin_rate);
   if (std::abs(yaw_rate_est_) >= spin_gate) {
@@ -678,7 +783,9 @@ void OutpostArmorTracker::update_periodic_evidence(double z_jump) {
   }
 
   const double abs_jump = std::abs(z_jump);
-  if (abs_jump > 1e-5) {
+  const double min_jump =
+      std::max(1e-5, config_.outpost.binding_period_update_min_jump);
+  if (allow_model_update && abs_jump > min_jump) {
     if (!std::isfinite(dz_small_est_)) {
       dz_small_est_ = abs_jump;
       dz_large_est_ = 2.0 * dz_small_est_;
@@ -694,6 +801,7 @@ void OutpostArmorTracker::update_periodic_evidence(double z_jump) {
       dz_small_est_ = (1.0 - alpha) * dz_small_est_ + alpha * target_small;
       dz_large_est_ = 2.0 * dz_small_est_;
     }
+    period_update_applied_ = 1;
   }
 
   if (spin_direction_ == 0 || !std::isfinite(dz_small_est_) ||
@@ -790,23 +898,50 @@ double OutpostArmorTracker::compute_same_panel_score(
     const PanelHypothesis &hyp, double predicted_center_z) const {
   const double yaw_gate = std::max(1e-3, config_.outpost.binding_same_panel_yaw_gate);
   const double z_gate = std::max(1e-3, config_.outpost.binding_same_panel_z_gate);
+  const double xy_gate = std::max(1e-3, config_.outpost.binding_same_panel_xy_gate);
 
   const double yaw_err = angle_abs_diff(hyp.center_yaw, center_yaw_est_);
   const double z_err = std::abs(hyp.center_z - predicted_center_z);
+  const double xy_err = hyp.xy_residual;
 
-  const double score = 1.0 - 0.5 * (yaw_err / yaw_gate + z_err / z_gate);
+  const double score = 1.0 -
+      (0.40 * (yaw_err / yaw_gate) +
+       0.35 * (z_err / z_gate) +
+       0.25 * (xy_err / xy_gate));
   return clamp01(score);
+}
+
+int OutpostArmorTracker::semantic_from_panel(int panel_id) const {
+  if (panel_id == 0) return static_cast<int>(HeightSemantic::HIGH);
+  if (panel_id == 1) return static_cast<int>(HeightSemantic::MIDDLE);
+  if (panel_id == 2) return static_cast<int>(HeightSemantic::LOW);
+  return static_cast<int>(HeightSemantic::UNKNOWN);
 }
 
 void OutpostArmorTracker::update_binding_state_machine(int candidate_panel,
                                                        double candidate_prob,
+                                                       double candidate_margin,
                                                        double same_panel_score,
                                                        double switch_score) {
-  (void)candidate_prob;
   switch_event_ = 0;
+  switch_reason_ = 0;
+
+  const double min_candidate_prob =
+      std::clamp(config_.outpost.binding_min_candidate_prob, 0.0, 1.0);
+  const double min_candidate_margin =
+      std::clamp(config_.outpost.binding_min_candidate_margin, 0.0, 1.0);
+  const double switch_strong_score =
+      std::clamp(config_.outpost.binding_switch_strong_score, 0.0, 1.0);
+
+  if (candidate_prob < min_candidate_prob) {
+    switch_reason_ = 2;
+  } else if (candidate_margin < min_candidate_margin) {
+    switch_reason_ = 3;
+  }
 
   if (bound_panel_id_ < 0) {
     bound_panel_id_ = candidate_panel;
+    bound_height_label_ = semantic_from_panel(bound_panel_id_);
     binding_transition_state_ = BindingTransitionState::LOCKED;
     transition_candidate_panel_ = -1;
     transition_confirm_count_ = 0;
@@ -816,11 +951,32 @@ void OutpostArmorTracker::update_binding_state_machine(int candidate_panel,
   const int confirm_required =
       std::max(1, config_.outpost.binding_transition_confirm_frames);
 
+  const bool candidate_valid =
+      candidate_prob >= min_candidate_prob &&
+      candidate_margin >= min_candidate_margin;
+
+  if (!candidate_valid) {
+    binding_transition_state_ = BindingTransitionState::LOCKED;
+    transition_candidate_panel_ = -1;
+    transition_confirm_count_ = 0;
+    return;
+  }
+
   if (binding_transition_state_ == BindingTransitionState::LOCKED) {
     const bool trigger_transition =
         (candidate_panel != bound_panel_id_) &&
         (switch_score > (0.50 + 0.20 * same_panel_score));
     if (trigger_transition) {
+      if (confirm_required <= 1) {
+        bound_panel_id_ = candidate_panel;
+        bound_height_label_ = semantic_from_panel(bound_panel_id_);
+        binding_transition_state_ = BindingTransitionState::LOCKED;
+        transition_candidate_panel_ = -1;
+        transition_confirm_count_ = 0;
+        switch_event_ = 1;
+        switch_reason_ = 1;
+        return;
+      }
       binding_transition_state_ = BindingTransitionState::TRANSITION_CANDIDATE;
       transition_candidate_panel_ = candidate_panel;
       transition_confirm_count_ = 1;
@@ -831,33 +987,41 @@ void OutpostArmorTracker::update_binding_state_machine(int candidate_panel,
     return;
   }
 
-  if (candidate_panel == transition_candidate_panel_ && switch_score > 0.45) {
+  if (candidate_panel == transition_candidate_panel_ &&
+      switch_score > switch_strong_score) {
     ++transition_confirm_count_;
-  } else if (candidate_panel != bound_panel_id_ && switch_score > 0.60) {
+  } else if (candidate_panel != bound_panel_id_ &&
+             switch_score > std::max(0.60, switch_strong_score)) {
     transition_candidate_panel_ = candidate_panel;
     transition_confirm_count_ = 1;
   } else {
     binding_transition_state_ = BindingTransitionState::LOCKED;
     transition_candidate_panel_ = -1;
     transition_confirm_count_ = 0;
+    switch_reason_ = 4;
     return;
   }
 
   if (transition_confirm_count_ >= confirm_required) {
     bound_panel_id_ = transition_candidate_panel_;
+    bound_height_label_ = semantic_from_panel(bound_panel_id_);
     binding_transition_state_ = BindingTransitionState::LOCKED;
     transition_candidate_panel_ = -1;
     transition_confirm_count_ = 0;
     switch_event_ = 1;
+    switch_reason_ = 1;
   }
 }
 
 double OutpostArmorTracker::binding_confidence_from_scores(
-    double candidate_prob, double same_panel_score, double switch_score) const {
+    double candidate_prob, double candidate_margin,
+    double same_panel_score, double switch_score) const {
   const double period_conf =
       std::isfinite(period_confidence_) ? period_confidence_ : 0.0;
   const double consistency_score = std::max(same_panel_score, period_conf);
-  double base = clamp01(0.65 * candidate_prob + 0.35 * consistency_score);
+  double base = clamp01(0.55 * candidate_prob +
+                        0.20 * candidate_margin +
+                        0.25 * consistency_score);
 
   if (binding_transition_state_ == BindingTransitionState::TRANSITION_CANDIDATE) {
     base *= std::clamp(1.0 - 0.25 * switch_score, 0.55, 1.0);
@@ -878,6 +1042,8 @@ OutpostArmorTracker::evaluate_hypotheses(const ObservationData &obs,
   const double w_yaw = std::max(0.0, config_.outpost.weight_yaw);
   const double w_z_state = std::max(0.0, config_.outpost.weight_z_state);
   const double w_z_hist = std::max(0.0, config_.outpost.weight_z_history);
+  const double w_xy = std::max(0.0, config_.outpost.weight_xy_residual);
+  const double w_switch = std::max(0.0, config_.outpost.weight_switch_penalty);
 
   for (int i = 0; i < 3; ++i) {
     PanelHypothesis h;
@@ -890,7 +1056,28 @@ OutpostArmorTracker::evaluate_hypotheses(const ObservationData &obs,
     const double z_hist_err = has_history ? std::abs(h.center_z - history_center_z)
                                           : 0.0;
 
-    h.cost = w_yaw * yaw_err + w_z_state * z_state_err + w_z_hist * z_hist_err;
+    const double predicted_panel_yaw =
+        normalize_angle(center_yaw_est_ + panel_angles_[i]);
+    const double pred_x =
+        center_position_est_.x() + radius_ * std::cos(predicted_panel_yaw);
+    const double pred_y =
+        center_position_est_.y() + radius_ * std::sin(predicted_panel_yaw);
+    const double xy_residual = std::hypot(obs.x - pred_x, obs.y - pred_y);
+
+    const double switch_penalty =
+        (bound_panel_id_ >= 0 && i != bound_panel_id_) ? w_switch : 0.0;
+
+    h.yaw_err = yaw_err;
+    h.z_state_err = z_state_err;
+    h.z_hist_err = z_hist_err;
+    h.xy_residual = xy_residual;
+    h.switch_penalty = switch_penalty;
+
+    h.cost = w_yaw * yaw_err +
+             w_z_state * z_state_err +
+             w_z_hist * z_hist_err +
+             w_xy * xy_residual +
+             switch_penalty;
     hyps[i] = h;
   }
 

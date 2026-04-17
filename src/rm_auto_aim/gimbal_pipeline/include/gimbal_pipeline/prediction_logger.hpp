@@ -87,8 +87,13 @@ struct LogTrackerState {
   int outpost_mode = -1;     // 0=STRUCTURED_3_ARMORS, 1=AMBIGUOUS_SINGLE_ARMOR
   int estimated_id = -1;     // canonical estimated id; -1 in ambiguous single mode
   int runtime_panel_id = -1; // internal filter panel index
+  int bound_height_label = -1;  // 0=HIGH,1=MIDDLE,2=LOW
   int obs_inferred_id = -1;  // inferred id from observation yaw and center yaw
   int obs_inferred_id_z = -1;  // inferred id from observation z-jump audit
+  int candidate_panel_id = -1;
+  double candidate_prob = std::numeric_limits<double>::quiet_NaN();
+  double candidate_margin = std::numeric_limits<double>::quiet_NaN();
+  double selected_xy_residual = std::numeric_limits<double>::quiet_NaN();
 
   double outpost_entropy = std::numeric_limits<double>::quiet_NaN();
   double outpost_max_prob = std::numeric_limits<double>::quiet_NaN();
@@ -115,8 +120,10 @@ struct LogTrackerState {
   // ── Binding/period evidence diagnostics ──
   double binding_confidence = std::numeric_limits<double>::quiet_NaN();
   int switch_event = 0;      // 0=no switch, 1=switch confirmed
+  int switch_reason = 0;     // 0=none,1=confirmed,2=reject_prob,3=reject_margin,4=transition_abort
   int transition_state = 0;  // 0=LOCKED, 1=TRANSITION_CANDIDATE
   double period_confidence = std::numeric_limits<double>::quiet_NaN();
+  int period_update_applied = 0;
   int period_phase_index = -1;
   int spin_direction = 0;  // +1=CCW, -1=CW, 0=unknown
   double dz_small_est = std::numeric_limits<double>::quiet_NaN();

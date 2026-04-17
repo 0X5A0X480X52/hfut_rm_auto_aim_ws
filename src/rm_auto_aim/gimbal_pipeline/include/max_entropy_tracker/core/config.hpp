@@ -130,6 +130,8 @@ struct OutpostParameters {
   double weight_yaw = 1.0;
   double weight_z_state = 6.0;
   double weight_z_history = 2.0;
+  double weight_xy_residual = 2.5;
+  double weight_switch_penalty = 0.05;
 
   // Hysteresis gating for mode switch (3-armors <-> single-armor)
   double entropy_enter = 0.75;
@@ -147,9 +149,15 @@ struct OutpostParameters {
   int binding_transition_confirm_frames = 3;
   double binding_same_panel_yaw_gate = 0.35;
   double binding_same_panel_z_gate = 0.08;
+  double binding_same_panel_xy_gate = 0.18;
+  double binding_min_candidate_prob = 0.40;
+  double binding_min_candidate_margin = 0.12;
+  double binding_switch_strong_score = 0.60;
   int binding_period_window = 12;
   double binding_period_weight = 0.60;
   double binding_period_min_spin_rate = 0.8;
+  double binding_period_update_min_confidence = 0.55;
+  double binding_period_update_min_jump = 0.015;
   double binding_dz_ema_alpha = 0.20;
   double binding_confidence_floor = 0.15;
 

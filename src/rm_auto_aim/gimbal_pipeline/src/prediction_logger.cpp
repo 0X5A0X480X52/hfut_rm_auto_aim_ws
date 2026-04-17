@@ -67,7 +67,9 @@ PredictionLogger::PredictionLogger(const std::string &output_dir,
                  "p_var_vx,p_var_vy,p_var_vz,"
                  "p_var_ax,p_var_ay,p_var_az,"
                  "accel_x,accel_y,accel_z,accel_magnitude,"
-                 "outpost_mode,estimated_id,runtime_panel_id,obs_inferred_id,obs_inferred_id_z,"
+                 "outpost_mode,estimated_id,runtime_panel_id,bound_height_label,"
+                 "obs_inferred_id,obs_inferred_id_z,"
+                 "candidate_panel_id,candidate_prob,candidate_margin,selected_xy_residual,"
                  "outpost_entropy,outpost_max_prob,"
                  "hyp_cost_0,hyp_cost_1,hyp_cost_2,"
                  "hyp_prob_0,hyp_prob_1,hyp_prob_2,"
@@ -75,8 +77,8 @@ PredictionLogger::PredictionLogger(const std::string &output_dir,
                  "obs_x,obs_y,obs_z,obs_yaw,"
                  "obs_z_jump,obs_dz_from_audit_center,"
                  "obs_z_audit_cost_0,obs_z_audit_cost_1,obs_z_audit_cost_2,"
-                 "binding_confidence,switch_event,transition_state,"
-                 "period_confidence,period_phase_index,spin_direction,"
+                 "binding_confidence,switch_event,switch_reason,transition_state,"
+                 "period_confidence,period_update_applied,period_phase_index,spin_direction,"
                  "dz_small_est,dz_large_est\n";
 }
 
@@ -163,8 +165,13 @@ void PredictionLogger::logTrackerState(int64_t timestamp_ns,
               << s.outpost_mode       << ','
               << s.estimated_id       << ','
               << s.runtime_panel_id   << ','
+              << s.bound_height_label << ','
               << s.obs_inferred_id    << ','
               << s.obs_inferred_id_z  << ','
+              << s.candidate_panel_id << ','
+              << s.candidate_prob     << ','
+              << s.candidate_margin   << ','
+              << s.selected_xy_residual << ','
               << s.outpost_entropy    << ','
               << s.outpost_max_prob   << ','
               << s.hyp_cost_0         << ','
@@ -186,8 +193,10 @@ void PredictionLogger::logTrackerState(int64_t timestamp_ns,
               << s.obs_z_audit_cost_2 << ','
               << s.binding_confidence << ','
               << s.switch_event << ','
+              << s.switch_reason << ','
               << s.transition_state << ','
               << s.period_confidence << ','
+              << s.period_update_applied << ','
               << s.period_phase_index << ','
               << s.spin_direction << ','
               << s.dz_small_est << ','
