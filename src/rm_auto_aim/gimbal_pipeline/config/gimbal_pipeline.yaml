@@ -51,8 +51,8 @@ gimbal_pipeline:
 
     # Tracker logic
     tracker.tracking_thres: 2
-    tracker.lost_thres: 40
-    tracker.temp_lost_thres: 30
+    tracker.lost_thres: 4
+    tracker.temp_lost_thres: 3
     tracker.max_match_distance: 2.0
     tracker.max_match_yaw_diff: 1.0
     tracker.n_panels: 4
@@ -71,6 +71,12 @@ gimbal_pipeline:
     # Outpost tracker (known 3-armor geometry + max-entropy mode switch)
     outpost.translation_model: "CV"   # "CV" | "CA" | "Singer"
     outpost.rotation_model: "CV"      # "CV" | "CA"
+    # Outpost state machine thresholds (independent from tracker.* used by adaptive)
+    outpost.tracking_thres: 2
+    outpost.lost_thres: 40
+    outpost.temp_lost_thres: 30
+    outpost.max_match_distance: 2.0
+    outpost.max_match_yaw_diff: 1.0
     outpost.singer_alpha: 0.0          # <=0: fallback to motion.singer_alpha
     outpost.singer_sigma: 0.0          # <=0: fallback to motion.singer_sigma
     outpost.spin_process_noise_theta_rate: 0.0  # <=0: fallback to spin.spin_process_noise_delta_rate

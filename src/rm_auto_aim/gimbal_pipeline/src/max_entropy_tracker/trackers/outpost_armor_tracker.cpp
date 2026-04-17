@@ -247,15 +247,15 @@ bool OutpostArmorTracker::update(const std::vector<ObservationData> &obs) {
   debug_snapshot_.dz_large_est = dz_large_est_;
 
   if (!is_initialized() || obs.empty()) {
-    handle_observation_loss(config_.tracker.tracking_thres,
-                            config_.tracker.lost_thres);
+    handle_observation_loss(config_.outpost.tracking_thres,
+                            config_.outpost.lost_thres);
     return false;
   }
 
   const ObservationData *selected = select_observation(obs);
   if (selected == nullptr) {
-    handle_observation_loss(config_.tracker.tracking_thres,
-                            config_.tracker.lost_thres);
+    handle_observation_loss(config_.outpost.tracking_thres,
+                            config_.outpost.lost_thres);
     return false;
   }
 
@@ -267,7 +267,7 @@ bool OutpostArmorTracker::update(const std::vector<ObservationData> &obs) {
     if (d > min_dt_) predict(selected->timestamp.value());
   }
 
-  handle_observation_received(config_.tracker.tracking_thres);
+  handle_observation_received(config_.outpost.tracking_thres);
 
   double dt_for_update = dt_;
   if (selected->timestamp.has_value() && last_internal_update_time_.has_value()) {

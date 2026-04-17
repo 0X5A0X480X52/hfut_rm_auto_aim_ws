@@ -103,6 +103,15 @@ struct PanelMismatchParameters {
 };
 
 struct OutpostParameters {
+  // Outpost-specific tracker state machine thresholds
+  int tracking_thres = 2;
+  int lost_thres = 40;
+  int temp_lost_thres = 30;
+
+  // Outpost-specific matching gates (reserved for association logic)
+  double max_match_distance = 2.0;
+  double max_match_yaw_diff = 1.0;
+
   // Motion model selection (same style as 4-panel tracker)
   TranslationModel translation_model = TranslationModel::CV;
   RotationModel rotation_model = RotationModel::CV;

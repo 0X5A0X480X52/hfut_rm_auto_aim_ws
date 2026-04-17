@@ -690,6 +690,11 @@ void GimbalPipelineNode::declareTrackerParameters() {
   // Outpost-specific (known 3-armor geometry + max-entropy mode switch)
   declare_parameter("outpost.translation_model", "CV");
   declare_parameter("outpost.rotation_model", "CV");
+  declare_parameter("outpost.tracking_thres", 2);
+  declare_parameter("outpost.lost_thres", 40);
+  declare_parameter("outpost.temp_lost_thres", 30);
+  declare_parameter("outpost.max_match_distance", 2.0);
+  declare_parameter("outpost.max_match_yaw_diff", 1.0);
   declare_parameter("outpost.singer_alpha", 0.0);
   declare_parameter("outpost.singer_sigma", 0.0);
   declare_parameter("outpost.spin_process_noise_theta_rate", 0.0);
@@ -1104,6 +1109,14 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("outpost.translation_model").as_string());
     c.outpost.rotation_model = rotation_model_from_string(
       get_parameter("outpost.rotation_model").as_string());
+    c.outpost.tracking_thres = get_parameter("outpost.tracking_thres").as_int();
+    c.outpost.lost_thres = get_parameter("outpost.lost_thres").as_int();
+    c.outpost.temp_lost_thres =
+      get_parameter("outpost.temp_lost_thres").as_int();
+    c.outpost.max_match_distance =
+      get_parameter("outpost.max_match_distance").as_double();
+    c.outpost.max_match_yaw_diff =
+      get_parameter("outpost.max_match_yaw_diff").as_double();
     c.outpost.singer_alpha = get_parameter("outpost.singer_alpha").as_double();
     c.outpost.singer_sigma = get_parameter("outpost.singer_sigma").as_double();
     c.outpost.spin_process_noise_theta_rate =
@@ -1186,6 +1199,12 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("outpost.max_center_speed").as_double();
     c.outpost.max_yaw_rate =
       get_parameter("outpost.max_yaw_rate").as_double();
+
+    c.outpost.tracking_thres = std::max(1, c.outpost.tracking_thres);
+    c.outpost.lost_thres = std::max(1, c.outpost.lost_thres);
+    c.outpost.temp_lost_thres = std::max(1, c.outpost.temp_lost_thres);
+    c.outpost.max_match_distance = std::max(0.0, c.outpost.max_match_distance);
+    c.outpost.max_match_yaw_diff = std::max(0.0, c.outpost.max_match_yaw_diff);
 
     c.outpost.binding_transition_confirm_frames =
       std::max(1, c.outpost.binding_transition_confirm_frames);
