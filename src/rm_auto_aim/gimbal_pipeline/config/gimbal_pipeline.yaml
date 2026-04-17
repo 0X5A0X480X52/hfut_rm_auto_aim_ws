@@ -9,7 +9,7 @@ gimbal_pipeline:
     default_r1: 0.15
     default_r2: 0.20
     default_dza: 0.0
-    tracker_timeout: 2.50
+    tracker_timeout: 5.50
     debug_mode: true
     enable_oscillation_detection: false
     visualization_frame: "odom"
@@ -57,6 +57,10 @@ gimbal_pipeline:
     tracker.max_match_yaw_diff: 1.0
     tracker.n_panels: 4
     tracker.panel_angle_step: 1.5707963267948966
+    # 标准4板周期证据（-dz,+dz,-dz,+dz，符号随旋向翻转）
+    tracker.periodic_binding_enable: false
+    tracker.periodic_binding_weight: 0.35
+    tracker.periodic_binding_spin_rate_gate: 0.8
 
     # Constraints
     constraints.min_radius: 0.12
@@ -72,21 +76,34 @@ gimbal_pipeline:
     outpost.spin_process_noise_theta_rate: 0.0  # <=0: fallback to spin.spin_process_noise_delta_rate
     outpost.spin_process_noise_theta_acc: 0.0   # <=0: fallback to spin.spin_process_noise_delta_acc
     outpost.radius: 0.275
-    outpost.z_offset_0: 0.16
+    # 语义约定:
+    #   id0=最高, id1=中间, id2=最低
+    # 俯视顺时针角序:
+    #   0deg(id0) -> 120deg(id2) -> 240deg(id1)
+    outpost.z_offset_0: 0.102
     outpost.z_offset_1: 0.00
-    outpost.z_offset_2: -0.16
+    outpost.z_offset_2: -0.102
     outpost.panel_angle_step: 2.0943951023931953
     outpost.softmax_temperature: 1.5
     outpost.weight_yaw: 1.0
     outpost.weight_z_state: 6.0
     outpost.weight_z_history: 2.0
     outpost.entropy_enter: 0.75
-    outpost.entropy_exit: 0.55
+    outpost.entropy_exit: 0.60
     outpost.max_prob_enter: 0.60
     outpost.max_prob_exit: 0.75
     outpost.stable_frames: 4
     outpost.z_history_window: 15
     outpost.single_mode_confidence_scale: 0.70
+    outpost.binding_enable_multi_obs: true
+    outpost.binding_transition_confirm_frames: 3
+    outpost.binding_same_panel_yaw_gate: 0.35
+    outpost.binding_same_panel_z_gate: 0.08
+    outpost.binding_period_window: 12
+    outpost.binding_period_weight: 0.60
+    outpost.binding_period_min_spin_rate: 0.8
+    outpost.binding_dz_ema_alpha: 0.20
+    outpost.binding_confidence_floor: 0.15
     outpost.alpha_pos: 0.65
     outpost.beta_vel: 0.30
     outpost.alpha_yaw: 0.60
@@ -384,7 +401,7 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     # 启用后会将观测值与 Tracker 后验状态写入 CSV 文件，
     # 供 scripts/analyze_prediction.py 离线分析预测误差。
-    logging.enable: false
+    logging.enable: true
     logging.output_dir: "/tmp/prediction_logs"
     logging.robot_id_filter: ""      # 只记录指定 robot_id；为空则记录全部
     logging.flush_every_n: 50        # 每 N 行落盘一次，减少 I/O 阻塞

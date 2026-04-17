@@ -74,9 +74,9 @@ class OutpostSpinUKF : public BaseUKF, public SpinFilterInterface {
   DynamicStateIndex state_idx_;
 
   double radius_ = 0.26;
-  std::array<double, N_PANELS> z_offsets_{-0.06, 0.0, 0.06};
+    std::array<double, N_PANELS> z_offsets_{0.06, 0.0, -0.06};
   std::array<double, N_PANELS> panel_angles_{0.0, 2.0 * M_PI / 3.0,
-                                             4.0 * M_PI / 3.0};
+                                                                                         -2.0 * M_PI / 3.0};
   int selected_panel_id_ = 0;
 
   Eigen::VectorXd last_innov_xyz_;

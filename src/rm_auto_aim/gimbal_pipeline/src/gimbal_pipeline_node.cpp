@@ -677,6 +677,9 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("tracker.max_match_yaw_diff", 1.0);
   declare_parameter("tracker.n_panels", 4);
   declare_parameter("tracker.panel_angle_step", M_PI / 2.0);
+  declare_parameter("tracker.periodic_binding_enable", false);
+  declare_parameter("tracker.periodic_binding_weight", 0.35);
+  declare_parameter("tracker.periodic_binding_spin_rate_gate", 0.8);
 
   // Constraints
   declare_parameter("constraints.min_radius", 0.12);
@@ -692,9 +695,11 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("outpost.spin_process_noise_theta_rate", 0.0);
   declare_parameter("outpost.spin_process_noise_theta_acc", 0.0);
   declare_parameter("outpost.radius", 0.26);
-  declare_parameter("outpost.z_offset_0", -0.06);
+  // Outpost semantic contract:
+  //   id0=highest, id1=middle, id2=lowest.
+  declare_parameter("outpost.z_offset_0", 0.06);
   declare_parameter("outpost.z_offset_1", 0.0);
-  declare_parameter("outpost.z_offset_2", 0.06);
+  declare_parameter("outpost.z_offset_2", -0.06);
   declare_parameter("outpost.panel_angle_step", 2.0 * M_PI / 3.0);
   declare_parameter("outpost.softmax_temperature", 1.5);
   declare_parameter("outpost.weight_yaw", 1.0);
@@ -707,6 +712,15 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("outpost.stable_frames", 4);
   declare_parameter("outpost.z_history_window", 15);
   declare_parameter("outpost.single_mode_confidence_scale", 0.70);
+  declare_parameter("outpost.binding_enable_multi_obs", true);
+  declare_parameter("outpost.binding_transition_confirm_frames", 3);
+  declare_parameter("outpost.binding_same_panel_yaw_gate", 0.35);
+  declare_parameter("outpost.binding_same_panel_z_gate", 0.08);
+  declare_parameter("outpost.binding_period_window", 12);
+  declare_parameter("outpost.binding_period_weight", 0.60);
+  declare_parameter("outpost.binding_period_min_spin_rate", 0.8);
+  declare_parameter("outpost.binding_dz_ema_alpha", 0.20);
+  declare_parameter("outpost.binding_confidence_floor", 0.15);
   declare_parameter("outpost.alpha_pos", 0.65);
   declare_parameter("outpost.beta_vel", 0.30);
   declare_parameter("outpost.alpha_yaw", 0.60);
@@ -1038,6 +1052,17 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
   c.tracker.n_panels = get_parameter("tracker.n_panels").as_int();
   c.tracker.panel_angle_step =
       get_parameter("tracker.panel_angle_step").as_double();
+    c.tracker.periodic_binding_enable =
+      get_parameter("tracker.periodic_binding_enable").as_bool();
+    c.tracker.periodic_binding_weight =
+      get_parameter("tracker.periodic_binding_weight").as_double();
+    c.tracker.periodic_binding_spin_rate_gate =
+      get_parameter("tracker.periodic_binding_spin_rate_gate").as_double();
+
+    c.tracker.periodic_binding_weight =
+      std::max(0.0, c.tracker.periodic_binding_weight);
+    c.tracker.periodic_binding_spin_rate_gate =
+      std::max(0.0, c.tracker.periodic_binding_spin_rate_gate);
 
   c.constraints.min_radius =
       get_parameter("constraints.min_radius").as_double();
@@ -1104,6 +1129,24 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("outpost.z_history_window").as_int();
     c.outpost.single_mode_confidence_scale =
       get_parameter("outpost.single_mode_confidence_scale").as_double();
+    c.outpost.binding_enable_multi_obs =
+      get_parameter("outpost.binding_enable_multi_obs").as_bool();
+    c.outpost.binding_transition_confirm_frames =
+      get_parameter("outpost.binding_transition_confirm_frames").as_int();
+    c.outpost.binding_same_panel_yaw_gate =
+      get_parameter("outpost.binding_same_panel_yaw_gate").as_double();
+    c.outpost.binding_same_panel_z_gate =
+      get_parameter("outpost.binding_same_panel_z_gate").as_double();
+    c.outpost.binding_period_window =
+      get_parameter("outpost.binding_period_window").as_int();
+    c.outpost.binding_period_weight =
+      get_parameter("outpost.binding_period_weight").as_double();
+    c.outpost.binding_period_min_spin_rate =
+      get_parameter("outpost.binding_period_min_spin_rate").as_double();
+    c.outpost.binding_dz_ema_alpha =
+      get_parameter("outpost.binding_dz_ema_alpha").as_double();
+    c.outpost.binding_confidence_floor =
+      get_parameter("outpost.binding_confidence_floor").as_double();
     c.outpost.alpha_pos = get_parameter("outpost.alpha_pos").as_double();
     c.outpost.beta_vel = get_parameter("outpost.beta_vel").as_double();
     c.outpost.alpha_yaw = get_parameter("outpost.alpha_yaw").as_double();
@@ -1119,6 +1162,51 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("outpost.max_center_speed").as_double();
     c.outpost.max_yaw_rate =
       get_parameter("outpost.max_yaw_rate").as_double();
+
+    c.outpost.binding_transition_confirm_frames =
+      std::max(1, c.outpost.binding_transition_confirm_frames);
+    c.outpost.binding_same_panel_yaw_gate =
+      std::max(1e-3, c.outpost.binding_same_panel_yaw_gate);
+    c.outpost.binding_same_panel_z_gate =
+      std::max(1e-3, c.outpost.binding_same_panel_z_gate);
+    c.outpost.binding_period_window = std::max(3, c.outpost.binding_period_window);
+    c.outpost.binding_period_weight =
+      std::max(0.0, c.outpost.binding_period_weight);
+    c.outpost.binding_period_min_spin_rate =
+      std::max(0.0, c.outpost.binding_period_min_spin_rate);
+    c.outpost.binding_dz_ema_alpha =
+      std::clamp(c.outpost.binding_dz_ema_alpha, 0.01, 1.0);
+    c.outpost.binding_confidence_floor =
+      std::clamp(c.outpost.binding_confidence_floor, 0.0, 0.95);
+
+  const bool z_descending =
+      (c.outpost.z_offset_0 > c.outpost.z_offset_1) &&
+      (c.outpost.z_offset_1 > c.outpost.z_offset_2);
+  if (!z_descending) {
+    RCLCPP_WARN(
+        get_logger(),
+        "Outpost z-offset semantic mismatch: expected z0>z1>z2 for "
+        "[highest,middle,lowest], got [%.4f, %.4f, %.4f]",
+        c.outpost.z_offset_0, c.outpost.z_offset_1, c.outpost.z_offset_2);
+  }
+
+  const double expected_step = 2.0 * M_PI / 3.0;
+  if (std::abs(std::abs(c.outpost.panel_angle_step) - expected_step) > 1e-3) {
+    RCLCPP_WARN(
+        get_logger(),
+        "Outpost panel_angle_step=%.6f differs from 2pi/3; semantic contract "
+        "(top-down clockwise: 0->2->1) assumes 120deg spacing.",
+        c.outpost.panel_angle_step);
+  }
+
+  static bool outpost_semantic_logged = false;
+  if (!outpost_semantic_logged) {
+    outpost_semantic_logged = true;
+    RCLCPP_INFO(
+        get_logger(),
+        "Outpost semantic contract enabled: id0=highest@0deg, clockwise order "
+        "id0->id2->id1.");
+  }
 
   // Output smoother
   smoother_config_.enable = get_parameter("smoother.enable").as_bool();
@@ -1341,6 +1429,48 @@ void GimbalPipelineNode::armorsCallback(
           st.accel_y         = kNaN;
           st.accel_z         = kNaN;
           st.accel_magnitude = kNaN;
+        }
+
+        if (robot.robot_id == "outpost") {
+          const auto *outpost_tracker =
+              dynamic_cast<const OutpostArmorTracker *>(tracker);
+          if (outpost_tracker != nullptr) {
+            const auto &snap = outpost_tracker->debug_snapshot();
+            if (snap.valid) {
+              st.outpost_mode = snap.track_mode;
+              st.estimated_id = snap.estimated_id;
+              st.runtime_panel_id = snap.runtime_panel_id;
+              st.obs_inferred_id = snap.obs_inferred_id;
+              st.obs_inferred_id_z = snap.obs_inferred_id_z;
+              st.outpost_entropy = snap.entropy_norm;
+              st.outpost_max_prob = snap.max_prob;
+              st.hyp_cost_0 = snap.hyp_costs[0];
+              st.hyp_cost_1 = snap.hyp_costs[1];
+              st.hyp_cost_2 = snap.hyp_costs[2];
+              st.hyp_prob_0 = snap.hyp_probs[0];
+              st.hyp_prob_1 = snap.hyp_probs[1];
+              st.hyp_prob_2 = snap.hyp_probs[2];
+              st.center_yaw_est = snap.center_yaw_est;
+              st.has_observation = snap.has_observation ? 1 : 0;
+              st.obs_x = snap.obs_x;
+              st.obs_y = snap.obs_y;
+              st.obs_z = snap.obs_z;
+              st.obs_yaw = snap.obs_yaw;
+              st.obs_z_jump = snap.obs_z_jump;
+              st.obs_dz_from_audit_center = snap.obs_dz_from_audit_center;
+              st.obs_z_audit_cost_0 = snap.obs_z_audit_costs[0];
+              st.obs_z_audit_cost_1 = snap.obs_z_audit_costs[1];
+              st.obs_z_audit_cost_2 = snap.obs_z_audit_costs[2];
+              st.binding_confidence = snap.binding_confidence;
+              st.switch_event = snap.switch_event;
+              st.transition_state = snap.transition_state;
+              st.period_confidence = snap.period_confidence;
+              st.period_phase_index = snap.period_phase_index;
+              st.spin_direction = snap.spin_direction;
+              st.dz_small_est = snap.dz_small_est;
+              st.dz_large_est = snap.dz_large_est;
+            }
+          }
         }
       }
 
@@ -2117,8 +2247,10 @@ void GimbalPipelineNode::publishGimbalMarkers(
           offset.position.x * sin_yaw + offset.position.y * cos_yaw;
       armor_marker.pose.position.z =
           center_position.z() + offset.position.z;
+        const bool is_outpost = (normalized_target.robot_id == "outpost");
+        const double armor_pitch = is_outpost ? -0.2618 : 0.2618;
       tf2::Quaternion q;
-      q.setRPY(0, 0.2618,
+        q.setRPY(0, armor_pitch,
                target_yaw +
                    i * (2 * M_PI / normalized_target.num_armors));
       armor_marker.pose.orientation.x = q.x();

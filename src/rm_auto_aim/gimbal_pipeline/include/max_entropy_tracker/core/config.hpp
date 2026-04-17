@@ -79,6 +79,12 @@ struct TrackerParameters {
 
   int n_panels = 4;
   double panel_angle_step = M_PI / 2.0;
+
+  // Optional periodic dz prior for standard 4-panel association.
+  // Template: -dz, +dz, -dz, +dz (sign flips with spin direction).
+  bool periodic_binding_enable = false;
+  double periodic_binding_weight = 0.35;
+  double periodic_binding_spin_rate_gate = 0.8;
 };
 
 struct ConstraintParameters {
@@ -110,10 +116,13 @@ struct OutpostParameters {
   double spin_process_noise_theta_acc = 0.0;
 
   // Known geometric profile (relative to outpost center)
+  // Semantic contract:
+  //   panel 0 = highest, panel 1 = middle, panel 2 = lowest.
+  // Top-down clockwise order: 0 deg(panel 0) -> panel 2 -> panel 1.
   double radius = 0.26;
-  double z_offset_0 = -0.06;
+  double z_offset_0 = 0.06;
   double z_offset_1 = 0.00;
-  double z_offset_2 = 0.06;
+  double z_offset_2 = -0.06;
   double panel_angle_step = 2.0 * M_PI / 3.0;
 
   // Max-entropy panel posterior
@@ -132,6 +141,17 @@ struct OutpostParameters {
 
   // Single-armor output confidence scaling
   double single_mode_confidence_scale = 0.70;
+
+  // Binding engine controls (periodic evidence + transition confirmation)
+  bool binding_enable_multi_obs = true;
+  int binding_transition_confirm_frames = 3;
+  double binding_same_panel_yaw_gate = 0.35;
+  double binding_same_panel_z_gate = 0.08;
+  int binding_period_window = 12;
+  double binding_period_weight = 0.60;
+  double binding_period_min_spin_rate = 0.8;
+  double binding_dz_ema_alpha = 0.20;
+  double binding_confidence_floor = 0.15;
 
   // Kinematic smoothing gains
   double alpha_pos = 0.65;
