@@ -7,10 +7,10 @@
 namespace: ''
 
 # image_source: (video | mindvision | hik)
-image_source: 'video'
+image_source: 'hik'
 
 # true: 虚拟下位机 false: 实车
-virtual_serial: true
+virtual_serial: false
 
 # true: 开启调试模式 (发布可视化markers)
 debug: true
@@ -22,14 +22,14 @@ tracker_impl: 'cpp'
 
 # --------- 相机/URDF参数 ---------
 # 舵轮 6mm 相机相对于里程计的位姿 (相机安装位置)
-odom2camera:
-  xyz: "\"0.151 0.00  0.040\""
-  rpy: "\"0.0  0.02  0.0100\""
+# odom2camera:
+#   xyz: "\"0.151 0.00  0.040\""
+#   rpy: "\"0.0  0.02  0.0100\""
 
 # # 英雄
-# odom2camera:
-#   xyz: "\"0.174275 0.000 0.086463 \""
-#   rpy: "\"0.0  0.1396  -0.00\""
+odom2camera:
+  xyz: "\"0.174275 0.000 0.086463 \""
+  rpy: "\"0.0  0.1396  -0.00\""
 
 # # 哨兵
 # odom2camera:

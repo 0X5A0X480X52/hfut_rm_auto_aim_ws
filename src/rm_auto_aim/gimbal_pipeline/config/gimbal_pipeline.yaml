@@ -73,8 +73,8 @@ gimbal_pipeline:
     outpost.rotation_model: "CV"      # "CV" | "CA"
     # Outpost state machine thresholds (independent from tracker.* used by adaptive)
     outpost.tracking_thres: 2
-    outpost.lost_thres: 40
-    outpost.temp_lost_thres: 30
+    outpost.lost_thres: 45
+    outpost.temp_lost_thres: 3
     outpost.max_match_distance: 2.0
     outpost.max_match_yaw_diff: 1.0
     outpost.singer_alpha: 0.0          # <=0: fallback to motion.singer_alpha
@@ -138,8 +138,8 @@ gimbal_pipeline:
 
     # Output smoother (1-Euro filter + Robbins-Monro)
     smoother.enable: true
-    smoother.enable_position_smooth: false
-    smoother.enable_yaw_smooth: false
+    smoother.enable_position_smooth: true
+    smoother.enable_yaw_smooth: true
     smoother.enable_velocity_smooth: true
     smoother.enable_structural_convergence: true
     smoother.pos_min_cutoff: 1.0
@@ -194,13 +194,13 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     # Gimbal controller parameters
     # ═══════════════════════════════════════════════════════════════
-    controller.bullet_speed: 22.70
+    controller.bullet_speed: 11.7
     controller.control_rate: 250.0
     controller.strategy: "mpc"    # "current" | "predicted" | "mpc" | "state_machine"
     controller.ballistic_mode: "local"  # "service" | "local"
 
-    controller.solver.shooting_range_width: 0.135
-    controller.solver.shooting_range_height: 0.135
+    controller.solver.shooting_range_width: 0.1
+    controller.solver.shooting_range_height: 0.1
     controller.solver.side_angle: 15.0
     controller.solver.min_switching_v_yaw: 0.0
     controller.solver.prediction_delay: 0.100
@@ -212,13 +212,13 @@ gimbal_pipeline:
     controller.solver.iteration_times: 20
     controller.solver.pitch_offset: 0.0
     controller.solver.yaw_offset: 0.0
-    controller.solver.facing_enter_angle: 65.0  # 55.0
-    controller.solver.facing_exit_angle: 85.0  # 85.0
+    controller.solver.facing_enter_angle: 5.0  # 55.0
+    controller.solver.facing_exit_angle: 10.0  # 85.0
     # 径向选板动态阈值（仅对 min_movement_with_radial 生效）
     # 角度单位: 度；角速度单位: rad/s
     # |v_yaw| 越大，径向过滤阈值越小：
     #   th_dyn = max(th_base * (1 - shrink_ratio * clamp(|v_yaw|/v_yaw_ref,0,1)), min_angle_deg)
-    controller.solver.radial_dynamic.enable: true
+    controller.solver.radial_dynamic.enable: false
     controller.solver.radial_dynamic.v_yaw_ref: 15.0
     controller.solver.radial_dynamic.shrink_ratio: 60.0
     controller.solver.radial_dynamic.min_angle_deg: 5.0
@@ -296,7 +296,7 @@ gimbal_pipeline:
     #   min_movement_with_radial  — 过滤后按机器人中心径向夹角最小选板
     #   min_movement              — 纯最小运动量，无朝向过滤
     #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
-    controller.solver.selection_method: "min_movement_with_radial"
+    controller.solver.selection_method: "min_movement_with_facing"
 
     # controller.state_machine.facing_enter_angle: 40.0
     # controller.state_machine.facing_exit_angle: 55.0
@@ -324,16 +324,16 @@ gimbal_pipeline:
 
     controller.mpc.N: 50
     controller.mpc.dt: 0.05    
-    controller.mpc.control_delay_s: 0.01    
+    controller.mpc.control_delay_s: 0.00  
     controller.mpc.max_accel: 30.0    
-    controller.mpc.q_yaw: 1000.0    
+    controller.mpc.q_yaw: 100.0    
     controller.mpc.q_pitch: 100.0    
     controller.mpc.q_yaw_vel: 1.0    
     controller.mpc.q_pitch_vel: 1.0
-    controller.mpc.r_yaw: 0.01    
-    controller.mpc.r_pitch: 0.01    
-    controller.mpc.s_yaw: 0.01    
-    controller.mpc.s_pitch: 0.01
+    controller.mpc.r_yaw: 0.001    
+    controller.mpc.r_pitch: 0.0001    
+    controller.mpc.s_yaw: 0.001    
+    controller.mpc.s_pitch: 0.0001
 
     # MPC 数值稳健性: 统一 Q/R/S 量纲归一化
     # mode:
@@ -358,7 +358,7 @@ gimbal_pipeline:
 
     # MPC 数值稳健性: Hessian 自适应对角正则
     # H <- H + eps*I, eps=max(epsilon_abs, epsilon_rel*mean(diag(H)))
-    controller.mpc.regularization.enable: false
+    controller.mpc.regularization.enable: true
     controller.mpc.regularization.epsilon_abs: 1e-8
     controller.mpc.regularization.epsilon_rel: 1e-6
     controller.mpc.regularization.epsilon_max: 1e-2
@@ -403,7 +403,7 @@ gimbal_pipeline:
     # 并对每步迭代补偿子弹飞行时间、选板时考虑延迟后的云台姿态
     # enable_delay_compensation: false 时行为与原版完全一致
     controller.mpc.enable_delay_compensation: true
-    controller.mpc.prediction_delay_s: 0.0      # 额外预测延迟 (秒), 叠加在 processing_delay 之上
+    controller.mpc.prediction_delay_s: 0.10      # 额外预测延迟 (秒), 叠加在 processing_delay 之上
     controller.mpc.flight_time_iters: 2          # 飞行时间迭代补偿次数
     controller.mpc.max_processing_delay_s: 0.5   # 最大处理延迟 clamp 上限 (秒)
     # yaw 速度前馈等效前瞻时间 (秒): yaw_ff ≈ target_yaw_velocity * k_s
