@@ -30,10 +30,15 @@ struct ArmorSelectionResult
 {
   int selected_index{-1};       // 选中的装甲板索引
   Eigen::Vector3d position;     // 选中装甲板的位置
+  Eigen::Vector3d real_position;  // 真实装甲板位置（虚拟模式下用于开火参考）
   double gimbal_movement{0.0};  // 云台移动量 (yaw^2 + pitch^2)
   double distance{0.0};         // 目标距离
   double facing_angle{0.0};     // 选中装甲板的朝向角 (弧度, 0=正面)
   bool is_center_fallback{false}; // 是否因全部过滤而 fallback 到车体中心
+  bool is_virtual_target{false};  // 当前控制目标是否为虚拟装甲板
+  int real_selected_index{-1};    // 虚拟模式下对应的真实装甲板索引
+  double virtual_robot_yaw{0.0};  // 虚拟机器人 yaw（用于诊断）
+  double virtual_delta_yaw{0.0};  // 相对估计 yaw 的附加旋转量（用于诊断）
 };
 
 /**
@@ -54,6 +59,7 @@ public:
    *  - MIN_MOVEMENT_WITH_RADIAL : 径向夹角过滤后按最小径向夹角选板
    *  - MIN_MOVEMENT             : 最小运动量，无朝向过滤
    *  - DECISION_ANGLE           : 传统决策角算法 (与 armor_solver 原版一致)
+   *  - VIRTUAL_POSE             : 虚拟姿态选板（最小旋转 + 中心连线朝向）
    */
   enum class SelectionMethod
   {
@@ -61,6 +67,7 @@ public:
     MIN_MOVEMENT             = 1,
     DECISION_ANGLE           = 2,
     MIN_MOVEMENT_WITH_RADIAL = 3,
+    VIRTUAL_POSE             = 4,
   };
 
   ArmorSelector() = default;
@@ -125,6 +132,17 @@ public:
     double max_bias_deg);
 
   /**
+   * @brief 设置虚拟姿态选板参数
+   * @param auto_switch_enable 是否按角速度自动切换到虚拟模式
+   * @param auto_switch_enter_vyaw 自动切入阈值 (rad/s)
+   * @param auto_switch_exit_vyaw 自动退出阈值 (rad/s)
+   */
+  void setVirtualPoseParameters(
+    bool auto_switch_enable,
+    double auto_switch_enter_vyaw,
+    double auto_switch_exit_vyaw);
+
+  /**
    * @brief 重置内部记忆状态 (目标丢失时调用)
    */
   void resetState();
@@ -178,6 +196,25 @@ public:
     double target_v_yaw,
     double current_yaw,
     double current_pitch);
+
+  /**
+   * @brief 选择虚拟装甲板 (基于估计 yaw 先选最近未转到位真实板，再最小旋转生成虚拟目标)
+   * @param armor_positions 真实装甲板位置
+   * @param target_center 目标中心
+   * @param target_yaw 估计 yaw
+   * @param num_armors 装甲板数量
+   * @param target_v_yaw 估计 yaw 角速度
+   * @param current_yaw 当前云台 yaw
+   * @param current_pitch 当前云台 pitch
+   */
+  ArmorSelectionResult selectByVirtualPose(
+    const std::vector<Eigen::Vector3d> & armor_positions,
+    const Eigen::Vector3d & target_center,
+    double target_yaw,
+    int num_armors,
+    double target_v_yaw,
+    double current_yaw,
+    double current_pitch) const;
 
   /**
    * @brief 选择最佳装甲板 (基于传统决策角)
@@ -253,11 +290,19 @@ private:
   double radial_dynamic_bias_gain_deg_{0.0};
   double radial_dynamic_max_bias_deg_{0.0};
 
+  // 虚拟姿态自动启停参数
+  bool virtual_auto_switch_enable_{false};
+  double virtual_auto_switch_enter_vyaw_{8.0};
+  double virtual_auto_switch_exit_vyaw_{6.0};
+
   // 选板策略
   SelectionMethod selection_method_{SelectionMethod::MIN_MOVEMENT_WITH_FACING};
 
   // 记忆上次选择 (用于 hysteresis)
   mutable int last_selected_index_{-1};
+
+  // 自动虚拟模式启停状态
+  bool virtual_mode_active_{false};
 };
 
 }  // namespace gimbal_controller

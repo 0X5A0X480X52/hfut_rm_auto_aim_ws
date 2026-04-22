@@ -306,6 +306,11 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   double radial_dynamic_min_angle_deg = get_parameter("controller.solver.radial_dynamic.min_angle_deg").as_double();
   double radial_dynamic_bias_gain_deg = get_parameter("controller.solver.radial_dynamic.bias_gain_deg").as_double();
   double radial_dynamic_max_bias_deg = get_parameter("controller.solver.radial_dynamic.max_bias_deg").as_double();
+  bool virtual_auto_switch_enable = get_parameter("controller.solver.virtual_pose.auto_switch.enable").as_bool();
+  double virtual_auto_switch_enter_vyaw =
+    get_parameter("controller.solver.virtual_pose.auto_switch.enter_vyaw").as_double();
+  double virtual_auto_switch_exit_vyaw =
+    get_parameter("controller.solver.virtual_pose.auto_switch.exit_vyaw").as_double();
   double controller_delay = readCompatDoubleParameter(
     *this, "controller.solver.controller_delay", "solver.controller_delay");
   double trigger_to_muzzle_s = readCompatDoubleParameter(
@@ -339,6 +344,10 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     radial_dynamic_min_angle_deg,
     radial_dynamic_bias_gain_deg,
     radial_dynamic_max_bias_deg);
+  armor_selector_->setVirtualPoseParameters(
+    virtual_auto_switch_enable,
+    virtual_auto_switch_enter_vyaw,
+    virtual_auto_switch_exit_vyaw);
 
   // 配置选板策略
   gimbal_controller::ArmorSelector::SelectionMethod sel_method =
@@ -349,6 +358,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     sel_method = gimbal_controller::ArmorSelector::SelectionMethod::MIN_MOVEMENT_WITH_RADIAL;
   } else if (selection_method_str == "decision_angle") {
     sel_method = gimbal_controller::ArmorSelector::SelectionMethod::DECISION_ANGLE;
+  } else if (selection_method_str == "virtual_pose") {
+    sel_method = gimbal_controller::ArmorSelector::SelectionMethod::VIRTUAL_POSE;
   }
   armor_selector_->setSelectionMethod(sel_method);
   radial_selection_enabled_ =
@@ -834,6 +845,9 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.solver.radial_dynamic.min_angle_deg", 5.0);
   declare_parameter("controller.solver.radial_dynamic.bias_gain_deg", 0.0);
   declare_parameter("controller.solver.radial_dynamic.max_bias_deg", 0.0);
+  declare_parameter("controller.solver.virtual_pose.auto_switch.enable", false);
+  declare_parameter("controller.solver.virtual_pose.auto_switch.enter_vyaw", 8.0);
+  declare_parameter("controller.solver.virtual_pose.auto_switch.exit_vyaw", 6.0);
   declare_parameter("controller.solver.controller_delay", 0.0);
   declare_parameter("controller.solver.trigger_to_muzzle_s", 0.0);
   declare_parameter("controller.solver.selection_method", std::string("min_movement_with_facing"));

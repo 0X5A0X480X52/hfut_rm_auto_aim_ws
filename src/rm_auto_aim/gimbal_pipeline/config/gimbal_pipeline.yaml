@@ -227,6 +227,15 @@ gimbal_pipeline:
     # bias_deg = sign(v_yaw) * min(bias_gain_deg * clamp(|v_yaw|/v_yaw_ref,0,1), max_bias_deg)
     controller.solver.radial_dynamic.bias_gain_deg: 60.0
     controller.solver.radial_dynamic.max_bias_deg: 50.0
+
+    # 虚拟姿态选板（"virtual_pose"）
+    # 逻辑：先按估计 yaw 找到“未转到位”的最近真实板，再做最小旋转生成虚拟控制板。
+    # 约束：虚拟板朝向沿“目标中心 -> 云台中心”连线。
+    # controller.solver.selection_method: "virtual_pose"
+    controller.solver.virtual_pose.auto_switch.enable: true
+    controller.solver.virtual_pose.auto_switch.enter_vyaw: 8.0
+    controller.solver.virtual_pose.auto_switch.exit_vyaw: 6.0
+
     # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
     # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
     # 若启用自适应 delay（adaptive_delay.enable=true），本值作为 delay 初始值。
