@@ -18,3 +18,4 @@ MvSdkLog/MVFGCTI_GEV_00.log
 tmp/**
 screen.output
 InEKF/**
+rosbag2_*/**
