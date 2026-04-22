@@ -17,55 +17,46 @@
 // Copyright (C) FYT Vision Group. All rights reserved.
 
 #include "rm_serial_driver/uart_transporter.hpp"
-// System
-#include <errno.h>  /*错误号定义*/
-#include <fcntl.h>  /*文件控制定义*/
-#include <stdio.h>  /*标准输入输出定义*/
-#include <stdlib.h> /*标准函数库定义*/
+
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <termios.h> /*PPSIX 终端控制定义*/
-#include <unistd.h>  /*Unix 标准函数定义*/
+#include <termios.h>
+#include <unistd.h>
 
 namespace fyt::serial_driver {
 
 bool UartTransporter::setParam(int speed, int flow_ctrl, int databits, int stopbits, int parity) {
-  // 设置串口数据帧格式
   int speed_arr[] = {B115200, B19200, B9600, B4800, B2400, B1200, B300};
   int name_arr[] = {115200, 19200, 9600, 4800, 2400, 1200, 300};
   struct termios options;
-  // tcgetattr(fd,&options)得到与fd指向对象的相关参数，并将它们保存于options,该函数还可以测试配置是否正确，
-  // 该串口是否可用等。若调用成功，函数返回值为0，若调用失败，函数返回值为1.
   if (tcgetattr(fd_, &options) != 0) {
     error_message_ = "Setup Serial err";
     return false;
   }
-  // 设置串口输入波特率和输出波特率
   for (std::size_t i = 0; i < sizeof(speed_arr) / sizeof(int); i++) {
     if (speed == name_arr[i]) {
       cfsetispeed(&options, speed_arr[i]);
       cfsetospeed(&options, speed_arr[i]);
     }
   }
-  // 修改控制模式，保证程序不会占用串口
   options.c_cflag |= CLOCAL;
-  // 修改控制模式，使得能够从串口中读取输入数据
   options.c_cflag |= CREAD;
-  // 设置数据流控制
   switch (flow_ctrl) {
-    case 0:  // 不使用流控制
+    case 0:
       options.c_cflag &= ~CRTSCTS;
       break;
-    case 1:  // 使用硬件流控制
+    case 1:
       options.c_cflag |= CRTSCTS;
       break;
-    case 2:  // 使用软件流控制
+    case 2:
       options.c_cflag |= IXON | IXOFF | IXANY;
       break;
   }
-  // 设置数据位
-  // 屏蔽其他标志位
   options.c_cflag &= ~CSIZE;
   switch (databits) {
     case 5:
@@ -84,26 +75,25 @@ bool UartTransporter::setParam(int speed, int flow_ctrl, int databits, int stopb
       error_message_ = "Unsupported data size";
       return false;
   }
-  // 设置校验位
   switch (parity) {
     case 'n':
-    case 'N':  // 无奇偶校验位。
+    case 'N':
       options.c_cflag &= ~PARENB;
       options.c_iflag &= ~INPCK;
       break;
     case 'o':
-    case 'O':  // 设置为奇校验
+    case 'O':
       options.c_cflag |= (PARODD | PARENB);
       options.c_iflag |= INPCK;
       break;
     case 'e':
-    case 'E':  // 设置为偶校验
+    case 'E':
       options.c_cflag |= PARENB;
       options.c_cflag &= ~PARODD;
       options.c_iflag |= INPCK;
       break;
     case 's':
-    case 'S':  // 设置为空格
+    case 'S':
       options.c_cflag &= ~PARENB;
       options.c_cflag &= ~CSTOPB;
       break;
@@ -111,7 +101,6 @@ bool UartTransporter::setParam(int speed, int flow_ctrl, int databits, int stopb
       error_message_ = "Unsupported parity";
       return false;
   }
-  // 设置停止位
   switch (stopbits) {
     case 1:
       options.c_cflag &= ~CSTOPB;
@@ -124,18 +113,14 @@ bool UartTransporter::setParam(int speed, int flow_ctrl, int databits, int stopb
       return false;
   }
 
-  // 修改输出模式，原始数据输出
   options.c_oflag &= ~OPOST;
   options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
-  // 传输特殊字符，否则特殊字符0x0d,0x11,0x13会被屏蔽或映射。
   options.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
 
-  // 设置等待时间和最小接收字符
-  options.c_cc[VTIME] = 1;  // 读取一个字符等待1*(1/10)s
-  options.c_cc[VMIN] = 1;   // 读取字符的最少个数为1
+  options.c_cc[VTIME] = 1;
+  options.c_cc[VMIN] = 1;
   tcflush(fd_, TCIFLUSH);
 
-  // 激活配置 (将修改后的termios数据设置到串口中）
   if (tcsetattr(fd_, TCSANOW, &options) != 0) {
     error_message_ = "com set error";
     return false;
@@ -147,26 +132,27 @@ bool UartTransporter::open() {
   if (is_open_) {
     return true;
   }
+
   fd_ = ::open(device_path_.c_str(), O_RDWR | O_NOCTTY | O_NDELAY);
-  if (-1 == fd_) {
-    error_message_ = "can't open uart device: " + device_path_;
+  if (fd_ == -1) {
+    error_message_ = "can't open uart device: " + device_path_ + ", errno: " + strerror(errno);
     return false;
   }
-  // 恢复串口为阻塞状态
+
   if (fcntl(fd_, F_SETFL, 0) < 0) {
     error_message_ = "fcntl failed";
+    ::close(fd_);
+    fd_ = -1;
     return false;
   }
-  // 测试是否为终端设备
-  // 避免自启动无法读取数据
-  // if (0 == isatty(STDIN_FILENO)) {
-  //   error_message_ = "standard input is not a terminal device";
-  //   return false;
-  // }
-  // 设置串口数据帧格式
+
   if (!setParam(speed_, flow_ctrl_, databits_, stopbits_, parity_)) {
+    ::close(fd_);
+    fd_ = -1;
     return false;
   }
+
+  error_message_.clear();
   is_open_ = true;
   return true;
 }
@@ -183,13 +169,28 @@ void UartTransporter::close() {
 bool UartTransporter::isOpen() { return is_open_; }
 
 int UartTransporter::read(void *buffer, std::size_t len) {
+  if (!is_open_ || fd_ < 0) {
+    error_message_ = "uart device is not open";
+    return -1;
+  }
+
   int ret = ::read(fd_, buffer, len);
-  // tcflush(fd_, TCIFLUSH);
+  if (ret < 0) {
+    error_message_ = std::string("uart read failed: ") + strerror(errno);
+  }
   return ret;
 }
 
 int UartTransporter::write(const void *buffer, std::size_t len) {
+  if (!is_open_ || fd_ < 0) {
+    error_message_ = "uart device is not open";
+    return -1;
+  }
+
   int ret = ::write(fd_, buffer, len);
+  if (ret < 0) {
+    error_message_ = std::string("uart write failed: ") + strerror(errno);
+  }
   return ret;
 }
 

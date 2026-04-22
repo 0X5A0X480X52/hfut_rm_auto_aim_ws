@@ -16,38 +16,38 @@
 #include "rm_serial_driver/serial_driver_node.hpp"
 
 #include <tf2/LinearMath/Matrix3x3.h>
-// std
+
 #include <chrono>
 #include <cstdint>
 #include <geometry_msgs/msg/detail/twist__struct.hpp>
 #include <geometry_msgs/msg/detail/twist_stamped__struct.hpp>
 #include <memory>
 #include <thread>
-// ros2
+
 #include <Eigen/Geometry>
 #include <rclcpp/rclcpp.hpp>
-// project
+
 #include "rm_serial_driver/uart_transporter.hpp"
 #include "rm_utils/logger/log.hpp"
 #include "rm_utils/math/utils.hpp"
 
 namespace fyt::serial_driver {
+
 SerialDriverNode::SerialDriverNode(const rclcpp::NodeOptions &options)
 : Node("serial_driver", options) {
   FYT_REGISTER_LOGGER("serial_driver", "~/fyt2024-log", INFO);
-
-  // Task thread
   listen_thread_ = std::make_unique<std::thread>(&SerialDriverNode::listenLoop, this);
 }
 
 void SerialDriverNode::init() {
   FYT_INFO("serial_driver", "Initializing SerialDriverNode!");
-  // Init
+
   target_frame_ = this->declare_parameter("target_frame", "odom");
+  reconnect_interval_ms_ = this->declare_parameter("reconnect_interval_ms", 500);
   std::string port_name = this->declare_parameter("port_name", "/dev/ttyUSB0");
   std::string protocol_type = this->declare_parameter("protocol", "infantry");
   bool enable_data_print = this->declare_parameter("enable_data_print", false);
-  // Create Protocol
+
   protocol_ = ProtocolFactory::createProtocol(protocol_type, port_name, enable_data_print);
   if (protocol_ == nullptr) {
     FYT_FATAL("serial_driver", "Failed to create protocol with type: {}", protocol_type);
@@ -57,47 +57,78 @@ void SerialDriverNode::init() {
   FYT_INFO(
     "serial_driver", "Protocol has been created with type: {}, port: {}", protocol_type, port_name);
 
-  // Subscriptions
   subscriptions_ = protocol_->getSubscriptions(this->shared_from_this());
   for (auto sub : subscriptions_) {
     FYT_INFO("serial_driver", "Subscribe to topic: {}", sub->get_topic_name());
   }
-  // Publisher
+
   serial_receive_data_pub_ = this->create_publisher<rm_interfaces::msg::SerialReceiveData>(
     "serial/receive", rclcpp::SensorDataQoS());
   wheel_pub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("wheel_odom", 100);
   hp_publisher_ = this->create_publisher<std_msgs::msg::Int32>("/current_hp", 100);
   bullet_publisher_ = this->create_publisher<std_msgs::msg::Int32>("/bullet_remain", 100);
   time_remain_publisher_ = this->create_publisher<std_msgs::msg::Int32>("/time_remain", 100);
-  // TF broadcaster
+
   timestamp_offset_ = this->declare_parameter("timestamp_offset", 0.0);
   tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
-  // Param client
   for (auto client : protocol_->getClients(this->shared_from_this())) {
     std::string name = client->get_service_name();
     set_mode_clients_.emplace(name, client);
     FYT_INFO("serial_driver", "Create client for service: {}", name);
   }
 
-  // Heartbeatg
   heartbeat_ = HeartBeatPublisher::create(this);
+  ensureConnection("startup");
 
   FYT_INFO("serial_driver", "SerialDriverNode has been initialized!");
 }
 
 SerialDriverNode::~SerialDriverNode() {
   FYT_INFO("serial_driver", "Destroy SerialDriverNode!");
+  if (protocol_ != nullptr) {
+    protocol_->close();
+  }
   rclcpp::shutdown();
   if (listen_thread_ != nullptr) {
     listen_thread_->join();
   }
 }
 
+bool SerialDriverNode::ensureConnection(const std::string &reason) {
+  if (protocol_ == nullptr) {
+    return false;
+  }
+  if (protocol_->isOpen()) {
+    return true;
+  }
+
+  while (rclcpp::ok()) {
+    if (protocol_->open()) {
+      FYT_INFO("serial_driver", "Serial port connected ({})", reason);
+      return true;
+    }
+
+    auto error_message = protocol_->getErrorMessage();
+    error_message = error_message.empty() ? "unknown" : error_message;
+    FYT_WARN(
+      "serial_driver",
+      "Serial port unavailable ({}): {}. Retry in {} ms",
+      reason,
+      error_message,
+      reconnect_interval_ms_);
+    std::this_thread::sleep_for(std::chrono::milliseconds(reconnect_interval_ms_));
+  }
+
+  return false;
+}
+
 void SerialDriverNode::listenLoop() {
   if (protocol_ == nullptr) {
-    // Lazy init because shared_from_this() is not available in constructor
     init();
+  }
+  if (protocol_ == nullptr || !ensureConnection("startup")) {
+    return;
   }
 
   rm_interfaces::msg::SerialReceiveData receive_data;
@@ -107,14 +138,14 @@ void SerialDriverNode::listenLoop() {
       receive_data.header.stamp = time;
       receive_data.header.frame_id = target_frame_;
       serial_receive_data_pub_->publish(receive_data);
-      
+
       geometry_msgs::msg::TwistStamped twist;
       twist.header.stamp = time;
       twist.header.frame_id = target_frame_;
       twist.twist.linear.x = receive_data.chassis_vx;
       twist.twist.linear.y = receive_data.chassis_vy;
       twist.twist.angular.z = receive_data.chassis_wz;
-      
+
       std_msgs::msg::Int32 hp_msg;
       hp_msg.data = receive_data.blood;
       hp_publisher_->publish(hp_msg);
@@ -125,21 +156,17 @@ void SerialDriverNode::listenLoop() {
 
       wheel_pub_->publish(twist);
 
-      if(time_publish_counter_>=1000)
-      {
+      if (time_publish_counter_ >= 1000) {
         std_msgs::msg::Int32 time_remain_msg;
         time_remain_msg.data = receive_data.remaining_time;
         time_remain_publisher_->publish(time_remain_msg);
         time_publish_counter_ = 0;
-      }
-      else
-      {
+      } else {
         time_publish_counter_++;
       }
 
-
-
       for (auto &[service_name, client] : set_mode_clients_) {
+        (void)service_name;
         if (client.mode.load() != receive_data.mode && !client.on_waiting.load()) {
           setMode(client, receive_data.mode);
         }
@@ -158,19 +185,24 @@ void SerialDriverNode::listenLoop() {
       t.transform.rotation = tf2::toMsg(q);
       tf_broadcaster_->sendTransform(t);
 
-      // odom_rectify: 转了roll角后的坐标系
       Eigen::Quaterniond q_eigen(q.w(), q.x(), q.y(), q.z());
       Eigen::Vector3d rpy = utils::getRPY(q_eigen.toRotationMatrix());
       q.setRPY(rpy[0], 0, 0);
       t.header.frame_id = target_frame_;
       t.child_frame_id = target_frame_ + "_rectify";
       tf_broadcaster_->sendTransform(t);
-    } else {
-      auto error_message = protocol_->getErrorMessage();
-      error_message = error_message.empty() ? "unknown" : error_message;
-      FYT_WARN("serial_driver", "Failed to reveive packet! error message :{}", error_message);
-      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      continue;
     }
+
+    if (!protocol_->isOpen()) {
+      ensureConnection("runtime");
+      continue;
+    }
+
+    auto error_message = protocol_->getErrorMessage();
+    error_message = error_message.empty() ? "unknown" : error_message;
+    FYT_WARN("serial_driver", "Failed to reveive packet! error message :{}", error_message);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
 }
 
@@ -178,7 +210,6 @@ void SerialDriverNode::setMode(SetModeClient &client, const uint8_t mode) {
   using namespace std::chrono_literals;
 
   std::string service_name = client.ptr->get_service_name();
-  // Wait for service
   while (!client.ptr->wait_for_service(1s)) {
     if (!rclcpp::ok()) {
       FYT_ERROR(
@@ -191,7 +222,7 @@ void SerialDriverNode::setMode(SetModeClient &client, const uint8_t mode) {
     FYT_WARN("serial_driver", "Service: {} is not available!", service_name);
     return;
   }
-  // Send request
+
   auto req = std::make_shared<rm_interfaces::srv::SetMode::Request>();
   req->mode = mode;
 
@@ -203,12 +234,10 @@ void SerialDriverNode::setMode(SetModeClient &client, const uint8_t mode) {
         client.mode.store(mode);
       }
     });
+  (void)result;
 }
 
 }  // namespace fyt::serial_driver
 
 #include "rclcpp_components/register_node_macro.hpp"
-// Register the component with class_loader.
-// This acts as a sort of entry point, allowing the component to be discoverable when its library
-// is being loaded into a running process.
 RCLCPP_COMPONENTS_REGISTER_NODE(fyt::serial_driver::SerialDriverNode)

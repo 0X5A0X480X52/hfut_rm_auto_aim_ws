@@ -17,9 +17,12 @@
 #define SERIAL_DRIVER_SERIAL_DRIVER_NODE_HPP_
 
 // std
+#include <atomic>
 #include <geometry_msgs/msg/detail/twist__struct.hpp>
 #include <memory>
+#include <string>
 #include <thread>
+#include <unordered_map>
 // ros2
 #include <tf2_ros/transform_broadcaster.h>
 
@@ -52,6 +55,8 @@ public:
 
   void init();
 
+  bool ensureConnection(const std::string &reason);
+
   // Param client to set detect_color
   struct SetModeClient {
     SetModeClient(rclcpp::Client<rm_interfaces::srv::SetMode>::SharedPtr p) : ptr(p) {}
@@ -71,6 +76,7 @@ private:
   std::unique_ptr<protocol::Protocol> protocol_;
 
   std::string target_frame_;
+  int reconnect_interval_ms_{500};
 
   // Subscriptions
   std::vector<rclcpp::SubscriptionBase::SharedPtr> subscriptions_;

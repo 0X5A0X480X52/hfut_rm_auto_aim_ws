@@ -41,6 +41,12 @@ class Protocol {
 public:
   virtual ~Protocol() = default;
 
+  virtual bool open() = 0;
+
+  virtual void close() = 0;
+
+  virtual bool isOpen() = 0;
+
   // Send gimbal command
   virtual void send(const rm_interfaces::msg::GimbalCmd &data) = 0;
 

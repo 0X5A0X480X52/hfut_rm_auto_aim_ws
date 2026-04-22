@@ -26,6 +26,12 @@ public:
 
   ~ProtocolInfantry() = default;
 
+  bool open() override { return packet_tool_->open(); }
+
+  void close() override { packet_tool_->close(); }
+
+  bool isOpen() override { return packet_tool_->isOpen(); }
+
   void send(const rm_interfaces::msg::GimbalCmd &data) override;
 
   bool receive(rm_interfaces::msg::SerialReceiveData &data) override;
