@@ -258,19 +258,19 @@ gimbal_pipeline:
     # controller.mpc.r_pitch: 0.001
     # controller.mpc.s_yaw: 0.001
     # controller.mpc.s_pitch: 0.001
-
+    
     controller.mpc.N: 50
     controller.mpc.dt: 0.05
     controller.mpc.control_delay_s: 0.00
-    controller.mpc.max_accel: 30.0
-    controller.mpc.q_yaw: 100000.0
-    controller.mpc.q_pitch: 1000.0
-    controller.mpc.q_yaw_vel: 100.0
+    controller.mpc.max_accel: 12.0
+    controller.mpc.q_yaw: 80000.0 #追踪权重
+    controller.mpc.q_pitch: 800.0
+    controller.mpc.q_yaw_vel: 150.0 #角速度跟踪权重
     controller.mpc.q_pitch_vel: 1.0
-    controller.mpc.r_yaw: 0.0001
+    controller.mpc.r_yaw: 0.01 #控制惩罚越大越柔和
     controller.mpc.r_pitch: 0.001
-    controller.mpc.s_yaw: 0.00001
-    controller.mpc.s_pitch: 0.001
+    controller.mpc.s_yaw: 0.0001  #末端轨迹
+    controller.mpc.s_pitch: 0.0001
 
     # MPC 命中概率权重加权（仅缩放 Q，默认关闭）
     # controller.mpc.weighting.enable: false
