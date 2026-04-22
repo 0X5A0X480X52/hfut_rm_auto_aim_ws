@@ -24,10 +24,13 @@ OutpostSpinUKF::OutpostSpinUKF(
       config.outpost.z_offset_2,
   };
 
-  const double step = (config.outpost.panel_angle_step > 1e-6)
-                          ? config.outpost.panel_angle_step
-                          : (2.0 * M_PI / 3.0);
-  panel_angles_ = {0.0, step, 2.0 * step};
+  const double raw_step = (config.outpost.panel_angle_step > 1e-6)
+                              ? config.outpost.panel_angle_step
+                              : (2.0 * M_PI / 3.0);
+  const double step = std::abs(raw_step);
+  // Keep semantic contract consistent with OutpostArmorTracker:
+  // id0=0deg, clockwise order 0->2->1 (CCW-positive: [0, +step, -step]).
+  panel_angles_ = {0.0, step, -step};
 
   x_ = Eigen::VectorXd::Zero(state_dim());
   P_ = Eigen::MatrixXd::Identity(state_dim(), state_dim()) * 10.0;

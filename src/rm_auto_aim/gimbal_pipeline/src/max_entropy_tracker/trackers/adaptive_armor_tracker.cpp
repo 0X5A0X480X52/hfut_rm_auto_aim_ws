@@ -20,8 +20,13 @@ AdaptiveArmorTracker::AdaptiveArmorTracker(const UnifiedConfig &config,
                          config.panel_mismatch.threshold_t1,
                          config.panel_mismatch.confirm_count,
                          config.panel_mismatch.reinit_count,
-                         config.panel_mismatch.enable),
-      maneuver_detector_(config.maneuver) {}
+                 config.panel_mismatch.enable),
+        maneuver_detector_(config.maneuver) {
+      panel_associator_.configure_periodic_binding(
+        config_.tracker.periodic_binding_enable,
+        config_.tracker.periodic_binding_weight,
+        config_.tracker.periodic_binding_spin_rate_gate);
+    }
 
 ManeuverResult AdaptiveArmorTracker::assess_maneuver() const {
   const double innov_norm = ukf_.last_innov_xyz().size() >= 3
@@ -38,6 +43,8 @@ ManeuverResult AdaptiveArmorTracker::assess_maneuver() const {
 void AdaptiveArmorTracker::initialize(const std::vector<ObservationData> &obs,
                                       double r1, double r2, double dza) {
   if (obs.empty()) throw std::invalid_argument("At least one observation required");
+
+  panel_associator_.reset_history();
 
   const auto &o = obs.front();
   auto [panel_id, center_yaw, _err] =
@@ -152,12 +159,15 @@ bool AdaptiveArmorTracker::update_single(const ObservationData &obs,
   // std::cout << "Updating with single observation: x=" << obs.x << " y=" << obs.y
   //           << " z=" << obs.z << " yaw=" << obs.yaw << std::endl;
   auto idx = ukf_.state_idx();
+  const double yaw_rate_hint = ukf_.x()(idx.DELTA_RATE());
+  const double dz_unit_hint = std::abs(ukf_.x()(idx.DZA()));
 
   auto [panel_id, center_yaw, matching_error] =
       panel_associator_.associate_panel(
           obs.yaw, reference_center_yaw_, obs.z, ukf_.x()(idx.Z()),
           obs.x, obs.y, ukf_.x()(idx.X()), ukf_.x()(idx.Y()),
-          ukf_.x()(idx.R1()), ukf_.x()(idx.R2()));
+          ukf_.x()(idx.R1()), ukf_.x()(idx.R2()), yaw_rate_hint,
+          dz_unit_hint);
 
   current_panel_id_ = panel_id;
   std::string r_type = PanelAssociator::get_r_type(panel_id);
@@ -239,15 +249,19 @@ bool AdaptiveArmorTracker::update_dual(const ObservationData &obs1,
   }
 
   auto idx = ukf_.state_idx();
+    const double yaw_rate_hint = ukf_.x()(idx.DELTA_RATE());
+    const double dz_unit_hint = std::abs(ukf_.x()(idx.DZA()));
 
   auto [pid1, cw1, _e1] = panel_associator_.associate_panel(
       obs1.yaw, reference_center_yaw_, obs1.z, ukf_.x()(idx.Z()),
       obs1.x, obs1.y, ukf_.x()(idx.X()), ukf_.x()(idx.Y()),
-      ukf_.x()(idx.R1()), ukf_.x()(idx.R2()));
+      ukf_.x()(idx.R1()), ukf_.x()(idx.R2()), yaw_rate_hint,
+      dz_unit_hint);
   auto [pid2, cw2, _e2] = panel_associator_.associate_panel(
       obs2.yaw, reference_center_yaw_, obs2.z, ukf_.x()(idx.Z()),
       obs2.x, obs2.y, ukf_.x()(idx.X()), ukf_.x()(idx.Y()),
-      ukf_.x()(idx.R1()), ukf_.x()(idx.R2()));
+      ukf_.x()(idx.R1()), ukf_.x()(idx.R2()), yaw_rate_hint,
+      dz_unit_hint);
 
   std::string rt1 = PanelAssociator::get_r_type(pid1);
   std::string rt2 = PanelAssociator::get_r_type(pid2);

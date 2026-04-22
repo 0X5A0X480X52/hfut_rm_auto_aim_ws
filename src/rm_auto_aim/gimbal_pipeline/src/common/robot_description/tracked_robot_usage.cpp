@@ -370,6 +370,15 @@ std::vector<geometry_msgs::msg::Pose> TrackedRobotUsage::generateArmorsOffsetFro
       r = is_current_pair ? r1 : r2;
       dz = d_zc + (is_current_pair ? -d_za : d_za);
       is_current_pair = !is_current_pair;
+    } else if (num_armors == 3 && std::abs(d_za) > 1e-6) {
+      // Outpost-compatible fallback: high/middle/low tri-layer profile.
+      if (i == 0) {
+        dz = d_zc + d_za;
+      } else if (i == 1) {
+        dz = d_zc;
+      } else {
+        dz = d_zc - d_za;
+      }
     }
 
     geometry_msgs::msg::Pose pose;

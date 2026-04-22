@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <limits>
 
 namespace fyt::auto_aim {
 
@@ -81,6 +82,52 @@ struct LogTrackerState {
   double accel_y         = 0.0;
   double accel_z         = 0.0;
   double accel_magnitude = 0.0;
+
+  // ── Outpost audit fields (only populated for robot_id="outpost") ──
+  int outpost_mode = -1;     // 0=STRUCTURED_3_ARMORS, 1=AMBIGUOUS_SINGLE_ARMOR
+  int estimated_id = -1;     // canonical estimated id; -1 in ambiguous single mode
+  int runtime_panel_id = -1; // internal filter panel index
+  int bound_height_label = -1;  // 0=HIGH,1=MIDDLE,2=LOW
+  int obs_inferred_id = -1;  // inferred id from observation yaw and center yaw
+  int obs_inferred_id_z = -1;  // inferred id from observation z-jump audit
+  int candidate_panel_id = -1;
+  double candidate_prob = std::numeric_limits<double>::quiet_NaN();
+  double candidate_margin = std::numeric_limits<double>::quiet_NaN();
+  double selected_xy_residual = std::numeric_limits<double>::quiet_NaN();
+
+  double outpost_entropy = std::numeric_limits<double>::quiet_NaN();
+  double outpost_max_prob = std::numeric_limits<double>::quiet_NaN();
+
+  double hyp_cost_0 = std::numeric_limits<double>::quiet_NaN();
+  double hyp_cost_1 = std::numeric_limits<double>::quiet_NaN();
+  double hyp_cost_2 = std::numeric_limits<double>::quiet_NaN();
+  double hyp_prob_0 = std::numeric_limits<double>::quiet_NaN();
+  double hyp_prob_1 = std::numeric_limits<double>::quiet_NaN();
+  double hyp_prob_2 = std::numeric_limits<double>::quiet_NaN();
+
+  double center_yaw_est = std::numeric_limits<double>::quiet_NaN();
+  int has_observation = 0;
+  double obs_x = std::numeric_limits<double>::quiet_NaN();
+  double obs_y = std::numeric_limits<double>::quiet_NaN();
+  double obs_z = std::numeric_limits<double>::quiet_NaN();
+  double obs_yaw = std::numeric_limits<double>::quiet_NaN();
+  double obs_z_jump = std::numeric_limits<double>::quiet_NaN();
+  double obs_dz_from_audit_center = std::numeric_limits<double>::quiet_NaN();
+  double obs_z_audit_cost_0 = std::numeric_limits<double>::quiet_NaN();
+  double obs_z_audit_cost_1 = std::numeric_limits<double>::quiet_NaN();
+  double obs_z_audit_cost_2 = std::numeric_limits<double>::quiet_NaN();
+
+  // ── Binding/period evidence diagnostics ──
+  double binding_confidence = std::numeric_limits<double>::quiet_NaN();
+  int switch_event = 0;      // 0=no switch, 1=switch confirmed
+  int switch_reason = 0;     // 0=none,1=confirmed,2=reject_prob,3=reject_margin,4=transition_abort
+  int transition_state = 0;  // 0=LOCKED, 1=TRANSITION_CANDIDATE
+  double period_confidence = std::numeric_limits<double>::quiet_NaN();
+  int period_update_applied = 0;
+  int period_phase_index = -1;
+  int spin_direction = 0;  // +1=CCW, -1=CW, 0=unknown
+  double dz_small_est = std::numeric_limits<double>::quiet_NaN();
+  double dz_large_est = std::numeric_limits<double>::quiet_NaN();
 };
 
 // -----------------------------------------------------------------------------

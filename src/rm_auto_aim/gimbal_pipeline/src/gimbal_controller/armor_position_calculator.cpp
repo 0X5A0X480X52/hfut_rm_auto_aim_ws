@@ -76,13 +76,34 @@ std::vector<Eigen::Vector3d> ArmorPositionCalculator::calculatePredicted(
 }
 
 std::vector<Eigen::Vector3d> ArmorPositionCalculator::generateDefaultOffsets(
-  uint8_t /* robot_type */,
+  uint8_t robot_type,
   int num_armors,
   double radius,
   double radius_2,
   double d_za,
   double d_zc)
 {
+  if (robot_type == rm_interfaces::msg::TrackedRobot::OUTPOST_3 && num_armors == 3) {
+    std::vector<Eigen::Vector3d> offsets;
+    offsets.reserve(3);
+
+    for (int i = 0; i < 3; ++i) {
+      const double panel_angle = i * (2.0 * M_PI / 3.0);
+      double dz = d_zc;
+      if (i == 0) {
+        dz = d_zc + d_za;
+      } else if (i == 2) {
+        dz = d_zc - d_za;
+      }
+
+      offsets.emplace_back(
+        -radius * std::cos(panel_angle),
+        -radius * std::sin(panel_angle),
+        dz);
+    }
+    return offsets;
+  }
+
   std::vector<Eigen::Vector3d> offsets;
   offsets.reserve(static_cast<size_t>(num_armors));
 
