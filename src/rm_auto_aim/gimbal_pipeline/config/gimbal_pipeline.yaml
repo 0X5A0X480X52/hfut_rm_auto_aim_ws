@@ -232,9 +232,12 @@ gimbal_pipeline:
     # 逻辑：先按估计 yaw 找到“未转到位”的最近真实板，再做最小旋转生成虚拟控制板。
     # 约束：虚拟板朝向沿“目标中心 -> 云台中心”连线。
     # controller.solver.selection_method: "virtual_pose"
+    # 固定 ID 模式：只生成指定 ID 的虚拟装甲板（不做最近候选选择）
+    # controller.solver.selection_method: "virtual_fixed_id"
     controller.solver.virtual_pose.auto_switch.enable: true
     controller.solver.virtual_pose.auto_switch.enter_vyaw: 8.0
     controller.solver.virtual_pose.auto_switch.exit_vyaw: 6.0
+    controller.solver.virtual_pose.fixed_id: 0
 
     # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
     # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。

@@ -58,6 +58,15 @@ ArmorSelectionResult ArmorSelector::selectBest(
       current_pitch);
   }
 
+  if (selection_method_ == SelectionMethod::VIRTUAL_FIXED_ID) {
+    return selectByVirtualFixedId(
+      armor_positions,
+      target_center,
+      num_armors,
+      current_yaw,
+      current_pitch);
+  }
+
   switch (selection_method_) {
     case SelectionMethod::MIN_MOVEMENT:
       return selectByMinMovement(armor_positions, current_yaw, current_pitch);
@@ -140,6 +149,11 @@ void ArmorSelector::setVirtualPoseParameters(
   if (!virtual_auto_switch_enable_) {
     virtual_mode_active_ = false;
   }
+}
+
+void ArmorSelector::setVirtualFixedId(int fixed_id)
+{
+  virtual_fixed_id_ = fixed_id;
 }
 
 void ArmorSelector::resetState()
@@ -688,6 +702,84 @@ ArmorSelectionResult ArmorSelector::selectByVirtualPose(
   result.is_virtual_target = true;
   result.virtual_delta_yaw = delta_yaw;
   result.virtual_robot_yaw = angles::normalize_angle(target_yaw + delta_yaw);
+
+  return result;
+}
+
+ArmorSelectionResult ArmorSelector::selectByVirtualFixedId(
+  const std::vector<Eigen::Vector3d> & armor_positions,
+  const Eigen::Vector3d & target_center,
+  int num_armors,
+  double current_yaw,
+  double current_pitch) const
+{
+  ArmorSelectionResult result;
+  result.selected_index = -1;
+  result.real_selected_index = -1;
+  result.gimbal_movement = std::numeric_limits<double>::max();
+  result.distance = std::numeric_limits<double>::max();
+
+  if (armor_positions.empty()) {
+    result.position = target_center;
+    result.real_position = target_center;
+    result.is_center_fallback = true;
+    result.distance = target_center.norm();
+    return result;
+  }
+
+  const int armor_count = std::max(1, std::min(num_armors, static_cast<int>(armor_positions.size())));
+  int fixed_idx = virtual_fixed_id_ % armor_count;
+  if (fixed_idx < 0) {
+    fixed_idx += armor_count;
+  }
+
+  const Eigen::Vector3d base_position = armor_positions[fixed_idx];
+  const Eigen::Vector3d base_offset = base_position - target_center;
+  const double base_offset_norm_xy = base_offset.head<2>().norm();
+
+  Eigen::Vector2d center_to_gimbal_xy(-target_center.x(), -target_center.y());
+  if (center_to_gimbal_xy.norm() < 1e-6 || base_offset_norm_xy < 1e-6) {
+    result.selected_index = fixed_idx;
+    result.real_selected_index = fixed_idx;
+    result.position = base_position;
+    result.real_position = base_position;
+    result.distance = base_position.norm();
+    return result;
+  }
+
+  center_to_gimbal_xy.normalize();
+  const double desired_angle = std::atan2(center_to_gimbal_xy.y(), center_to_gimbal_xy.x());
+  const double base_angle = std::atan2(base_offset.y(), base_offset.x());
+  const double delta_yaw = angles::normalize_angle(desired_angle - base_angle);
+
+  const double c = std::cos(delta_yaw);
+  const double s = std::sin(delta_yaw);
+  Eigen::Vector2d rotated_xy;
+  rotated_xy.x() = c * base_offset.x() - s * base_offset.y();
+  rotated_xy.y() = s * base_offset.x() + c * base_offset.y();
+
+  Eigen::Vector3d virtual_offset(base_offset.x(), base_offset.y(), base_offset.z());
+  virtual_offset.x() = rotated_xy.x();
+  virtual_offset.y() = rotated_xy.y();
+
+  const Eigen::Vector3d virtual_position = target_center + virtual_offset;
+
+  double yaw, pitch;
+  calculateYawPitch(virtual_position, current_yaw, yaw, pitch);
+  const double yaw_diff = angles::normalize_angle(yaw - current_yaw);
+  const double pitch_diff = pitch - current_pitch;
+
+  result.selected_index = fixed_idx;
+  result.real_selected_index = fixed_idx;
+  result.position = virtual_position;
+  result.real_position = base_position;
+  result.distance = virtual_position.norm();
+  result.gimbal_movement = yaw_diff * yaw_diff + pitch_diff * pitch_diff;
+  result.facing_angle = 0.0;
+  result.is_center_fallback = false;
+  result.is_virtual_target = true;
+  result.virtual_delta_yaw = delta_yaw;
+  result.virtual_robot_yaw = desired_angle;
 
   return result;
 }

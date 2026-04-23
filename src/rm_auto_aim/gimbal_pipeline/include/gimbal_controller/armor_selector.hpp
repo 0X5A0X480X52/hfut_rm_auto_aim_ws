@@ -60,6 +60,7 @@ public:
    *  - MIN_MOVEMENT             : 最小运动量，无朝向过滤
    *  - DECISION_ANGLE           : 传统决策角算法 (与 armor_solver 原版一致)
    *  - VIRTUAL_POSE             : 虚拟姿态选板（最小旋转 + 中心连线朝向）
+  *  - VIRTUAL_FIXED_ID         : 固定 ID 虚拟装甲板（仅生成指定 ID 的虚拟板）
    */
   enum class SelectionMethod
   {
@@ -68,6 +69,7 @@ public:
     DECISION_ANGLE           = 2,
     MIN_MOVEMENT_WITH_RADIAL = 3,
     VIRTUAL_POSE             = 4,
+    VIRTUAL_FIXED_ID         = 5,
   };
 
   ArmorSelector() = default;
@@ -143,6 +145,12 @@ public:
     double auto_switch_exit_vyaw);
 
   /**
+   * @brief 设置固定虚拟装甲板 ID
+   * @param fixed_id 指定的装甲板索引 ID
+   */
+  void setVirtualFixedId(int fixed_id);
+
+  /**
    * @brief 重置内部记忆状态 (目标丢失时调用)
    */
   void resetState();
@@ -213,6 +221,21 @@ public:
     double target_yaw,
     int num_armors,
     double target_v_yaw,
+    double current_yaw,
+    double current_pitch) const;
+
+  /**
+   * @brief 固定 ID 虚拟装甲板模式
+   * @param armor_positions 真实装甲板位置
+   * @param target_center 目标中心
+   * @param num_armors 装甲板数量
+   * @param current_yaw 当前云台 yaw
+   * @param current_pitch 当前云台 pitch
+   */
+  ArmorSelectionResult selectByVirtualFixedId(
+    const std::vector<Eigen::Vector3d> & armor_positions,
+    const Eigen::Vector3d & target_center,
+    int num_armors,
     double current_yaw,
     double current_pitch) const;
 
@@ -294,6 +317,7 @@ private:
   bool virtual_auto_switch_enable_{false};
   double virtual_auto_switch_enter_vyaw_{8.0};
   double virtual_auto_switch_exit_vyaw_{6.0};
+  int virtual_fixed_id_{0};
 
   // 选板策略
   SelectionMethod selection_method_{SelectionMethod::MIN_MOVEMENT_WITH_FACING};
