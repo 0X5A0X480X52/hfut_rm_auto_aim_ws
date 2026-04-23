@@ -17,6 +17,7 @@
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
 // ─── message_filters + TF2 filter ──────────────────────────────
@@ -120,6 +121,9 @@ class GimbalPipelineNode : public rclcpp::Node {
       const gimbal_controller::GimbalControlContext &context,
       const gimbal_controller::DelayAuditSnapshot &audit,
       const std::string &strategy_name);
+  void publishArmorSelectionDebug(
+      const gimbal_controller::GimbalControlContext &context,
+      const std::string &strategy_name);
   void timerCallback();
   void applyPendingRuntimeUpdates();
   void setModeCallback(
@@ -199,6 +203,8 @@ class GimbalPipelineNode : public rclcpp::Node {
     double radial_dynamic_min_angle_deg_{5.0};
     double radial_dynamic_bias_gain_deg_{0.0};
     double radial_dynamic_max_bias_deg_{0.0};
+    bool virtual_auto_switch_enable_{false};
+    double mpc_dt_debug_{0.01};
 
   /* ================================================================ */
   /*  Shared pipeline state (protected by mutex)                      */
@@ -233,6 +239,8 @@ class GimbalPipelineNode : public rclcpp::Node {
   rclcpp::Publisher<rm_interfaces::msg::Target>::SharedPtr debug_target_pub_;
   rclcpp::Publisher<rm_interfaces::msg::DelayAudit>::SharedPtr
       debug_delay_audit_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr
+      debug_armor_selection_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
       debug_tracker_marker_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
@@ -267,6 +275,8 @@ class GimbalPipelineNode : public rclcpp::Node {
   visualization_msgs::msg::Marker trajectory_marker_;
     visualization_msgs::msg::Marker radial_allowed_arc_marker_;
     visualization_msgs::msg::Marker radial_allowed_bounds_marker_;
+    visualization_msgs::msg::Marker virtual_armor_marker_;
+        visualization_msgs::msg::Marker virtual_armor_text_marker_;
   std::vector<std::array<float, 4>> color_palette_;
 };
 

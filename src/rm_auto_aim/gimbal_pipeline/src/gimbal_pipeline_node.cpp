@@ -12,6 +12,7 @@
 #include <limits>
 #include <rm_utils/heartbeat.hpp>
 #include <sstream>
+#include <iomanip>
 #include <unordered_set>
 
 #include "rm_utils/logger/log.hpp"
@@ -335,6 +336,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   radial_dynamic_min_angle_deg_ = std::max(radial_dynamic_min_angle_deg, 0.0);
   radial_dynamic_bias_gain_deg_ = std::max(radial_dynamic_bias_gain_deg, 0.0);
   radial_dynamic_max_bias_deg_ = std::max(radial_dynamic_max_bias_deg, 0.0);
+  virtual_auto_switch_enable_ = virtual_auto_switch_enable;
+  mpc_dt_debug_ = std::max(get_parameter("controller.mpc.dt").as_double(), 1e-4);
 
   armor_selector_->setParameters(side_angle, min_switching_v_yaw);
   armor_selector_->setFacingParameters(facing_enter_angle, facing_exit_angle);
@@ -579,6 +582,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
         "~/target", sensor_qos);
     debug_delay_audit_pub_ = create_publisher<rm_interfaces::msg::DelayAudit>(
       "~/delay_audit", rclcpp::SensorDataQoS());
+    debug_armor_selection_pub_ = create_publisher<std_msgs::msg::String>(
+      "~/armor_selection_debug", rclcpp::SensorDataQoS());
     debug_tracker_marker_pub_ =
         create_publisher<visualization_msgs::msg::MarkerArray>(
             "~/tracker_markers", 10);
@@ -2167,6 +2172,10 @@ void GimbalPipelineNode::timerCallback() {
       current_gimbal_strategy_name_);
   }
 
+  if (debug_mode_ && debug_armor_selection_pub_ && control_result.has_tracking) {
+    publishArmorSelectionDebug(context, current_gimbal_strategy_name_);
+  }
+
   if (debug_mode_ && control_result.has_tracking) {
     publishGimbalMarkers(context.target_robot, control_result.cmd);
   }
@@ -2263,6 +2272,24 @@ void GimbalPipelineNode::initMarkers() {
   radial_allowed_bounds_marker_.color.r = 1.0;
   radial_allowed_bounds_marker_.color.g = 0.85;
   radial_allowed_bounds_marker_.color.b = 0.2;
+
+  virtual_armor_marker_.ns = "virtual_armor";
+  virtual_armor_marker_.type = visualization_msgs::msg::Marker::CUBE;
+  virtual_armor_marker_.scale.x = 0.03;
+  virtual_armor_marker_.scale.y = 0.23;
+  virtual_armor_marker_.scale.z = 0.125;
+  virtual_armor_marker_.color.a = 0.95;
+  virtual_armor_marker_.color.r = 0.1;
+  virtual_armor_marker_.color.g = 0.95;
+  virtual_armor_marker_.color.b = 0.35;
+
+  virtual_armor_text_marker_.ns = "virtual_armor_text";
+  virtual_armor_text_marker_.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+  virtual_armor_text_marker_.scale.z = 0.12;
+  virtual_armor_text_marker_.color.a = 1.0;
+  virtual_armor_text_marker_.color.r = 0.1;
+  virtual_armor_text_marker_.color.g = 1.0;
+  virtual_armor_text_marker_.color.b = 0.6;
 
   color_palette_.clear();
   for (int i = 0; i < 10; ++i) {
@@ -2429,6 +2456,59 @@ void GimbalPipelineNode::publishGimbalMarkers(
     marker_array.markers.push_back(radial_allowed_bounds_marker_);
   }
 
+  // Virtual armor marker (only when auto-switch virtual mode is enabled and active)
+  {
+    virtual_armor_marker_.header = target_robot.header;
+    virtual_armor_marker_.id = 0;
+    virtual_armor_marker_.action = visualization_msgs::msg::Marker::DELETE;
+    virtual_armor_text_marker_.header = target_robot.header;
+    virtual_armor_text_marker_.id = 0;
+    virtual_armor_text_marker_.action = visualization_msgs::msg::Marker::DELETE;
+
+    if (virtual_auto_switch_enable_ && armor_selector_ && position_calculator_) {
+      auto armor_positions = position_calculator_->calculate(normalized_target);
+      if (!armor_positions.empty()) {
+        // Use a local copy to avoid mutating runtime selector state during debug visualization.
+        auto debug_selector = *armor_selector_;
+        auto virtual_selection = debug_selector.selectBest(
+          armor_positions,
+          center_position,
+          target_yaw,
+          normalized_target.num_armors,
+          target_yaw_velocity,
+          current_yaw_,
+          current_pitch_);
+
+        if (virtual_selection.is_virtual_target && !virtual_selection.is_center_fallback) {
+          virtual_armor_marker_.action = visualization_msgs::msg::Marker::ADD;
+          virtual_armor_marker_.pose.position =
+            robot_description::TrackedRobotUsage::toPoint(virtual_selection.position);
+
+          const double normal_yaw =
+            std::atan2(-center_position.y(), -center_position.x());
+          tf2::Quaternion q_virtual;
+          q_virtual.setRPY(0.0, 0.2618, normal_yaw);
+          virtual_armor_marker_.pose.orientation.x = q_virtual.x();
+          virtual_armor_marker_.pose.orientation.y = q_virtual.y();
+          virtual_armor_marker_.pose.orientation.z = q_virtual.z();
+          virtual_armor_marker_.pose.orientation.w = q_virtual.w();
+
+          virtual_armor_text_marker_.action = visualization_msgs::msg::Marker::ADD;
+          virtual_armor_text_marker_.pose.position = virtual_armor_marker_.pose.position;
+          virtual_armor_text_marker_.pose.position.z += 0.18;
+          virtual_armor_text_marker_.pose.orientation.w = 1.0;
+          std::ostringstream oss;
+          oss << std::fixed << std::setprecision(3)
+              << "vidx=" << virtual_selection.real_selected_index
+              << " dYaw=" << virtual_selection.virtual_delta_yaw;
+          virtual_armor_text_marker_.text = oss.str();
+        }
+      }
+    }
+    marker_array.markers.push_back(virtual_armor_marker_);
+    marker_array.markers.push_back(virtual_armor_text_marker_);
+  }
+
   // Selection target
   if (has_valid_measurement) {
     selection_marker_.header = target_robot.header;
@@ -2559,6 +2639,77 @@ void GimbalPipelineNode::publishManeuverMarkers(
   }
 
   if (!arr.markers.empty()) debug_maneuver_pub_->publish(arr);
+}
+
+void GimbalPipelineNode::publishArmorSelectionDebug(
+    const gimbal_controller::GimbalControlContext &context,
+    const std::string &strategy_name) {
+  if (!debug_armor_selection_pub_ || !armor_selector_ || !position_calculator_) {
+    return;
+  }
+  if (!context.is_tracking) {
+    return;
+  }
+
+  const auto normalized_target = robot_description::TrackedRobotUsage::normalizeState(context.target_robot);
+  const auto center_position = robot_description::TrackedRobotUsage::centerPosition(normalized_target);
+  const double target_yaw = robot_description::TrackedRobotUsage::yaw(normalized_target);
+  const double target_yaw_velocity = robot_description::TrackedRobotUsage::yawVelocity(normalized_target);
+
+  std::vector<Eigen::Vector3d> armor_positions;
+  Eigen::Vector3d select_center = center_position;
+  double select_yaw = target_yaw;
+
+  if (strategy_name == "mpc") {
+    const double t_ahead = mpc_dt_debug_;
+    armor_positions = position_calculator_->calculatePredicted(normalized_target, t_ahead);
+    select_center = robot_description::TrackedRobotUsage::predictCenter(
+      normalized_target,
+      t_ahead,
+      robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
+    select_yaw = robot_description::TrackedRobotUsage::predictYaw(
+      normalized_target,
+      t_ahead,
+      robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
+  } else {
+    armor_positions = position_calculator_->calculate(normalized_target);
+  }
+
+  if (armor_positions.empty()) {
+    return;
+  }
+
+  auto debug_selector = *armor_selector_;
+  const auto selection = debug_selector.selectBest(
+    armor_positions,
+    select_center,
+    select_yaw,
+    normalized_target.num_armors,
+    target_yaw_velocity,
+    context.current_yaw,
+    context.current_pitch);
+
+  std_msgs::msg::String out;
+  std::ostringstream oss;
+  oss << std::fixed << std::setprecision(4)
+      << "strategy=" << strategy_name
+      << " sel=" << selection.selected_index
+      << " real_sel=" << selection.real_selected_index
+      << " is_virtual=" << (selection.is_virtual_target ? 1 : 0)
+      << " fallback=" << (selection.is_center_fallback ? 1 : 0)
+      << " dist=" << selection.distance
+      << " move=" << selection.gimbal_movement
+      << " v_yaw=" << selection.virtual_robot_yaw
+      << " d_yaw=" << selection.virtual_delta_yaw
+      << " pos=(" << selection.position.x() << "," << selection.position.y() << ","
+      << selection.position.z() << ")"
+      << " real=(" << selection.real_position.x() << "," << selection.real_position.y() << ","
+      << selection.real_position.z() << ")";
+  if (strategy_name == "mpc") {
+    oss << " note=first_predicted_selection";
+  }
+  out.data = oss.str();
+  debug_armor_selection_pub_->publish(out);
 }
 
 std::array<float, 4> GimbalPipelineNode::hsvToRgb(float h, float s,
