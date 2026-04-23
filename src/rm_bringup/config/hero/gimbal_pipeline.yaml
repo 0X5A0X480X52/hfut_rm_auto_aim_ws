@@ -233,8 +233,8 @@ gimbal_pipeline:
     # 约束：虚拟板朝向沿“目标中心 -> 云台中心”连线。
     # controller.solver.selection_method: "virtual_pose"
     controller.solver.virtual_pose.auto_switch.enable: true
-    controller.solver.virtual_pose.auto_switch.enter_vyaw: 8.0
-    controller.solver.virtual_pose.auto_switch.exit_vyaw: 6.0
+    controller.solver.virtual_pose.auto_switch.enter_vyaw: 1.0
+    controller.solver.virtual_pose.auto_switch.exit_vyaw: 15.0
 
     # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
     # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
@@ -340,9 +340,9 @@ gimbal_pipeline:
     controller.mpc.q_yaw_vel: 1.0    
     controller.mpc.q_pitch_vel: 1.0
     controller.mpc.r_yaw: 0.001    
-    controller.mpc.r_pitch: 0.0001    
+    controller.mpc.r_pitch: 0.001    
     controller.mpc.s_yaw: 0.001    
-    controller.mpc.s_pitch: 0.0001
+    controller.mpc.s_pitch: 0.001
 
     # MPC 数值稳健性: 统一 Q/R/S 量纲归一化
     # mode:

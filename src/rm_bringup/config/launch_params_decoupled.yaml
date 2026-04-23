@@ -10,7 +10,7 @@ robot: 'hero'
 namespace: ''
 
 # image_source: (video | mindvision | hik)
-image_source: 'mindvision'
+image_source: 'hik'
 
 # true: 虚拟下位机 false: 实车
 virtual_serial: false
