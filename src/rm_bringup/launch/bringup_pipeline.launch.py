@@ -43,6 +43,7 @@ def generate_launch_description():
             get_package_share_directory('rm_bringup'), 'config', 'launch_params_decoupled.yaml')))
     except Exception:
         launch_params = {
+            'robot': 'default',
             'image_source': 'video',
             'virtual_serial': True,
             'namespace': '',
@@ -51,6 +52,9 @@ def generate_launch_description():
                 'rpy': '0 0 0'
             }
         }
+
+    robot_name = str(launch_params.get('robot', 'default')).strip() or 'default'
+    bringup_config_root = os.path.join(get_package_share_directory('rm_bringup'), 'config')
 
     # ── 声明启动参数 ──
     declare_image_source = DeclareLaunchArgument(
@@ -90,11 +94,25 @@ def generate_launch_description():
     )
 
     def get_bringup_params(name):
-        return os.path.join(get_package_share_directory('rm_bringup'),
-                            'config', 'node_params', '{}_params.yaml'.format(name))
+        # Use flat robot-specific config only when a concrete robot (not 'default') is selected
+        if robot_name and robot_name != 'default':
+            robot_specific = os.path.join(bringup_config_root, robot_name, f"{name}_params.yaml")
+            if os.path.isfile(robot_specific):
+                return robot_specific
+        # fallback to shared node_params
+        return os.path.join(bringup_config_root, 'node_params', f"{name}_params.yaml")
 
     def get_pkg_params(pkg_name, param_file):
         return os.path.join(get_package_share_directory(pkg_name), 'config', param_file)
+
+    def get_pkg_params_with_robot_override(pkg_name, param_file):
+        # package default always first; if robot-specific flat override exists, append it
+        default_path = get_pkg_params(pkg_name, param_file)
+        if robot_name and robot_name != 'default':
+            override_path = os.path.join(bringup_config_root, robot_name, param_file)
+            if os.path.isfile(override_path):
+                return [default_path, override_path]
+        return [default_path]
 
     # ==================== 装甲板检测节点 (ComposableNode) ====================
     armor_detector_node = ComposableNode(
@@ -124,7 +142,7 @@ def generate_launch_description():
         output='both',
         emulate_tty=True,
         parameters=[
-            get_pkg_params('gimbal_pipeline', 'gimbal_pipeline.yaml'),
+            *get_pkg_params_with_robot_override('gimbal_pipeline', 'gimbal_pipeline.yaml'),
             {
                 'debug_mode': LaunchConfiguration('debug')
             }
