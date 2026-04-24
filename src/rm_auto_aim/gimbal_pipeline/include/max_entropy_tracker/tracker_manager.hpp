@@ -212,6 +212,13 @@ class TrackerManager {
     if (ok) {
       it->second.last_update_time = t;
       it->second.observation_count += static_cast<int>(obs.size());
+      // 更新 source_frame 以反映当前观测来源（补盲相机/主相机切换）
+      for (const auto& o : obs) {
+        if (!o.source_frame.empty() && o.source_frame != it->second.source_frame) {
+          it->second.source_frame = o.source_frame;
+          break;
+        }
+      }
       std::cout << "Updated tracker for robot_id=" << robot_id
                 << ", total_obs_count=" << it->second.observation_count
                 << std::endl;

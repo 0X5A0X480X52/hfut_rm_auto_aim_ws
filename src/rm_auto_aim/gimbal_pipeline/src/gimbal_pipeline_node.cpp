@@ -1829,13 +1829,16 @@ SelectionResult GimbalPipelineNode::selectTargetInternal(
     bool guidance_complete = (current_yaw_deviation < threshold_rad);
 
     if (guidance_timeout || guidance_complete) {
+      guidance_state_ = GuidanceState::IDLE;
       if (guidance_timeout) {
         RCLCPP_WARN(get_logger(), "Guidance timeout, returning to IDLE");
-      } else {
-        RCLCPP_INFO(get_logger(), "Guidance complete: target %s in main camera view (yaw_dev=%.2f deg)",
-                    current_target_id_.c_str(), current_yaw_deviation * 180.0 / M_PI);
+        // 超时后不立即重新引导，回到无目标状态等待视野中出现目标
+        current_target_id_ = "";
+        return SelectionResult();
       }
-      guidance_state_ = GuidanceState::IDLE;
+      RCLCPP_INFO(get_logger(), "Guidance complete: target %s in main camera view (yaw_dev=%.2f deg)",
+                  current_target_id_.c_str(), current_yaw_deviation * 180.0 / M_PI);
+      // 引导完成后 fall through，让主相机接管（精确自瞄）
     } else {
       // 引导未结束，继续使用补盲相机目标
       if (!blind_camera_targets.empty()) {
