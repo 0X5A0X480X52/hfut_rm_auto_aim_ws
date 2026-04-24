@@ -15,9 +15,10 @@
 #include "gimbal_controller/strategies/state_machine_strategy.hpp"
 #include "gimbal_controller/armor_position_calculator.hpp"
 #include "gimbal_controller/armor_selector.hpp"
-#include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
+#include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 #include <angles/angles.h>
+#include <algorithm>
 #include <limits>
 
 namespace gimbal_controller
@@ -30,25 +31,35 @@ namespace gimbal_controller
 rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
   const GimbalControlContext & context)
 {
+  GimbalControlContext normalized_context = context;
+  normalized_context.target_robot =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(context.target_robot);
+  const auto & target_robot = normalized_context.target_robot;
+  const auto center_position =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::centerPosition(target_robot);
+  const double target_yaw =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::yaw(target_robot);
+  const double target_yaw_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::yawVelocity(target_robot);
+
   // 无跟踪 → LOST
-  if (!context.is_tracking) {
+  if (!normalized_context.is_tracking) {
+    markDelayAuditInvalid(getName(), false);
     resetStateMachine();
     return createIdleCmd();
   }
 
-  if (!position_calculator_ || !armor_selector_ || !fire_advisor_) {
+  if (!position_calculator_ || !armor_selector_) {
+    markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
 
   // 保存上次目标位置 (用于 LOST → 保持瞄准)
-  Eigen::Vector3d current_center(
-    context.target_robot.center_position.x,
-    context.target_robot.center_position.y,
-    context.target_robot.center_position.z);
+  const Eigen::Vector3d current_center = center_position;
   last_target_position_ = current_center;
 
   // ---- 自旋检测计数 ----
-  double abs_v_yaw = std::abs(context.target_robot.yaw_velocity);
+  double abs_v_yaw = std::abs(target_yaw_velocity);
 
   if (abs_v_yaw > spin_v_yaw_thresh_) {
     spin_count_++;
@@ -78,12 +89,12 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
       }
       // 检查是否有正面装甲板 → SINGLE
       {
-        auto armor_positions = position_calculator_->calculate(context.target_robot);
+        auto armor_positions = position_calculator_->calculate(target_robot);
         auto facing_angles = ArmorSelector::computeFacingAngles(
-          armor_positions, context.target_robot.yaw, context.target_robot.num_armors);
+          armor_positions, target_yaw, target_robot.num_armors);
         int best = selectBestFacingArmor(
           armor_positions, facing_angles, facing_enter_angle_,
-          context.current_yaw, context.current_pitch);
+          normalized_context.current_yaw, normalized_context.current_pitch);
         if (best >= 0) {
           state_ = State::SINGLE;
           locked_armor_index_ = best;
@@ -101,7 +112,7 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
       }
       // 检查锁定板是否仍有效
       {
-        auto armor_positions = position_calculator_->calculate(context.target_robot);
+        auto armor_positions = position_calculator_->calculate(target_robot);
         if (locked_armor_index_ < 0 ||
             locked_armor_index_ >= static_cast<int>(armor_positions.size()))
         {
@@ -111,7 +122,7 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
           break;
         }
         auto facing_angles = ArmorSelector::computeFacingAngles(
-          armor_positions, context.target_robot.yaw, context.target_robot.num_armors);
+          armor_positions, target_yaw, target_robot.num_armors);
         double fa = facing_angles[locked_armor_index_];
         double exit_rad = facing_exit_angle_ * M_PI / 180.0;
         if (fa > exit_rad) {
@@ -126,12 +137,12 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
       // 检查是否退出 SPIN
       if (calm_count_ >= spin_exit_count_) {
         // 尝试找正面装甲板 → SINGLE, 否则 → CENTER
-        auto armor_positions = position_calculator_->calculate(context.target_robot);
+        auto armor_positions = position_calculator_->calculate(target_robot);
         auto facing_angles = ArmorSelector::computeFacingAngles(
-          armor_positions, context.target_robot.yaw, context.target_robot.num_armors);
+          armor_positions, target_yaw, target_robot.num_armors);
         int best = selectBestFacingArmor(
           armor_positions, facing_angles, facing_enter_angle_,
-          context.current_yaw, context.current_pitch);
+          normalized_context.current_yaw, normalized_context.current_pitch);
         if (best >= 0) {
           state_ = State::SINGLE;
           locked_armor_index_ = best;
@@ -147,13 +158,13 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
   // ---- 执行当前状态行为 ----
   switch (state_) {
     case State::LOST:
-      return handleLost(context);
+      return handleLost(normalized_context);
     case State::CENTER:
-      return handleCenter(context);
+      return handleCenter(normalized_context);
     case State::SINGLE:
-      return handleSingle(context);
+      return handleSingle(normalized_context);
     case State::SPIN:
-      return handleSpin(context);
+      return handleSpin(normalized_context);
   }
 
   return createIdleCmd();  // 不应到达
@@ -164,8 +175,9 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::solve(
 // =====================================================================
 
 rm_interfaces::msg::GimbalCmd StateMachineStrategy::handleLost(
-  const GimbalControlContext & /* context */)
+  const GimbalControlContext & context)
 {
+  markDelayAuditInvalid(getName(), context.is_tracking);
   return createIdleCmd();
 }
 
@@ -173,16 +185,18 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::handleCenter(
   const GimbalControlContext & context)
 {
   const auto & robot = context.target_robot;
-  Eigen::Vector3d current_center(
-    robot.center_position.x, robot.center_position.y, robot.center_position.z);
+  const auto center_position =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::centerPosition(robot);
+  const Eigen::Vector3d current_center = center_position;
 
   double dt = computePredictionTime(context, current_center);
 
   // 预测中心位置
-  Eigen::Vector3d predicted_center(
-    robot.center_position.x + dt * robot.center_velocity.x,
-    robot.center_position.y + dt * robot.center_velocity.y,
-    robot.center_position.z + dt * robot.center_velocity.z);
+  Eigen::Vector3d predicted_center =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::predictCenter(
+    robot,
+    dt,
+    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
 
   // 当前位置用于开火判断 — 使用最近的装甲板
   auto current_positions = position_calculator_->calculate(robot);
@@ -202,8 +216,9 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::handleSingle(
   const GimbalControlContext & context)
 {
   const auto & robot = context.target_robot;
-  Eigen::Vector3d current_center(
-    robot.center_position.x, robot.center_position.y, robot.center_position.z);
+  const auto center_position =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::centerPosition(robot);
+  const Eigen::Vector3d current_center = center_position;
 
   double dt = computePredictionTime(context, current_center);
 
@@ -235,8 +250,11 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::handleSpin(
   const GimbalControlContext & context)
 {
   const auto & robot = context.target_robot;
-  Eigen::Vector3d current_center(
-    robot.center_position.x, robot.center_position.y, robot.center_position.z);
+  const auto center_position =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::centerPosition(robot);
+  const double yaw_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::yawVelocity(robot);
+  const Eigen::Vector3d current_center = center_position;
 
   double dt = computePredictionTime(context, current_center);
 
@@ -249,14 +267,19 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::handleSpin(
   }
 
   // 使用 selectByDecisionAngle 选择装甲板
-  double predicted_yaw = robot.yaw + dt * robot.yaw_velocity;
-  Eigen::Vector3d predicted_center(
-    robot.center_position.x + dt * robot.center_velocity.x,
-    robot.center_position.y + dt * robot.center_velocity.y,
-    robot.center_position.z + dt * robot.center_velocity.z);
+  double predicted_yaw =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::predictYaw(
+    robot,
+    dt,
+    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
+  Eigen::Vector3d predicted_center =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::predictCenter(
+    robot,
+    dt,
+    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
 
   int decision_id = armor_selector_->selectByDecisionAngle(
-    predicted_positions, predicted_center, predicted_yaw, robot.yaw_velocity);
+    predicted_positions, predicted_center, predicted_yaw, yaw_velocity);
 
   if (decision_id < 0 || decision_id >= static_cast<int>(predicted_positions.size())) {
     // Fallback: 跟踪中心
@@ -296,7 +319,7 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::handleSpin(
 
 double StateMachineStrategy::computePredictionTime(
   const GimbalControlContext & context,
-  const Eigen::Vector3d & current_center) const
+  const Eigen::Vector3d & current_center)
 {
   double flight_time = 0;
   if (local_compensator_) {
@@ -306,9 +329,21 @@ double StateMachineStrategy::computePredictionTime(
     flight_time = current_center.norm() / context.bullet_speed;
   }
 
-  double processing_delay = (context.current_time - context.target_stamp).seconds();
-  double total = processing_delay + flight_time + prediction_delay_;
-  return std::min(total, max_prediction_time_);
+  delay_management::DelayRawInputs delay_raw;
+  delay_raw.current_time = context.current_time;
+  delay_raw.observation_stamp = context.target_stamp;
+  delay_raw.prediction_extra_s = prediction_delay_;
+  delay_raw.max_processing_delay_s = max_processing_delay_s_;
+
+  const double processing_delay = delay_manager_.computeProcessingDelay(delay_raw);
+  const double total_prediction_time =
+    delay_manager_.computePredictionTime(delay_raw, flight_time, max_prediction_time_);
+
+  last_processing_delay_s_ = processing_delay;
+  last_flight_time_s_ = flight_time;
+  last_total_prediction_time_s_ = total_prediction_time;
+
+  return total_prediction_time;
 }
 
 int StateMachineStrategy::selectBestFacingArmor(
@@ -348,26 +383,20 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::buildCommand(
   const Eigen::Vector3d & control_target,
   const Eigen::Vector3d & fire_target,
   double fire_distance,
-  bool force_fire) const
+  bool force_fire)
 {
-  Eigen::Vector3d target_velocity(
-    context.target_robot.center_velocity.x,
-    context.target_robot.center_velocity.y,
-    context.target_robot.center_velocity.z);
+  (void)force_fire;
+  (void)fire_target;
+
+  const Eigen::Vector3d target_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::linearVelocity(context.target_robot);
 
   // 弹道补偿 (控制目标)
   double control_pitch, control_yaw, control_flight;
   if (!computeBallistic(control_target, target_velocity, context.bullet_speed,
                         control_pitch, control_yaw, control_flight))
   {
-    return createIdleCmd();
-  }
-
-  // 弹道补偿 (开火判断目标)
-  double fire_pitch, fire_yaw, fire_flight;
-  if (!computeBallistic(fire_target, target_velocity, context.bullet_speed,
-                        fire_pitch, fire_yaw, fire_flight))
-  {
+    markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
 
@@ -381,22 +410,29 @@ rm_interfaces::msg::GimbalCmd StateMachineStrategy::buildCommand(
   double yaw_diff = angles::normalize_angle(cmd_yaw - context.current_yaw);
   double pitch_diff = cmd_pitch - context.current_pitch;
 
-  bool fire_advice = force_fire;
-  if (!force_fire && fire_advisor_) {
-    fire_advice = fire_advisor_->shouldFire(
-      context.current_yaw, context.current_pitch,
-      fire_yaw + yaw_offset_rad, fire_pitch + pitch_offset_rad,
-      fire_distance);
-  }
+  // 策略层仅输出控制参数；开火建议由主循环统一计算。
+  const double fire_compensation_s = trigger_to_muzzle_s_;
 
   rm_interfaces::msg::GimbalCmd cmd;
-  cmd.header = context.target_robot.header;
   cmd.yaw = cmd_yaw * 180.0 / M_PI;
   cmd.pitch = cmd_pitch * 180.0 / M_PI;
   cmd.yaw_diff = yaw_diff * 180.0 / M_PI;
   cmd.pitch_diff = pitch_diff * 180.0 / M_PI;
-  cmd.distance = fire_distance;
-  cmd.fire_advice = fire_advice;
+  cmd.distance = std::max(fire_distance, 0.0);
+
+  DelayAuditSnapshot audit;
+  audit.strategy_name = getName();
+  audit.tracking = true;
+  audit.processing_delay_s = last_processing_delay_s_;
+  audit.prediction_extra_s = std::max(prediction_delay_, 0.0);
+  audit.flight_time_s = last_flight_time_s_;
+  audit.total_prediction_time_s = last_total_prediction_time_s_;
+  audit.control_latency_s = 0.0;
+  audit.fire_control_compensation_s = fire_compensation_s;
+  audit.control_delay_steps = 0;
+  audit.uses_delayed_b = false;
+  audit.double_compensation_risk = false;
+  markDelayAuditValid(audit);
 
   return cmd;
 }
@@ -415,6 +451,9 @@ void StateMachineStrategy::resetStateMachine()
   spin_decision_index_ = -1;
   spin_count_ = 0;
   calm_count_ = 0;
+  last_processing_delay_s_ = 0.0;
+  last_flight_time_s_ = 0.0;
+  last_total_prediction_time_s_ = 0.0;
 }
 
 // =====================================================================
@@ -443,6 +482,16 @@ void StateMachineStrategy::setPredictionParameters(
 {
   prediction_delay_ = prediction_delay;
   max_prediction_time_ = max_prediction_time;
+}
+
+void StateMachineStrategy::setMaxProcessingDelay(double max_processing_delay)
+{
+  max_processing_delay_s_ = max_processing_delay > 0.0 ? max_processing_delay : 0.0;
+}
+
+void StateMachineStrategy::setTriggerToMuzzleDelay(double trigger_to_muzzle_s)
+{
+  trigger_to_muzzle_s_ = trigger_to_muzzle_s > 0.0 ? trigger_to_muzzle_s : 0.0;
 }
 
 void StateMachineStrategy::setManualOffset(double pitch_offset, double yaw_offset)

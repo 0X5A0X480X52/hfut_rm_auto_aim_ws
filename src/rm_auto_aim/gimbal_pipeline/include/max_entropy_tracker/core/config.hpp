@@ -79,6 +79,12 @@ struct TrackerParameters {
 
   int n_panels = 4;
   double panel_angle_step = M_PI / 2.0;
+
+  // Optional periodic dz prior for standard 4-panel association.
+  // Template: -dz, +dz, -dz, +dz (sign flips with spin direction).
+  bool periodic_binding_enable = false;
+  double periodic_binding_weight = 0.35;
+  double periodic_binding_spin_rate_gate = 0.8;
 };
 
 struct ConstraintParameters {
@@ -94,6 +100,88 @@ struct PanelMismatchParameters {
   double threshold_t1  = 0.0009;  ///< dz² mean threshold below which z is OK (3cm²)
   int    confirm_count = 3;       ///< consecutive suspect frames to trigger PATCH
   int    reinit_count  = 5;       ///< consecutive suspect frames to trigger REINIT
+};
+
+struct OutpostParameters {
+  // Outpost-specific tracker state machine thresholds
+  int tracking_thres = 2;
+  int lost_thres = 40;
+  int temp_lost_thres = 30;
+
+  // Outpost-specific matching gates (reserved for association logic)
+  double max_match_distance = 2.0;
+  double max_match_yaw_diff = 1.0;
+
+  // Motion model selection (same style as 4-panel tracker)
+  TranslationModel translation_model = TranslationModel::CV;
+  RotationModel rotation_model = RotationModel::CV;
+
+  // Optional outpost-specific Singer params (fallback to motion.* when <= 0)
+  double singer_alpha = 0.0;
+  double singer_sigma = 0.0;
+
+  // Optional outpost-specific spin process noise (fallback to spin.* when <= 0)
+  double spin_process_noise_theta_rate = 0.0;
+  double spin_process_noise_theta_acc = 0.0;
+
+  // Known geometric profile (relative to outpost center)
+  // Semantic contract:
+  //   panel 0 = highest, panel 1 = middle, panel 2 = lowest.
+  // Top-down clockwise order: 0 deg(panel 0) -> panel 2 -> panel 1.
+  double radius = 0.26;
+  double z_offset_0 = 0.06;
+  double z_offset_1 = 0.00;
+  double z_offset_2 = -0.06;
+  double panel_angle_step = 2.0 * M_PI / 3.0;
+
+  // Max-entropy panel posterior
+  double softmax_temperature = 1.5;
+  double weight_yaw = 1.0;
+  double weight_z_state = 6.0;
+  double weight_z_history = 2.0;
+  double weight_xy_residual = 2.5;
+  double weight_switch_penalty = 0.05;
+
+  // Hysteresis gating for mode switch (3-armors <-> single-armor)
+  double entropy_enter = 0.75;
+  double entropy_exit = 0.55;
+  double max_prob_enter = 0.60;
+  double max_prob_exit = 0.75;
+  int stable_frames = 4;
+  int z_history_window = 15;
+
+  // Single-armor output confidence scaling
+  double single_mode_confidence_scale = 0.70;
+
+  // Binding engine controls (periodic evidence + transition confirmation)
+  bool binding_enable_multi_obs = true;
+  int binding_transition_confirm_frames = 3;
+  double binding_same_panel_yaw_gate = 0.35;
+  double binding_same_panel_z_gate = 0.08;
+  double binding_same_panel_xy_gate = 0.18;
+  double binding_min_candidate_prob = 0.40;
+  double binding_min_candidate_margin = 0.12;
+  double binding_switch_strong_score = 0.60;
+  int binding_period_window = 12;
+  double binding_period_weight = 0.60;
+  double binding_period_min_spin_rate = 0.8;
+  double binding_period_update_min_confidence = 0.55;
+  double binding_period_update_min_jump = 0.015;
+  double binding_dz_ema_alpha = 0.20;
+  double binding_confidence_floor = 0.15;
+
+  // Kinematic smoothing gains
+  double alpha_pos = 0.65;
+  double beta_vel = 0.30;
+  double alpha_yaw = 0.60;
+  double beta_yaw_rate = 0.25;
+
+  // Physical constraints / damping
+  bool assume_static_center = true;
+  double linear_velocity_damping = 0.90;
+  double yaw_rate_damping = 0.98;
+  double max_center_speed = 1.00;
+  double max_yaw_rate = 12.0;
 };
 
 struct ManeuverDetectionParameters {
@@ -125,6 +213,7 @@ struct UnifiedConfig {
   ConstraintParameters constraints;
   ManeuverDetectionParameters maneuver;
   PanelMismatchParameters panel_mismatch;
+  OutpostParameters outpost;
 
   static UnifiedConfig create_default() { return UnifiedConfig{}; }
 
@@ -150,6 +239,13 @@ inline TranslationModel translation_model_from_string(const std::string &s) {
   if (s == "Singer" || s == "singer" || s == "SINGER")
     return TranslationModel::SINGER;
   return TranslationModel::CA;  // default
+}
+
+/// Parse RotationModel from string
+inline RotationModel rotation_model_from_string(const std::string &s) {
+  if (s == "CV" || s == "cv") return RotationModel::CV;
+  if (s == "CA" || s == "ca") return RotationModel::CA;
+  return RotationModel::CV;  // default
 }
 
 }  // namespace fyt::auto_aim

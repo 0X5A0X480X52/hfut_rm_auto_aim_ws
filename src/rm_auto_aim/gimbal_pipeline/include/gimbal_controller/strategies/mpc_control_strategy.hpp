@@ -15,8 +15,16 @@
 #ifndef GIMBAL_CONTROLLER__STRATEGIES__MPC_CONTROL_STRATEGY_HPP_
 #define GIMBAL_CONTROLLER__STRATEGIES__MPC_CONTROL_STRATEGY_HPP_
 
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <deque>
+#include <string>
+
 #include <Eigen/Dense>
 
+#include "gimbal_controller/delay_management/delay_semantic_manager.hpp"
 #include "gimbal_controller/gimbal_control_strategy.hpp"
 #include "gimbal_controller/mpc/gimbal_dynamics_model.hpp"
 #include "gimbal_controller/mpc/qp_solver.hpp"
@@ -65,11 +73,12 @@ public:
    * @brief 设置延时补偿参数
    * @param enable 是否启用延时补偿版本的参考轨迹生成
    * @param prediction_delay_s 额外预测延迟 (秒)
+   * @param trigger_to_muzzle_s 从触发开火到子弹出膛的延迟 (秒)
    * @param flight_time_iters 飞行时间迭代次数
    * @param max_processing_delay_s 最大允许的 processing_delay 上限 (秒)，超出则被截断
    */
   void setDelayCompensation(
-    bool enable, double prediction_delay_s, int flight_time_iters,
+    bool enable, double prediction_delay_s, double trigger_to_muzzle_s, int flight_time_iters,
     double max_processing_delay_s);
 
   /**
@@ -111,6 +120,45 @@ public:
     double sigma_beta, double gamma);
 
   /**
+   * @brief 设置数值归一化参数
+   *
+   * - mode=rms: 对 Q/R/S 对应量做滑动窗口 RMS 归一化
+   * - mode=typical: 用典型值做静态归一化
+   *
+   * 统一公式: w_norm = w / (scale^2 + eps)
+   */
+  void setNumericalNormalizationParameters(
+    bool enable, int window_size, int min_samples, double rms_epsilon,
+    const std::string & mode,
+    const Eigen::Vector4d & state_typical,
+    const Eigen::Vector2d & control_typical,
+    const Eigen::Vector2d & delta_control_typical);
+
+  /**
+   * @brief 设置 Hessian 自适应对角正则参数
+   *
+   * H <- H + eps * I, eps = clamp(max(abs, rel*mean(diag(H))), abs, max)
+   */
+  void setHessianRegularizationParameters(
+    bool enable, double epsilon_abs, double epsilon_rel, double epsilon_max,
+    bool retry_on_fail, double retry_scale);
+
+  /**
+   * @brief 设置数值诊断参数
+   *
+   * 低成本指标可常开；高成本谱指标按采样周期计算。
+   */
+  void setDiagnosticsParameters(
+    bool enable,
+    bool low_cost_always,
+    bool high_cost_enable,
+    int high_cost_sample_every,
+    int log_every,
+    bool log_on_failure,
+    double active_tol,
+    double rank_tol_rel);
+
+  /**
    * @brief 设置 FOV 软约束参数
    *
    * 启用后，通过 slack 变量在 QP 中惩罚预测轨迹超出相机视场角范围的行为。
@@ -150,9 +198,108 @@ public:
   }
 
 private:
+  struct SlidingRms
+  {
+    int window_size{80};
+    std::deque<double> values;
+    double sum_sq{0.0};
+
+    void setWindowSize(int size)
+    {
+      window_size = std::max(1, size);
+      while (static_cast<int>(values.size()) > window_size) {
+        const double old = values.front();
+        values.pop_front();
+        sum_sq -= old * old;
+      }
+      if (sum_sq < 0.0) {
+        sum_sq = 0.0;
+      }
+    }
+
+    void reset()
+    {
+      values.clear();
+      sum_sq = 0.0;
+    }
+
+    void addSample(double value)
+    {
+      values.push_back(value);
+      sum_sq += value * value;
+      while (static_cast<int>(values.size()) > window_size) {
+        const double old = values.front();
+        values.pop_front();
+        sum_sq -= old * old;
+      }
+      if (sum_sq < 0.0) {
+        sum_sq = 0.0;
+      }
+    }
+
+    int size() const { return static_cast<int>(values.size()); }
+
+    double rms(double epsilon, double fallback = 1.0) const
+    {
+      if (values.empty()) {
+        return fallback;
+      }
+      const double mean_sq = sum_sq / static_cast<double>(values.size());
+      return std::sqrt(std::max(mean_sq, 0.0) + std::max(epsilon, 1e-12));
+    }
+  };
+
+  struct DiagnosticsSnapshot
+  {
+    uint64_t cycle{0};
+    bool maneuver_path{false};
+    bool qp_success{false};
+    int qp_iterations{0};
+    int active_bound_size{0};
+    int active_linear_size{0};
+    int active_set_size{0};
+    double qp_cost{0.0};
+    double trace_q{0.0};
+    double trace_r{0.0};
+    double trace_s{0.0};
+    double trace_q_over_r{0.0};
+    double trace_s_over_r{0.0};
+    double bu_over_u{0.0};
+    double regularization_eps{0.0};
+    bool high_cost_valid{false};
+    double cond_h{0.0};
+    double lambda_min_h{0.0};
+    int rank_h{0};
+  };
+
+  enum class NormalizationMode
+  {
+    RMS,
+    TYPICAL
+  };
+
   Eigen::VectorXd buildWeightingVector(
     const GimbalControlContext & context,
     const Eigen::VectorXd & X_ref);
+
+  void configureRmsWindows();
+  void resetNumericalStates();
+  Eigen::Vector4d updateAndGetStateRms(const Eigen::VectorXd & free_error);
+  Eigen::Vector2d getControlRms() const;
+  Eigen::Vector2d getDeltaControlRms() const;
+  void updateControlHistory(const mpc::GimbalDynamicsModel::ControlVector & u_opt);
+  double computeRegularizationEpsilon(const Eigen::MatrixXd & H) const;
+  void applyHessianRegularization(Eigen::MatrixXd & H, double epsilon) const;
+  void fillAndLogDiagnostics(
+    bool maneuver_path,
+    const Eigen::MatrixXd & H,
+    const Eigen::MatrixXd & Q_eff,
+    const Eigen::MatrixXd & R_eff,
+    const Eigen::MatrixXd & S_eff,
+    const Eigen::VectorXd & lb,
+    const Eigen::VectorXd & ub,
+    const mpc::QPResult & result,
+    double applied_regularization);
 
   // MPC 核心模块
   mpc::GimbalDynamicsModel dynamics_model_;
@@ -194,10 +341,14 @@ private:
   // 延时补偿参数
   bool enable_delay_compensation_{false};
   double prediction_delay_s_{0.0};
+  double trigger_to_muzzle_s_{0.0};
   int flight_time_iters_{2};
   double max_processing_delay_s_{0.5};  // processing_delay 上限 (秒)
   double yaw_feedforward_k_s_{0.0};     // yaw 速度前馈等效前瞻时间 (秒)
   double max_yaw_feedforward_s_{0.12};  // yaw 前馈上限 (秒)
+  delay_management::DelaySemanticManager delay_manager_;
+  bool uses_delayed_b_model_{false};
+  bool warned_double_compensation_{false};
 
   // 上一步求解结果 (warmstart)
   Eigen::VectorXd U_prev_;
@@ -225,6 +376,42 @@ private:
   double weighting_gamma_{1.0};
   Eigen::VectorXd prev_w_steps_;
   bool has_prev_w_steps_{false};
+
+  // 数值归一化参数与状态
+  bool enable_normalization_{false};
+  NormalizationMode normalization_mode_{NormalizationMode::RMS};
+  int rms_window_size_{80};
+  int rms_min_samples_{10};
+  double rms_epsilon_{1e-6};
+  Eigen::Vector4d state_typical_{Eigen::Vector4d::Ones()};
+  Eigen::Vector2d control_typical_{Eigen::Vector2d::Ones()};
+  Eigen::Vector2d delta_control_typical_{Eigen::Vector2d::Ones()};
+  std::array<SlidingRms, mpc::GimbalDynamicsModel::STATE_DIM> state_rms_trackers_;
+  std::array<SlidingRms, mpc::GimbalDynamicsModel::CONTROL_DIM> control_rms_trackers_;
+  std::array<SlidingRms, mpc::GimbalDynamicsModel::CONTROL_DIM> delta_control_rms_trackers_;
+  mpc::GimbalDynamicsModel::ControlVector prev_applied_u_{
+    mpc::GimbalDynamicsModel::ControlVector::Zero()};
+  bool has_prev_applied_u_{false};
+
+  // Hessian 自适应对角正则参数
+  bool enable_hessian_regularization_{false};
+  double hessian_reg_eps_abs_{1e-8};
+  double hessian_reg_eps_rel_{1e-6};
+  double hessian_reg_eps_max_{1e-2};
+  bool hessian_reg_retry_on_fail_{true};
+  double hessian_reg_retry_scale_{10.0};
+
+  // 分层诊断参数与缓存
+  bool enable_diagnostics_{false};
+  bool diagnostics_low_cost_always_{true};
+  bool diagnostics_high_cost_enable_{false};
+  int diagnostics_high_cost_sample_every_{20};
+  int diagnostics_log_every_{50};
+  bool diagnostics_log_on_failure_{true};
+  double diagnostics_active_tol_{1e-4};
+  double diagnostics_rank_tol_rel_{1e-9};
+  uint64_t diagnostics_cycle_{0};
+  DiagnosticsSnapshot last_diagnostics_;
 
   // 机动 alpha EMA 状态
   double alpha_ema_{0.0};

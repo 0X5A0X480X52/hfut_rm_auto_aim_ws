@@ -14,8 +14,10 @@
 #include <vector>
 
 #include <rclcpp/rclcpp.hpp>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
 // ─── message_filters + TF2 filter ──────────────────────────────
@@ -26,6 +28,7 @@
 // ─── rm_interfaces ─────────────────────────────────────────────
 #include <rm_interfaces/msg/armor.hpp>
 #include <rm_interfaces/msg/armors.hpp>
+#include <rm_interfaces/msg/delay_audit.hpp>
 #include <rm_interfaces/msg/gimbal_cmd.hpp>
 #include <rm_interfaces/msg/maneuver_state.hpp>
 #include <rm_interfaces/msg/maneuver_states.hpp>
@@ -39,7 +42,6 @@
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/tf_handler.hpp"
 #include "max_entropy_tracker/tracker_manager.hpp"
-#include "max_entropy_tracker/utils/observation_outlier_filter.hpp"
 #include "max_entropy_tracker/utils/output_smoother.hpp"
 
 // ─── target_selector internals ────────────────────────────────
@@ -47,18 +49,18 @@
 #include "target_selector/strategies/min_yaw_deviation_strategy.hpp"
 #include "target_selector/strategies/priority_list_strategy.hpp"
 #include "target_selector/strategies/sticky_min_yaw_deviation_strategy.hpp"
-#include "target_selector/strategies/priority_list_strategy.hpp"
-#include "target_selector/strategies/sticky_min_yaw_deviation_strategy.hpp"
 
 // ─── prediction logger ────────────────────────────────────────
 #include "gimbal_pipeline/prediction_logger.hpp"
+#include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 
 // ─── gimbal_controller internals ──────────────────────────────
 #include "gimbal_controller/armor_position_calculator.hpp"
 #include "gimbal_controller/armor_selector.hpp"
 #include "gimbal_controller/ballistic_solver_client.hpp"
+#include "gimbal_controller/fire_advice_engine.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
-#include "gimbal_controller/gimbal_cmd_filter.hpp"
+#include "gimbal_controller/gimbal_control_core.hpp"
 #include "gimbal_controller/gimbal_control_strategy.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
 
@@ -91,14 +93,11 @@ class GimbalPipelineNode : public rclcpp::Node {
       const std_msgs::msg::Header &header);
   rm_interfaces::msg::Target buildTargetMessage(
       const std_msgs::msg::Header &header, const std::string &robot_id,
-      AdaptiveArmorTracker &tracker, const SmoothedOutput *smoothed = nullptr);
+      BaseTracker &tracker, const SmoothedOutput *smoothed = nullptr);
   rm_interfaces::msg::TrackedRobot buildTrackedRobotMessage(
       const std_msgs::msg::Header &header, const std::string &robot_id,
-      AdaptiveArmorTracker &tracker, const SmoothedOutput *smoothed = nullptr);
-  uint8_t inferRobotType(const std::string &robot_id) const;
-  int inferNumArmors(const std::string &robot_id, int robot_type) const;
-  std::vector<geometry_msgs::msg::Pose> generateArmorsOffset(
-      int num_armors, double r1, double r2, double d_za, double d_zc) const;
+      BaseTracker &tracker, const SmoothedOutput *smoothed = nullptr,
+      int visible_armor_count = 0);
 
   /* ================================================================ */
   /*  Target selection logic (from TargetSelectorNode)                */
@@ -115,10 +114,24 @@ class GimbalPipelineNode : public rclcpp::Node {
   void jointStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg);
   void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg);
   void updateGimbalState();
+  void buildControlContextFromCache(
+      gimbal_controller::GimbalControlContext &context,
+      std::string &selected_id);
+  void publishDelayAuditDebug(
+      const gimbal_controller::GimbalControlContext &context,
+      const gimbal_controller::DelayAuditSnapshot &audit,
+      const std::string &strategy_name);
+  void publishArmorSelectionDebug(
+      const gimbal_controller::GimbalControlContext &context,
+      const std::string &strategy_name);
   void timerCallback();
+  void applyPendingRuntimeUpdates();
   void setModeCallback(
       const std::shared_ptr<rm_interfaces::srv::SetMode::Request> request,
       std::shared_ptr<rm_interfaces::srv::SetMode::Response> response);
+  rcl_interfaces::msg::SetParametersResult onSetParameters(
+      const std::vector<rclcpp::Parameter> &params);
+  bool isValidGimbalStrategyName(const std::string &name) const;
   gimbal_controller::GimbalControlStrategy::SharedPtr getGimbalStrategy(
       const std::string &name) const;
 
@@ -141,19 +154,14 @@ class GimbalPipelineNode : public rclcpp::Node {
   double predict_rate_;
   bool debug_mode_;
   std::string visualization_frame_;
+  double tracker_timeout_s_{0.5};
 
   std::unique_ptr<TFHandler> tf_handler_;
   std::unique_ptr<TrackerManager> tracker_manager_;
+  std::unique_ptr<robot_description::RobotDescriptionFacade>
+      robot_description_facade_;
 
   SmootherConfig smoother_config_;
-  std::unordered_map<std::string, OutputSmoother> smoothers_;
-  std::unordered_map<std::string, int> last_obs_counts_;
-  std::unordered_map<std::string, bool> last_dual_obs_;
-
-  // Outlier filter (per-robot, pre-smoother; independent of smoother.enable)
-  std::unordered_map<std::string, ObservationOutlierFilter> outlier_filters_;
-  // Last valid smoothed output cache — used by hold strategy on outlier frames
-  std::unordered_map<std::string, SmoothedOutput> last_smoothed_outputs_;
 
   /* ================================================================ */
   /*  Target selector state (from TargetSelectorNode)                 */
@@ -171,6 +179,8 @@ class GimbalPipelineNode : public rclcpp::Node {
   std::shared_ptr<gimbal_controller::BallisticSolverClient> ballistic_client_;
   std::shared_ptr<gimbal_controller::LocalTrajectoryCompensator> local_compensator_;
   std::shared_ptr<gimbal_controller::FireAdvisor> fire_advisor_;
+    std::shared_ptr<gimbal_controller::FireAdviceEngine> fire_advice_engine_;
+    std::shared_ptr<gimbal_controller::GimbalControlCore> gimbal_control_core_;
   std::unordered_map<std::string,
                      gimbal_controller::GimbalControlStrategy::SharedPtr>
       gimbal_strategies_;
@@ -193,11 +203,8 @@ class GimbalPipelineNode : public rclcpp::Node {
     double radial_dynamic_min_angle_deg_{5.0};
     double radial_dynamic_bias_gain_deg_{0.0};
     double radial_dynamic_max_bias_deg_{0.0};
-
-  // GimbalCmd 输出端保护滤波器
-  gimbal_controller::GimbalCmdFilter cmd_filter_;
-  // 记录上一帧跟踪的目标 ID，用于检测目标切换并 reset 滤波器
-  std::string prev_tracking_target_id_;
+    bool virtual_auto_switch_enable_{false};
+    double mpc_dt_debug_{0.01};
 
   /* ================================================================ */
   /*  Shared pipeline state (protected by mutex)                      */
@@ -230,6 +237,10 @@ class GimbalPipelineNode : public rclcpp::Node {
   rclcpp::Publisher<rm_interfaces::msg::SelectedTarget>::SharedPtr
       debug_selected_target_pub_;
   rclcpp::Publisher<rm_interfaces::msg::Target>::SharedPtr debug_target_pub_;
+  rclcpp::Publisher<rm_interfaces::msg::DelayAudit>::SharedPtr
+      debug_delay_audit_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr
+      debug_armor_selection_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
       debug_tracker_marker_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
@@ -247,7 +258,7 @@ class GimbalPipelineNode : public rclcpp::Node {
   std::shared_ptr<tf2_ros::Buffer> tf2_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf2_listener_;
 
-  // Heartbeat
+  // Heartbeat monitor for critical components
   HeartBeatPublisher::SharedPtr heartbeat_;
 
   /* ================================================================ */
@@ -264,6 +275,8 @@ class GimbalPipelineNode : public rclcpp::Node {
   visualization_msgs::msg::Marker trajectory_marker_;
     visualization_msgs::msg::Marker radial_allowed_arc_marker_;
     visualization_msgs::msg::Marker radial_allowed_bounds_marker_;
+    visualization_msgs::msg::Marker virtual_armor_marker_;
+        visualization_msgs::msg::Marker virtual_armor_text_marker_;
   std::vector<std::array<float, 4>> color_palette_;
 };
 

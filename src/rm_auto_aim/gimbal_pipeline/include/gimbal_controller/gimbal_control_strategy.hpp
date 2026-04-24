@@ -17,6 +17,7 @@
 
 #include <memory>
 #include <string>
+#include <cstdint>
 #include <Eigen/Dense>
 
 #include <rclcpp/rclcpp.hpp>
@@ -33,6 +34,7 @@ class ArmorSelector;
 class BallisticSolverClient;
 class LocalTrajectoryCompensator;
 class FireAdvisor;
+class FireAdviceEngine;
 
 /**
  * @brief 云台控制上下文
@@ -50,6 +52,26 @@ struct GimbalControlContext
   bool is_tracking{false};                        // 是否正在跟踪 (TRACKING状态)
   bool is_temp_lost{false};                       // 目标暂时丢失 (TEMP_LOST状态)
   bool is_maneuvering{false};                     // 目标正在机动 (来自 ManeuverDetector)
+};
+
+/**
+ * @brief 每帧 delay 语义审计快照
+ */
+struct DelayAuditSnapshot
+{
+  bool valid{false};
+  bool tracking{false};
+  std::string strategy_name;
+
+  double processing_delay_s{0.0};
+  double prediction_extra_s{0.0};
+  double flight_time_s{0.0};
+  double total_prediction_time_s{0.0};
+  double control_latency_s{0.0};
+  double fire_control_compensation_s{0.0};
+  int32_t control_delay_steps{0};
+  bool uses_delayed_b{false};
+  bool double_compensation_risk{false};
 };
 
 /**
@@ -78,6 +100,11 @@ public:
   virtual std::string getName() const = 0;
 
   /**
+   * @brief 获取上一次策略执行生成的 delay 审计快照
+   */
+  const DelayAuditSnapshot & getLastDelayAudit() const { return last_delay_audit_; }
+
+  /**
    * @brief 设置组件 (依赖注入)
    */
   void setComponents(
@@ -87,12 +114,22 @@ public:
     std::shared_ptr<LocalTrajectoryCompensator> local_compensator,
     std::shared_ptr<FireAdvisor> fire_advisor);
 
+  void setFireAdviceEngine(std::shared_ptr<FireAdviceEngine> fire_advice_engine);
+
+  /**
+   * @brief 设置弹道求解模式
+   * @param mode "service" 或 "local"（其他值按 service 处理）
+   */
+  void setBallisticMode(const std::string & mode);
+
 protected:
   std::shared_ptr<ArmorPositionCalculator> position_calculator_;
   std::shared_ptr<ArmorSelector> armor_selector_;
   std::shared_ptr<BallisticSolverClient> ballistic_client_;
   std::shared_ptr<LocalTrajectoryCompensator> local_compensator_;
   std::shared_ptr<FireAdvisor> fire_advisor_;
+  std::shared_ptr<FireAdviceEngine> fire_advice_engine_;
+  bool prefer_local_ballistic_{false};
 
   /**
    * @brief 创建空闲状态的控制命令
@@ -116,6 +153,11 @@ protected:
     double & pitch,
     double & yaw,
     double & flight_time) const;
+
+  void markDelayAuditInvalid(const std::string & strategy_name, bool tracking);
+  void markDelayAuditValid(const DelayAuditSnapshot & snapshot);
+
+  DelayAuditSnapshot last_delay_audit_{};
 };
 
 }  // namespace gimbal_controller

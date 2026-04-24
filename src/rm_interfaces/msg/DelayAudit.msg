@@ -1,0 +1,13 @@
+std_msgs/Header header
+string strategy_name
+bool valid
+bool tracking
+float64 processing_delay_s
+float64 prediction_extra_s
+float64 flight_time_s
+float64 total_prediction_time_s
+float64 control_latency_s
+float64 fire_control_compensation_s
+int32 control_delay_steps
+bool uses_delayed_b
+bool double_compensation_risk

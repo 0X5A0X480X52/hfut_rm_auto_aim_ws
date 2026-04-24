@@ -46,6 +46,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/TrackPredictionWindows.msg"
   "msg/ManeuverState.msg"
   "msg/ManeuverStates.msg"
+  "msg/DelayAudit.msg"
   "srv/SetMode.srv"
   "srv/SolveBallistic.srv"
   "srv/SetTargetRobot.srv"

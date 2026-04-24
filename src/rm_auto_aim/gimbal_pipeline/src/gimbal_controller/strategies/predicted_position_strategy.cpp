@@ -15,9 +15,12 @@
 #include "gimbal_controller/strategies/predicted_position_strategy.hpp"
 #include "gimbal_controller/armor_position_calculator.hpp"
 #include "gimbal_controller/armor_selector.hpp"
-#include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
+#include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 #include <angles/angles.h>
+
+#include <algorithm>
+#include <cmath>
 
 #include <iostream>
 
@@ -29,6 +32,7 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
 {
   // 检查是否在跟踪状态
   if (!context.is_tracking) {
+    markDelayAuditInvalid(getName(), false);
     state_ = TRACKING_ARMOR;
     overflow_count_ = 0;
     if (armor_selector_) {
@@ -42,17 +46,22 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   }
 
   // 检查组件是否已设置
-  if (!position_calculator_ || !armor_selector_ || !fire_advisor_) {
+  if (!position_calculator_ || !armor_selector_) {
+    markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
 
-  const auto & robot = context.target_robot;
+  const auto robot =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(context.target_robot);
+  const auto center_position =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::centerPosition(robot);
+  const auto linear_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::linearVelocity(robot);
+  const double yaw_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::yawVelocity(robot);
 
   // 估计飞行时间 (使用当前位置)
-  Eigen::Vector3d current_center(
-    robot.center_position.x,
-    robot.center_position.y,
-    robot.center_position.z);
+  const Eigen::Vector3d current_center = center_position;
 
   double flight_time = 0;
   if (local_compensator_) {
@@ -63,9 +72,15 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   }
 
   // 计算总预测时间 = 处理延迟 + 飞行时间 + 额外预测延迟
-  double processing_delay = (context.current_time - context.target_stamp).seconds();
-  double total_prediction_time = processing_delay + flight_time + prediction_delay_;
-  total_prediction_time = std::min(total_prediction_time, max_prediction_time_);
+  delay_management::DelayRawInputs delay_raw;
+  delay_raw.current_time = context.current_time;
+  delay_raw.observation_stamp = context.target_stamp;
+  delay_raw.prediction_extra_s = prediction_delay_;
+  delay_raw.max_processing_delay_s = max_processing_delay_s_;
+
+  double processing_delay = delay_manager_.computeProcessingDelay(delay_raw);
+  double total_prediction_time = delay_manager_.computePredictionTime(
+    delay_raw, flight_time, max_prediction_time_);
 
   std::cout << "Processing delay: " << processing_delay
             << " s, Flight time: " << flight_time
@@ -79,17 +94,21 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   auto current_armor_positions = position_calculator_->calculate(robot);
 
   if (predicted_armor_positions.empty() || current_armor_positions.empty()) {
+    markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
 
-  // 预测中心位置
-  Eigen::Vector3d predicted_center(
-    robot.center_position.x + total_prediction_time * robot.center_velocity.x,
-    robot.center_position.y + total_prediction_time * robot.center_velocity.y,
-    robot.center_position.z + total_prediction_time * robot.center_velocity.z);
-
-  // 预测 yaw
-  double predicted_yaw = robot.yaw + total_prediction_time * robot.yaw_velocity;
+  // 预测中心位置与 yaw
+  Eigen::Vector3d predicted_center =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::predictCenter(
+    robot,
+    total_prediction_time,
+    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
+  double predicted_yaw =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::predictYaw(
+    robot,
+    total_prediction_time,
+    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
 
   // 选择最佳装甲板 (基于预测位置，路由到配置的选板策略)
   auto predicted_selection = armor_selector_->selectBest(
@@ -97,7 +116,7 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
     predicted_center,
     predicted_yaw,
     robot.num_armors,
-    robot.yaw_velocity,
+    yaw_velocity,
     context.current_yaw,
     context.current_pitch);
 
@@ -108,11 +127,12 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
     context.current_pitch);
 
   if (current_selection.selected_index < 0) {
+    markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
 
   // 高转速状态机处理
-  double abs_v_yaw = std::abs(robot.yaw_velocity);
+  double abs_v_yaw = std::abs(yaw_velocity);
 
   switch (state_) {
     case TRACKING_ARMOR:
@@ -141,7 +161,8 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
 
   // 根据状态选择目标位置
   Eigen::Vector3d control_target_position;
-  Eigen::Vector3d fire_target_position = current_selection.position;
+  double applied_control_latency = 0.0;
+  double applied_prediction_time = total_prediction_time;
 
   if (state_ == TRACKING_CENTER) {
     // 高转速时跟踪机器人中心 (预测位置)
@@ -161,38 +182,35 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
       extra_dt = std::min(extra_dt, max_prediction_time_);
       auto extra_positions = position_calculator_->calculatePredicted(robot, extra_dt);
       if (!extra_positions.empty()) {
-        Eigen::Vector3d extra_center(
-          robot.center_position.x + extra_dt * robot.center_velocity.x,
-          robot.center_position.y + extra_dt * robot.center_velocity.y,
-          robot.center_position.z + extra_dt * robot.center_velocity.z);
-        double extra_yaw = robot.yaw + extra_dt * robot.yaw_velocity;
+        applied_control_latency = std::max(effective_ctrl_delay, 0.0);
+        applied_prediction_time = extra_dt;
+        Eigen::Vector3d extra_center =
+          fyt::auto_aim::robot_description::TrackedRobotUsage::predictCenter(
+          robot,
+          extra_dt,
+          fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
+        double extra_yaw =
+          fyt::auto_aim::robot_description::TrackedRobotUsage::predictYaw(
+          robot,
+          extra_dt,
+          fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
         auto extra_selection = armor_selector_->selectBest(
           extra_positions, extra_center, extra_yaw,
-          robot.num_armors, robot.yaw_velocity,
+          robot.num_armors, yaw_velocity,
           context.current_yaw, context.current_pitch);
         control_target_position = extra_selection.position;
       }
     }
   }
 
-  Eigen::Vector3d target_velocity(
-    robot.center_velocity.x,
-    robot.center_velocity.y,
-    robot.center_velocity.z);
+  const Eigen::Vector3d target_velocity = linear_velocity;
 
   // 计算云台控制角度 (使用预测位置)
   double control_pitch, control_yaw, control_flight_time;
   if (!computeBallistic(control_target_position, target_velocity, context.bullet_speed,
                         control_pitch, control_yaw, control_flight_time))
   {
-    return createIdleCmd();
-  }
-
-  // 计算开火判断角度 (使用当前位置)
-  double fire_pitch, fire_yaw, fire_flight_time;
-  if (!computeBallistic(fire_target_position, target_velocity, context.bullet_speed,
-                        fire_pitch, fire_yaw, fire_flight_time))
-  {
+    markDelayAuditInvalid(getName(), true);
     return createIdleCmd();
   }
 
@@ -207,39 +225,44 @@ rm_interfaces::msg::GimbalCmd PredictedPositionStrategy::solve(
   double yaw_diff = angles::normalize_angle(cmd_yaw - context.current_yaw);
   double pitch_diff = cmd_pitch - context.current_pitch;
 
-  // 判断是否应该开火 (使用当前位置)
-  bool fire_advice = fire_advisor_->shouldFire(
-    context.current_yaw,
-    context.current_pitch,
-    fire_yaw + yaw_offset_rad,
-    fire_pitch + pitch_offset_rad,
-    current_selection.distance);
-
-  // 高转速时始终建议开火
-  if (state_ == TRACKING_CENTER) {
-    fire_advice = true;
+  // 策略层仅输出控制参数；开火建议由主循环统一计算。
+  const double fire_compensation_s = trigger_to_muzzle_s_;
+  bool fire_like = (state_ == TRACKING_CENTER);
+  if (!fire_like) {
+    constexpr double kFireLikeThreshold = 1.5 * M_PI / 180.0;
+    fire_like =
+      std::abs(yaw_diff) < kFireLikeThreshold &&
+      std::abs(pitch_diff) < kFireLikeThreshold;
   }
 
   // 自适应 delay 更新（根据本帧 fire_advice 和目标速度）
   if (adaptive_delay_enabled_) {
-    Eigen::Vector3d vel(
-      robot.center_velocity.x,
-      robot.center_velocity.y,
-      robot.center_velocity.z);
-    double v_linear  = vel.norm();
-    double v_angular = std::abs(robot.yaw_velocity);
-    adaptive_ctrl_.update(fire_advice, v_linear, v_angular);
+    double v_linear  = linear_velocity.norm();
+    double v_angular = std::abs(yaw_velocity);
+    adaptive_ctrl_.update(fire_like, v_linear, v_angular);
   }
 
   // 构建控制命令
   rm_interfaces::msg::GimbalCmd cmd;
-  cmd.header = robot.header;
   cmd.yaw = cmd_yaw * 180.0 / M_PI;
   cmd.pitch = cmd_pitch * 180.0 / M_PI;
   cmd.yaw_diff = yaw_diff * 180.0 / M_PI;
   cmd.pitch_diff = pitch_diff * 180.0 / M_PI;
-  cmd.distance = current_selection.distance;
-  cmd.fire_advice = fire_advice;
+  cmd.distance = std::max(current_selection.distance, 0.0);
+
+  DelayAuditSnapshot audit;
+  audit.strategy_name = getName();
+  audit.tracking = true;
+  audit.processing_delay_s = processing_delay;
+  audit.prediction_extra_s = std::max(prediction_delay_, 0.0);
+  audit.flight_time_s = flight_time;
+  audit.total_prediction_time_s = applied_prediction_time;
+  audit.control_latency_s = applied_control_latency;
+  audit.fire_control_compensation_s = fire_compensation_s;
+  audit.control_delay_steps = 0;
+  audit.uses_delayed_b = false;
+  audit.double_compensation_risk = false;
+  markDelayAuditValid(audit);
 
   return cmd;
 }
@@ -252,6 +275,11 @@ void PredictedPositionStrategy::setPredictionParameters(
   max_prediction_time_ = max_prediction_time;
 }
 
+void PredictedPositionStrategy::setMaxProcessingDelay(double max_processing_delay)
+{
+  max_processing_delay_s_ = max_processing_delay > 0.0 ? max_processing_delay : 0.0;
+}
+
 void PredictedPositionStrategy::setManualOffset(double pitch_offset, double yaw_offset)
 {
   pitch_offset_ = pitch_offset;
@@ -261,6 +289,11 @@ void PredictedPositionStrategy::setManualOffset(double pitch_offset, double yaw_
 void PredictedPositionStrategy::setControllerDelay(double controller_delay)
 {
   controller_delay_ = controller_delay;
+}
+
+void PredictedPositionStrategy::setTriggerToMuzzleDelay(double trigger_to_muzzle_s)
+{
+  trigger_to_muzzle_s_ = trigger_to_muzzle_s > 0.0 ? trigger_to_muzzle_s : 0.0;
 }
 
 void PredictedPositionStrategy::setAdaptiveDelayParams(

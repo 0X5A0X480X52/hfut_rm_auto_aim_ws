@@ -17,6 +17,7 @@
 
 #include <Eigen/Dense>
 #include <qpOASES.hpp>
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -34,6 +35,9 @@ struct QPResult
   bool success{false};        // 是否成功
   int num_iterations{0};      // 迭代次数
   double cost{0.0};           // 目标函数值
+  int active_bound_size{0};   // 近似活跃 box 约束数量
+  int active_linear_size{0};  // 近似活跃线性约束数量
+  int active_set_size{0};     // 近似活跃约束总数
 };
 
 /**
@@ -99,8 +103,13 @@ public:
     }
 
     bool size_changed = (n_vars != prev_n_vars_ || n_constraints != prev_n_constraints_);
+    bool matrix_changed = false;
 
-    if (size_changed || !qp_initialized_) {
+    if (!size_changed && qp_initialized_) {
+      matrix_changed = hasMatrixChanged(H_row, A_row, n_constraints);
+    }
+
+    if (size_changed || !qp_initialized_ || matrix_changed) {
       // 首次调用或问题尺寸变化: 重新创建 QProblem
       if (n_constraints > 0) {
         qp_ = std::make_unique<qpOASES::QProblem>(n_vars, n_constraints);
@@ -135,6 +144,7 @@ public:
 
         if (ret == qpOASES::SUCCESSFUL_RETURN) {
           qp_initialized_ = true;
+          cacheMatrices(H_row, A_row, n_constraints);
         }
       } else {
         // 热启动: hotstart 只接受 gradient + bounds 更新
@@ -160,6 +170,7 @@ public:
             nWSR, cpu_time_ptr);
           if (ret == qpOASES::SUCCESSFUL_RETURN) {
             qp_initialized_ = true;
+            cacheMatrices(H_row, A_row, n_constraints);
           }
         }
       }
@@ -170,6 +181,7 @@ public:
         result.success = true;
         result.num_iterations = static_cast<int>(nWSR);
         result.cost = qp_->getObjVal();
+        // hotstart 路径矩阵未变，无需更新缓存；init 路径已更新。
       }
     } else {
       // 仅 box 约束
@@ -186,6 +198,7 @@ public:
 
         if (ret == qpOASES::SUCCESSFUL_RETURN) {
           qp_initialized_ = true;
+          cacheMatrices(H_row, Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>(), n_constraints);
         }
       } else {
         ret = qp_bound_only_->hotstart(
@@ -206,6 +219,7 @@ public:
             nWSR, cpu_time_ptr);
           if (ret == qpOASES::SUCCESSFUL_RETURN) {
             qp_initialized_ = true;
+            cacheMatrices(H_row, Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>(), n_constraints);
           }
         }
       }
@@ -216,6 +230,7 @@ public:
         result.success = true;
         result.num_iterations = static_cast<int>(nWSR);
         result.cost = qp_bound_only_->getObjVal();
+        // hotstart 路径矩阵未变，无需更新缓存；init 路径已更新。
       }
     }
 
@@ -230,9 +245,54 @@ public:
     qp_initialized_ = false;
     qp_.reset();
     qp_bound_only_.reset();
+    prev_H_.resize(0, 0);
+    prev_A_.resize(0, 0);
   }
 
 private:
+  using RowMajorMatrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+
+  bool hasMatrixChanged(
+    const RowMajorMatrix & H,
+    const RowMajorMatrix & A,
+    int n_constraints) const
+  {
+    if (prev_H_.rows() != H.rows() || prev_H_.cols() != H.cols()) {
+      return true;
+    }
+
+    const double h_scale = std::max(1.0, H.cwiseAbs().maxCoeff());
+    const double h_diff = (prev_H_ - H).cwiseAbs().maxCoeff();
+    if (h_diff > matrix_compare_abs_tol_ + matrix_compare_rel_tol_ * h_scale) {
+      return true;
+    }
+
+    if (n_constraints <= 0) {
+      return false;
+    }
+
+    if (prev_A_.rows() != A.rows() || prev_A_.cols() != A.cols()) {
+      return true;
+    }
+
+    const double a_scale = std::max(1.0, A.cwiseAbs().maxCoeff());
+    const double a_diff = (prev_A_ - A).cwiseAbs().maxCoeff();
+    return a_diff > matrix_compare_abs_tol_ + matrix_compare_rel_tol_ * a_scale;
+  }
+
+  void cacheMatrices(
+    const RowMajorMatrix & H,
+    const RowMajorMatrix & A,
+    int n_constraints)
+  {
+    prev_H_ = H;
+    if (n_constraints > 0) {
+      prev_A_ = A;
+    } else {
+      prev_A_.resize(0, 0);
+    }
+  }
+
   std::unique_ptr<qpOASES::QProblem> qp_;
   std::unique_ptr<qpOASES::QProblemB> qp_bound_only_;
   bool qp_initialized_{false};
@@ -240,6 +300,10 @@ private:
   int prev_n_constraints_{0};
   int max_iter_{200};
   double cpu_time_limit_{0.005};
+  RowMajorMatrix prev_H_;
+  RowMajorMatrix prev_A_;
+  double matrix_compare_abs_tol_{1e-12};
+  double matrix_compare_rel_tol_{1e-9};
 };
 
 }  // namespace mpc

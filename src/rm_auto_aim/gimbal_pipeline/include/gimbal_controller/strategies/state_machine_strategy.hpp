@@ -15,6 +15,7 @@
 #ifndef GIMBAL_CONTROLLER__STRATEGIES__STATE_MACHINE_STRATEGY_HPP_
 #define GIMBAL_CONTROLLER__STRATEGIES__STATE_MACHINE_STRATEGY_HPP_
 
+#include "gimbal_controller/delay_management/delay_semantic_manager.hpp"
 #include "gimbal_controller/gimbal_control_strategy.hpp"
 
 #include <Eigen/Dense>
@@ -95,6 +96,18 @@ public:
   void setPredictionParameters(double prediction_delay, double max_prediction_time = 0.5);
 
   /**
+   * @brief 设置 processing_delay 上限
+   * @param max_processing_delay 最大处理延迟上限 (秒)
+   */
+  void setMaxProcessingDelay(double max_processing_delay);
+
+  /**
+   * @brief 设置触发到出膛延迟
+   * @param trigger_to_muzzle_s 出膛延迟 (秒)
+   */
+  void setTriggerToMuzzleDelay(double trigger_to_muzzle_s);
+
+  /**
    * @brief 设置手动补偿参数
    * @param pitch_offset pitch补偿 (度)
    * @param yaw_offset yaw补偿 (度)
@@ -141,7 +154,7 @@ private:
    */
   double computePredictionTime(
     const GimbalControlContext & context,
-    const Eigen::Vector3d & current_center) const;
+    const Eigen::Vector3d & current_center);
 
   /**
    * @brief 在正面装甲板中选择最优板 (最小运动)
@@ -167,7 +180,7 @@ private:
     const Eigen::Vector3d & control_target,
     const Eigen::Vector3d & fire_target,
     double fire_distance,
-    bool force_fire = false) const;
+    bool force_fire = false);
 
   /**
    * @brief 判断两个装甲板索引是否相邻 (考虑首尾相连)
@@ -204,6 +217,12 @@ private:
   // 预测参数
   double prediction_delay_{0.0};      ///< 额外预测延迟 (秒)
   double max_prediction_time_{0.5};   ///< 最大预测时间 (秒)
+  double max_processing_delay_s_{0.5};  ///< processing_delay 上限 (秒)
+  delay_management::DelaySemanticManager delay_manager_;
+  double last_processing_delay_s_{0.0};
+  double last_flight_time_s_{0.0};
+  double last_total_prediction_time_s_{0.0};
+  double trigger_to_muzzle_s_{0.0};
 
   // 手动补偿
   double pitch_offset_{0.0};          ///< pitch 手动补偿 (度)

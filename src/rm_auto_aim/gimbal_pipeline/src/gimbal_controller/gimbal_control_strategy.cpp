@@ -18,6 +18,7 @@
 #include "gimbal_controller/ballistic_solver_client.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
+#include "gimbal_controller/fire_advice_engine.hpp"
 
 namespace gimbal_controller
 {
@@ -36,6 +37,17 @@ void GimbalControlStrategy::setComponents(
   fire_advisor_ = fire_advisor;
 }
 
+void GimbalControlStrategy::setFireAdviceEngine(
+  std::shared_ptr<FireAdviceEngine> fire_advice_engine)
+{
+  fire_advice_engine_ = fire_advice_engine;
+}
+
+void GimbalControlStrategy::setBallisticMode(const std::string & mode)
+{
+  prefer_local_ballistic_ = (mode == "local");
+}
+
 rm_interfaces::msg::GimbalCmd GimbalControlStrategy::createIdleCmd() const
 {
   rm_interfaces::msg::GimbalCmd cmd;
@@ -43,10 +55,11 @@ rm_interfaces::msg::GimbalCmd GimbalControlStrategy::createIdleCmd() const
   cmd.pitch = 0;
   cmd.yaw_diff = 0;
   cmd.pitch_diff = 0;
-  cmd.distance = -1;
+  cmd.distance = 0;
   cmd.yaw_v = 0;
   cmd.pitch_v = 0;
   cmd.fire_advice = false;
+  cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_NO_VALID_MEASUREMENT;
   return cmd;
 }
 
@@ -58,14 +71,17 @@ bool GimbalControlStrategy::computeBallistic(
   double & yaw,
   double & flight_time) const
 {
-  // 首先尝试使用 ballistic_solver 服务
-  if (ballistic_client_ && ballistic_client_->isServiceAvailable()) {
-    auto result = ballistic_client_->solve(target_position, target_velocity, bullet_speed);
-    if (result.success) {
-      pitch = result.pitch;
-      yaw = result.yaw;
-      flight_time = result.flight_time;
-      return true;
+  // service 模式: 优先使用 ballistic_solver 服务
+  // local 模式: 完全跳过 service，避免 timeout 告警。
+  if (!prefer_local_ballistic_) {
+    if (ballistic_client_ && ballistic_client_->isServiceAvailable()) {
+      auto result = ballistic_client_->solve(target_position, target_velocity, bullet_speed);
+      if (result.success) {
+        pitch = result.pitch;
+        yaw = result.yaw;
+        flight_time = result.flight_time;
+        return true;
+      }
     }
   }
 
@@ -91,6 +107,22 @@ bool GimbalControlStrategy::computeBallistic(
   flight_time = distance_xy / bullet_speed;
 
   return true;
+}
+
+void GimbalControlStrategy::markDelayAuditInvalid(
+  const std::string & strategy_name,
+  bool tracking)
+{
+  last_delay_audit_ = DelayAuditSnapshot{};
+  last_delay_audit_.strategy_name = strategy_name;
+  last_delay_audit_.tracking = tracking;
+  last_delay_audit_.valid = false;
+}
+
+void GimbalControlStrategy::markDelayAuditValid(const DelayAuditSnapshot & snapshot)
+{
+  last_delay_audit_ = snapshot;
+  last_delay_audit_.valid = true;
 }
 
 }  // namespace gimbal_controller

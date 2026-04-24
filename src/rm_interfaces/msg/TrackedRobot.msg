@@ -22,6 +22,29 @@ uint8 TRACKING = 1     # 稳定跟踪
 uint8 TEMP_LOST = 2    # 临时丢失
 uint8 track_state
 
+# ========================
+# 完整 6DoF 运动学状态（新实现）
+# ========================
+# 当 full_state_valid=true 时，优先使用以下字段。
+# center_pose:     机器人中心位姿 (xyz + roll/pitch/yaw 的四元数表达)
+# center_twist:    机器人中心速度 (linear + angular)
+# center_accel:    机器人中心加速度 (linear + angular)
+bool full_state_valid
+geometry_msgs/Pose center_pose
+geometry_msgs/Twist center_twist
+geometry_msgs/Accel center_accel
+
+# ========================
+# 兼容旧实现字段（保留）
+# ========================
+# 为兼容历史代码，以下字段继续保留并由新实现同步维护：
+# center_position      <-> center_pose.position
+# center_velocity      <-> center_twist.linear
+# center_acceleration  <-> center_accel.linear
+# yaw                  <-> center_pose.orientation(z-y-x 中的 yaw)
+# yaw_velocity         <-> center_twist.angular.z
+# yaw_acceleration     <-> center_accel.angular.z
+
 # 机器人中心位置 (世界坐标系)
 geometry_msgs/Point center_position
 
