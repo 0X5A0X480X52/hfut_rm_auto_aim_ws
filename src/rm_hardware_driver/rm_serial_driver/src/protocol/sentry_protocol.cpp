@@ -24,22 +24,20 @@ ProtocolSentry::ProtocolSentry(std::string_view port_name, bool enable_data_prin
 }
 
 void ProtocolSentry::send(const rm_interfaces::msg::GimbalCmd &data) {
-  const auto safe_data = sanitizeForTransport(data);
-
   try{
     // Packet layout (64B):
     // [0]header [1]mode [2]pitch [6]yaw [10]distance [14]target_id
     // [18..25]free_datas[8] [26]pitch_v [30]yaw_v
     // [34]nav_vx [38]nav_vy [42]nav_wz [46]angle_climb [50]ifclimb
     // [51]angle_attack_outpost [55]if_attack_outpost [56]referee_param [60..61]free_data[2]
-    packet.loadData<unsigned char>(safe_data.fire_advice ? FireState::Fire : FireState::NotFire, 1);
-    packet.loadData<float>(static_cast<float>(safe_data.pitch), 2);
-    packet.loadData<float>(static_cast<float>(safe_data.yaw), 6);
-    packet.loadData<float>(static_cast<float>(safe_data.distance), 10);
-    packet.loadData<float>(static_cast<float>(safe_data.pitch_v), 26);
-    packet.loadData<float>(static_cast<float>(safe_data.yaw_v), 30);
+    packet.loadData<unsigned char>(data.fire_advice ? FireState::Fire : FireState::NotFire, 1);
+    packet.loadData<float>(static_cast<float>(data.pitch), 2);
+    packet.loadData<float>(static_cast<float>(data.yaw), 6);
+    packet.loadData<float>(static_cast<float>(data.distance), 10);
+    packet.loadData<float>(static_cast<float>(data.pitch_v), 26);
+    packet.loadData<float>(static_cast<float>(data.yaw_v), 30);
     int target_id;
-    if (safe_data.target_id == "outpost")target_id = 8;
+    if (data.target_id == "outpost")target_id = 8;
     else target_id = 4; // default target id
     packet.loadData<int>(target_id, 14);
   }
