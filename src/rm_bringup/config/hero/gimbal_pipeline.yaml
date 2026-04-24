@@ -232,9 +232,11 @@ gimbal_pipeline:
     # 逻辑：先按估计 yaw 找到“未转到位”的最近真实板，再做最小旋转生成虚拟控制板。
     # 约束：虚拟板朝向沿“目标中心 -> 云台中心”连线。
     # controller.solver.selection_method: "virtual_pose"
+    # controller.solver.selection_method: "virtual_fixed_id"
     controller.solver.virtual_pose.auto_switch.enable: true
     controller.solver.virtual_pose.auto_switch.enter_vyaw: 1.0
-    controller.solver.virtual_pose.auto_switch.exit_vyaw: 15.0
+    controller.solver.virtual_pose.auto_switch.exit_vyaw: 16.0
+    controller.solver.virtual_pose.fixed_id: 0
 
     # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
     # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
@@ -305,7 +307,7 @@ gimbal_pipeline:
     #   min_movement_with_radial  — 过滤后按机器人中心径向夹角最小选板
     #   min_movement              — 纯最小运动量，无朝向过滤
     #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
-    controller.solver.selection_method: "min_movement_with_facing"
+    controller.solver.selection_method: "virtual_fixed_id"
 
     # controller.state_machine.facing_enter_angle: 40.0
     # controller.state_machine.facing_exit_angle: 55.0
@@ -412,7 +414,7 @@ gimbal_pipeline:
     # 并对每步迭代补偿子弹飞行时间、选板时考虑延迟后的云台姿态
     # enable_delay_compensation: false 时行为与原版完全一致
     controller.mpc.enable_delay_compensation: true
-    controller.mpc.prediction_delay_s: 0.10      # 额外预测延迟 (秒), 叠加在 processing_delay 之上
+    controller.mpc.prediction_delay_s: 0.16      # 额外预测延迟 (秒), 叠加在 processing_delay 之上
     controller.mpc.flight_time_iters: 2          # 飞行时间迭代补偿次数
     controller.mpc.max_processing_delay_s: 0.5   # 最大处理延迟 clamp 上限 (秒)
     # yaw 速度前馈等效前瞻时间 (秒): yaw_ff ≈ target_yaw_velocity * k_s
