@@ -21,6 +21,9 @@ struct ObservationData {
   double confidence = 1.0;
   std::optional<double> timestamp;
 
+  // 来源相机 frame_id
+  std::string source_frame;
+
   Eigen::Vector3d position() const { return {x, y, z}; }
 
   Eigen::Vector4d as_4d() const { return {x, y, z, yaw}; }

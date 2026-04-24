@@ -1,0 +1,28 @@
+/**:
+  ros__parameters:
+    # Camera identification (相机标识)
+    camera_name: "blind_camera_1"
+
+    # Device configuration (设备配置)
+    # camera_id will be determined by udev rule symlink: /dev/camera_blind_camera_1
+    # camera_id: 0  # Not used when using device path
+
+    # Image resolution (图像分辨率)
+    width: 640
+    height: 480
+
+    # Frame rate (帧率)
+    fps: 30.0
+
+    # Frame id for published Image (发布图像的frame_id)
+    frame_id: "blind_camera_1_optical_frame"
+
+    # Camera info URL (相机内参文件路径)
+    camera_info_url: "package://usb_camera_driver/config/camera_info_1.yaml"
+
+    # QoS settings (服务质量设置)
+    use_sensor_data_qos: false
+
+    # Camera pose relative to gimbal_link (相机相对于云台的位姿)
+    xyz: "0.05 0.1 0.05"
+    rpy: "0.0 0.0 0.0"

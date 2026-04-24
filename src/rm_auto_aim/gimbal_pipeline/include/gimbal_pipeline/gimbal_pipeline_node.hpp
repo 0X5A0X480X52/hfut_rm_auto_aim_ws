@@ -115,7 +115,8 @@ class GimbalPipelineNode : public rclcpp::Node {
   void updateGimbalState();
   void buildControlContextFromCache(
       gimbal_controller::GimbalControlContext &context,
-      std::string &selected_id);
+      std::string &selected_id,
+      SelectionResult::ControlMode &control_mode);
   void publishDelayAuditDebug(
       const gimbal_controller::GimbalControlContext &context,
       const gimbal_controller::DelayAuditSnapshot &audit,
@@ -168,6 +169,18 @@ class GimbalPipelineNode : public rclcpp::Node {
   std::string current_target_id_;
 
   /* ================================================================ */
+  /*  Guidance state machine (for blind camera)                       */
+  /* ================================================================ */
+  enum class GuidanceState {
+    IDLE,       // 空闲，正常自瞄
+    ROTATING    // 正在旋转引导
+  };
+  GuidanceState guidance_state_{GuidanceState::IDLE};
+  rclcpp::Time guidance_start_time_;
+  static constexpr double GUIDANCE_TIMEOUT{3.0};  // 引导超时（秒），超时后重置计时器
+  double guidance_end_yaw_threshold_deg_{5.0};    // 引导结束的 yaw deviation 阈值（度），目标进入主相机视野中心时结束引导
+
+  /* ================================================================ */
   /*  Gimbal controller state (from GimbalControllerNode)             */
   /* ================================================================ */
   std::shared_ptr<gimbal_controller::ArmorPositionCalculator> position_calculator_;
@@ -207,6 +220,7 @@ class GimbalPipelineNode : public rclcpp::Node {
   rm_interfaces::msg::TrackedRobots::SharedPtr latest_tracked_robots_;
   std::string latest_selected_target_id_;
   double latest_selected_confidence_{0.0};
+  SelectionResult::ControlMode latest_control_mode_{SelectionResult::MODE_NO_TARGET};
   rclcpp::Time latest_update_time_{0, 0, RCL_ROS_TIME};  // local clock when data was cached
 
   /* ================================================================ */

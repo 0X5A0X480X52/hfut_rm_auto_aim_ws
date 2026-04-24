@@ -63,8 +63,10 @@ class TFHandler {
     auto transformed = transform_pose(ps);
     if (!transformed) return std::nullopt;
 
-    return pose_to_observation(transformed->pose,
-                               stamp.seconds());
+    auto obs = pose_to_observation(transformed->pose, stamp.seconds());
+    // 使用 armor.source_frame 如果可用，否则使用传入的 source_frame
+    obs.source_frame = armor.source_frame.empty() ? source_frame : armor.source_frame;
+    return obs;
   }
 
   bool can_transform(const std::string &source_frame) const {

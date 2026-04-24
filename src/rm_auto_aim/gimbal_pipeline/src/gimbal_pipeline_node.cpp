@@ -266,6 +266,13 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       get_parameter("selector.sticky_lock_frames").as_int();
     selection_config_.sticky_lost_frames =
       get_parameter("selector.sticky_lost_frames").as_int();
+  // 补盲相机参数
+  selection_config_.main_camera_frame =
+      get_parameter("selector.main_camera_frame").as_string();
+  selection_config_.blind_camera_frame =
+      get_parameter("selector.blind_camera_frame").as_string();
+  guidance_end_yaw_threshold_deg_ =
+      get_parameter("selector.guidance_end_yaw_threshold").as_double();
   initSelectionStrategy();
 
   RCLCPP_INFO(get_logger(), "[GimbalPipelineNode] selector_strategy: %s", selector_strategy_name_.c_str());
@@ -804,6 +811,10 @@ void GimbalPipelineNode::declareTargetSelectorParameters() {
   declare_parameter("selector.priority_robot_ids", std::vector<std::string>{});
   declare_parameter("selector.sticky_lock_frames", 3);
   declare_parameter("selector.sticky_lost_frames", 3);
+  // 补盲相机参数
+  declare_parameter("selector.main_camera_frame", "camera_optical_frame");
+  declare_parameter("selector.blind_camera_frame", "blind_camera_1_optical_frame");
+  declare_parameter("selector.guidance_end_yaw_threshold", 5.0);  // 引导结束的 yaw deviation 阈值（度）
 }
 
 void GimbalPipelineNode::declareGimbalControllerParameters() {
@@ -1555,6 +1566,7 @@ void GimbalPipelineNode::armorsCallback(
         std::make_shared<rm_interfaces::msg::TrackedRobots>(tracked_msg);
     latest_selected_target_id_ = sel_result.robot_id;
     latest_selected_confidence_ = sel_result.confidence;
+    latest_control_mode_ = sel_result.control_mode;
     latest_update_time_ = now();  // record local clock for processing_delay
   }
 
@@ -1642,6 +1654,9 @@ rm_interfaces::msg::TrackedRobots GimbalPipelineNode::buildTrackedRobotsMsg(
     if (robot.robot_id.empty()) {
       continue;
     }
+
+    // 设置来源相机
+    robot.source_frame = tracker_manager_->get_source_frame(rid);
 
     tracked_msg.robots.push_back(robot);
   }
@@ -1766,25 +1781,173 @@ void GimbalPipelineNode::initSelectionStrategy() {
 
 SelectionResult GimbalPipelineNode::selectTargetInternal(
     const rm_interfaces::msg::TrackedRobots &robots) {
+  using TrackedRobot = rm_interfaces::msg::TrackedRobot;
   selection_config_.current_target_id = current_target_id_;
 
-  auto result = selection_strategy_->selectTarget(robots, selection_config_);
+  // 动态更新参考 yaw 为当前炮口方向，确保目标选择基于当前视角
+  selection_config_.reference_yaw = current_yaw_;
 
-  if (!result.has_value()) {
-    current_target_id_ = "";
-    return SelectionResult();
+  // 分离主相机目标和补盲相机目标
+  std::vector<const TrackedRobot*> main_camera_targets;
+  std::vector<const TrackedRobot*> blind_camera_targets;
+
+  for (const auto& robot : robots.robots) {
+    if (robot.source_frame == selection_config_.main_camera_frame) {
+      main_camera_targets.push_back(&robot);
+    } else if (robot.source_frame == selection_config_.blind_camera_frame) {
+      blind_camera_targets.push_back(&robot);
+    }
   }
 
-  bool target_changed = (result->robot_id != current_target_id_);
-  if (target_changed) {
-    RCLCPP_INFO(get_logger(), "Target changed: %s -> %s (yaw_dev=%.3f, dist=%.2f)",
-                current_target_id_.empty() ? "none" : current_target_id_.c_str(),
-                result->robot_id.c_str(), result->yaw_deviation,
-                result->distance);
-    current_target_id_ = result->robot_id;
+  // ========== 引导状态处理 ==========
+  // 如果正在引导，检查是否应该结束引导
+  if (guidance_state_ == GuidanceState::ROTATING) {
+    double elapsed = (this->now() - guidance_start_time_).seconds();
+
+    // 检查引导结束条件
+    bool guidance_timeout = (elapsed > GUIDANCE_TIMEOUT);
+
+    // 计算当前引导目标的 yaw deviation
+    double current_yaw_deviation = M_PI;  // 默认值，表示无目标
+    if (!blind_camera_targets.empty()) {
+      // 找到当前正在引导的目标
+      for (const auto* robot : blind_camera_targets) {
+        if (robot->robot_id == current_target_id_) {
+          const auto center = robot_description::TrackedRobotUsage::centerPosition(*robot);
+          double robot_yaw = std::atan2(center.y(), center.x());
+          double deviation = robot_yaw - selection_config_.reference_yaw;
+          while (deviation > M_PI) deviation -= 2.0 * M_PI;
+          while (deviation < -M_PI) deviation += 2.0 * M_PI;
+          current_yaw_deviation = std::abs(deviation);
+          break;
+        }
+      }
+    }
+
+    // 引导结束条件：超时 或 yaw deviation 小于阈值（目标已进入主相机视野中心）
+    double threshold_rad = guidance_end_yaw_threshold_deg_ * M_PI / 180.0;
+    bool guidance_complete = (current_yaw_deviation < threshold_rad);
+
+    if (guidance_timeout || guidance_complete) {
+      if (guidance_timeout) {
+        RCLCPP_WARN(get_logger(), "Guidance timeout, returning to IDLE");
+      } else {
+        RCLCPP_INFO(get_logger(), "Guidance complete: target %s in main camera view (yaw_dev=%.2f deg)",
+                    current_target_id_.c_str(), current_yaw_deviation * 180.0 / M_PI);
+      }
+      guidance_state_ = GuidanceState::IDLE;
+    } else {
+      // 引导未结束，继续使用补盲相机目标
+      if (!blind_camera_targets.empty()) {
+        // 选择距离最近的补盲相机目标（优先保持当前目标）
+        const TrackedRobot* nearest = nullptr;
+        double min_distance = std::numeric_limits<double>::max();
+
+        for (const auto* robot : blind_camera_targets) {
+          double dist = robot_description::TrackedRobotUsage::centerDistance(*robot);
+          if (dist < min_distance) {
+            min_distance = dist;
+            nearest = robot;
+          }
+        }
+
+        if (nearest) {
+          SelectionResult result;
+          result.robot_id = nearest->robot_id;
+          result.confidence = nearest->confidence;
+          result.distance = min_distance;
+          result.control_mode = SelectionResult::MODE_GUIDANCE;
+          result.source_frame = selection_config_.blind_camera_frame;
+
+          const auto center = robot_description::TrackedRobotUsage::centerPosition(*nearest);
+          double robot_yaw = std::atan2(center.y(), center.x());
+          double deviation = robot_yaw - selection_config_.reference_yaw;
+          while (deviation > M_PI) deviation -= 2.0 * M_PI;
+          while (deviation < -M_PI) deviation += 2.0 * M_PI;
+          result.yaw_deviation = std::abs(deviation);
+
+          current_target_id_ = result.robot_id;
+          return result;
+        }
+      }
+      // 补盲相机无目标，引导结束
+      guidance_state_ = GuidanceState::IDLE;
+    }
   }
 
-  return *result;
+  // ========== 正常自瞄模式（非引导状态） ==========
+  // 模式 A: 主相机有目标 → 使用现有策略进行精确自瞄
+  if (!main_camera_targets.empty()) {
+    // 构造仅包含主相机目标的 TrackedRobots
+    rm_interfaces::msg::TrackedRobots main_robots;
+    main_robots.header = robots.header;
+    for (const auto* robot : main_camera_targets) {
+      main_robots.robots.push_back(*robot);
+    }
+
+    auto result = selection_strategy_->selectTarget(main_robots, selection_config_);
+
+    if (result.has_value()) {
+      result->control_mode = SelectionResult::MODE_PRECISE_AIM;
+      result->source_frame = selection_config_.main_camera_frame;
+
+      bool target_changed = (result->robot_id != current_target_id_);
+      if (target_changed) {
+        RCLCPP_INFO(get_logger(), "Target changed: %s -> %s (main camera, yaw_dev=%.3f, dist=%.2f)",
+                    current_target_id_.empty() ? "none" : current_target_id_.c_str(),
+                    result->robot_id.c_str(), result->yaw_deviation, result->distance);
+        current_target_id_ = result->robot_id;
+      }
+
+      return *result;
+    }
+  }
+
+  // 模式 B: 仅补盲相机有目标 → 选择最近的目标进行引导
+  if (main_camera_targets.empty() && !blind_camera_targets.empty()) {
+    // 选择距离最近的补盲相机目标
+    const TrackedRobot* nearest = nullptr;
+    double min_distance = std::numeric_limits<double>::max();
+
+    for (const auto* robot : blind_camera_targets) {
+      double dist = robot_description::TrackedRobotUsage::centerDistance(*robot);
+      if (dist < min_distance) {
+        min_distance = dist;
+        nearest = robot;
+      }
+    }
+
+    if (nearest) {
+      SelectionResult result;
+      result.robot_id = nearest->robot_id;
+      result.confidence = nearest->confidence;
+      result.distance = min_distance;
+      result.control_mode = SelectionResult::MODE_GUIDANCE;
+      result.source_frame = selection_config_.blind_camera_frame;
+
+      // 计算 yaw deviation
+      const auto center = robot_description::TrackedRobotUsage::centerPosition(*nearest);
+      double robot_yaw = std::atan2(center.y(), center.x());
+      double deviation = robot_yaw - selection_config_.reference_yaw;
+      while (deviation > M_PI) deviation -= 2.0 * M_PI;
+      while (deviation < -M_PI) deviation += 2.0 * M_PI;
+      result.yaw_deviation = std::abs(deviation);
+
+      // 开始引导
+      guidance_state_ = GuidanceState::ROTATING;
+      guidance_start_time_ = this->now();
+      RCLCPP_INFO(get_logger(), "Guidance started: target %s from blind camera (dist=%.2f)",
+                  result.robot_id.c_str(), result.distance);
+
+      current_target_id_ = result.robot_id;
+      return result;
+    }
+  }
+
+  // 模式 C: 无目标
+  current_target_id_ = "";
+  guidance_state_ = GuidanceState::IDLE;
+  return SelectionResult();
 }
 
 /* ================================================================ */
@@ -2008,10 +2171,12 @@ void GimbalPipelineNode::updateGimbalState() {
 
 void GimbalPipelineNode::buildControlContextFromCache(
     gimbal_controller::GimbalControlContext & context,
-    std::string & selected_id) {
+    std::string & selected_id,
+    SelectionResult::ControlMode & control_mode) {
   context.is_tracking = false;
   context.is_temp_lost = false;
   context.is_maneuvering = false;
+  control_mode = SelectionResult::MODE_NO_TARGET;
 
   // Read shared state (thread-safe)
   rm_interfaces::msg::TrackedRobots::SharedPtr robots;
@@ -2020,6 +2185,7 @@ void GimbalPipelineNode::buildControlContextFromCache(
     std::lock_guard<std::mutex> lock(pipeline_mutex_);
     robots = latest_tracked_robots_;
     selected_id = latest_selected_target_id_;
+    control_mode = latest_control_mode_;
     data_update_time = latest_update_time_;
   }
 
@@ -2125,32 +2291,109 @@ void GimbalPipelineNode::timerCallback() {
 
   // Step 3: 从共享缓存构建目标上下文
   std::string selected_id;
-  buildControlContextFromCache(context, selected_id);
+  SelectionResult::ControlMode control_mode = SelectionResult::MODE_NO_TARGET;
+  buildControlContextFromCache(context, selected_id, control_mode);
 
-  // Step 4: 核心类统一生成命令（strategy + finalize + filter + audit）
-  const auto control_result = gimbal_control_core_->compute(
-    context, current_gimbal_strategy_name_, selected_id, true);
-  if (!control_result.strategy_found) {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(), *get_clock(), 2000,
-      "Gimbal strategy '%s' not found, fallback to idle cmd",
-      current_gimbal_strategy_name_.c_str());
+  // Step 4: 根据控制模式生成命令
+  rm_interfaces::msg::GimbalCmd cmd;
+
+  if (control_mode == SelectionResult::MODE_GUIDANCE) {
+    // 引导模式：只控制 yaw，让目标进入主相机视野
+    // 计算目标相对于云台的 yaw 角
+    const auto& robot = context.target_robot;
+    const auto center = robot_description::TrackedRobotUsage::centerPosition(robot);
+    double target_yaw = std::atan2(center.y(), center.x());
+    double yaw_diff_rad = target_yaw - current_yaw_;
+    while (yaw_diff_rad > M_PI) yaw_diff_rad -= 2.0 * M_PI;
+    while (yaw_diff_rad < -M_PI) yaw_diff_rad += 2.0 * M_PI;
+
+    cmd.header.stamp = now();
+    // 与精确自瞄模式保持一致，输出角度制（度）
+    cmd.yaw = target_yaw * 180.0 / M_PI;
+    cmd.yaw_diff = yaw_diff_rad * 180.0 / M_PI;
+    cmd.yaw_v = 0.0;
+    cmd.yaw_a = 0.0;
+    cmd.pitch = current_pitch_ * 180.0 / M_PI;
+    cmd.pitch_diff = 0.0;
+    cmd.pitch_v = 0.0;
+    cmd.pitch_a = 0.0;
+    cmd.distance = center.norm();
+    cmd.fire_advice = false;  // 引导模式不开火
+    cmd.target_id = robot.robot_id;
+    cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_BLIND_CAMERA_RESULT;  // -2
+
+    if (debug_mode_) {
+      RCLCPP_DEBUG(get_logger(), "Guidance mode: target_yaw=%.2f deg, current_yaw=%.2f deg, diff=%.2f deg",
+                   cmd.yaw, current_yaw_ * 180.0 / M_PI, cmd.yaw_diff);
+    }
+
+    if (debug_mode_ && debug_gimbal_marker_pub_) {
+      // 引导模式仅发布数字置信度文本 Marker（无 UKF 预测，不发布速度/轨迹等）
+      const auto& robot = context.target_robot;
+      const auto center = robot_description::TrackedRobotUsage::centerPosition(robot);
+
+      visualization_msgs::msg::MarkerArray arr;
+      visualization_msgs::msg::Marker text;
+      text.header       = robot.header;
+      text.ns           = "blind_camera_text";
+      text.id           = 0;
+      text.type         = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+      text.action       = visualization_msgs::msg::Marker::ADD;
+      text.pose.position.x = center.x();
+      text.pose.position.y = center.y();
+      text.pose.position.z = center.z() + 0.35;
+      text.pose.orientation.w = 1.0;
+      text.scale.z      = 0.10;
+      text.color.r      = 1.0f;
+      text.color.g      = 0.8f;
+      text.color.b      = 0.0f;
+      text.color.a      = 1.0f;
+      text.lifetime     = rclcpp::Duration::from_seconds(0.15);
+
+      char buf[64];
+      std::snprintf(buf, sizeof(buf), "[%s]\nconf=%.2f",
+                    robot.robot_id.c_str(), robot.confidence);
+      text.text = buf;
+
+      arr.markers.push_back(text);
+      debug_gimbal_marker_pub_->publish(arr);
+    }
+  } else {
+    // 精确自瞄模式或无目标：使用现有控制逻辑
+    const auto control_result = gimbal_control_core_->compute(
+      context, current_gimbal_strategy_name_, selected_id, true);
+
+    if (!control_result.strategy_found) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "Gimbal strategy '%s' not found, fallback to idle cmd",
+        current_gimbal_strategy_name_.c_str());
+    }
+
+    cmd = control_result.cmd;
+
+    // 设置 mode 标志
+    if (control_mode == SelectionResult::MODE_PRECISE_AIM) {
+      cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_NORMAL_MEASUREMENT;  // 1
+    } else {
+      cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_NO_VALID_MEASUREMENT;  // -1
+    }
+
+    // Step 5b: 发布调试信息（audit + marker）
+    if (debug_mode_ && debug_delay_audit_pub_) {
+      publishDelayAuditDebug(
+        context,
+        control_result.delay_audit,
+        current_gimbal_strategy_name_);
+    }
+
+    if (debug_mode_ && control_result.has_tracking) {
+      publishGimbalMarkers(context.target_robot, cmd);
+    }
   }
 
   // Step 5: 发布控制命令
-  gimbal_cmd_pub_->publish(control_result.cmd);
-
-  // Step 6: 发布调试信息（audit + marker）
-  if (debug_mode_ && debug_delay_audit_pub_) {
-    publishDelayAuditDebug(
-      context,
-      control_result.delay_audit,
-      current_gimbal_strategy_name_);
-  }
-
-  if (debug_mode_ && control_result.has_tracking) {
-    publishGimbalMarkers(context.target_robot, control_result.cmd);
-  }
+  gimbal_cmd_pub_->publish(cmd);
 }
 
 /* ================================================================ */

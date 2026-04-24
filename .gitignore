@@ -20,3 +20,7 @@ screen.output
 InEKF/**
 rosbag2_*/**
 MvSdkLog/**
+
+docs/
+.claude/
+CLAUDE.md

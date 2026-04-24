@@ -91,3 +91,6 @@ int32 num_armors
 # 可见性信息
 bool is_visible
 int32 visible_armor_count
+
+# 目标来源相机 frame_id (首次检测到该机器人的相机)
+string source_frame
