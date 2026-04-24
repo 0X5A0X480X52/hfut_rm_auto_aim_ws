@@ -34,8 +34,16 @@ namespace
 
 constexpr double kMinDistance = 1e-3;
 constexpr double kMinBulletSpeed = 1e-3;
+constexpr double kDeg2Rad = M_PI / 180.0;
 
 }  // namespace
+
+void CandidateImpactSolver::setFacingFilterOpeningAngleDeg(double opening_angle_deg)
+{
+  const double clamped_opening_angle_deg = std::clamp(opening_angle_deg, 0.0, 180.0);
+  facing_filter_enabled_ = clamped_opening_angle_deg < 180.0 - 1e-9;
+  facing_filter_cos_threshold_ = std::cos(0.5 * clamped_opening_angle_deg * kDeg2Rad);
+}
 
 delay_management::FireTimelineResult FireTimingResolver::resolve(
   const FireAdviceEngineRequest & request) const
@@ -224,6 +232,10 @@ std::vector<CandidateImpactSolution> CandidateImpactSolver::solve(
     fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(request.target_robot);
 
   const double base_dt = std::max(timeline.target_prediction_base_s, 0.0);
+  const auto center_position = fyt::auto_aim::robot_description::TrackedRobotUsage::predictCenter(
+    robot,
+    base_dt,
+    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
   auto base_positions = position_calculator_->calculatePredicted(robot, base_dt);
 
   if (base_positions.empty()) {
@@ -236,6 +248,19 @@ std::vector<CandidateImpactSolution> CandidateImpactSolver::solve(
 
   results.reserve(base_positions.size());
   for (int i = 0; i < static_cast<int>(base_positions.size()); ++i) {
+    if (facing_filter_enabled_) {
+      const Eigen::Vector3d armor_normal = base_positions[i] - center_position;
+      const Eigen::Vector3d armor_to_muzzle = -base_positions[i];
+      const double normal_norm = armor_normal.norm();
+      const double to_muzzle_norm = armor_to_muzzle.norm();
+      if (normal_norm > kMinDistance && to_muzzle_norm > kMinDistance) {
+        const double facing_cos = armor_normal.dot(armor_to_muzzle) / (normal_norm * to_muzzle_norm);
+        if (facing_cos < facing_filter_cos_threshold_) {
+          continue;
+        }
+      }
+    }
+
     auto solution = solveSingleCandidate(robot, i, request, timeline, flight_time_iters);
     if (solution.valid) {
       results.push_back(solution);

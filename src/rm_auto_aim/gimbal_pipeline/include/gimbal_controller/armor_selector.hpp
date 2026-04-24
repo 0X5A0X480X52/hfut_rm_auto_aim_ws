@@ -145,6 +145,18 @@ public:
     double auto_switch_exit_vyaw);
 
   /**
+   * @brief 设置自动切换时的虚拟模式选择方法
+   * @param method 虚拟模式方法 (virtual_pose | virtual_fixed_id)
+   */
+  void setVirtualAutoSwitchMethod(SelectionMethod method);
+
+  /**
+   * @brief 设置自动切换时的固定虚拟装甲板 ID
+   * @param fixed_id 指定的装甲板索引 ID
+   */
+  void setVirtualAutoSwitchFixedId(int fixed_id);
+
+  /**
    * @brief 设置固定虚拟装甲板 ID
    * @param fixed_id 指定的装甲板索引 ID
    */
@@ -236,6 +248,7 @@ public:
     const std::vector<Eigen::Vector3d> & armor_positions,
     const Eigen::Vector3d & target_center,
     int num_armors,
+    int fixed_id,
     double current_yaw,
     double current_pitch) const;
 
@@ -318,6 +331,8 @@ private:
   double virtual_auto_switch_enter_vyaw_{8.0};
   double virtual_auto_switch_exit_vyaw_{6.0};
   int virtual_fixed_id_{0};
+  SelectionMethod virtual_auto_switch_method_{SelectionMethod::VIRTUAL_POSE};
+  int virtual_auto_switch_fixed_id_{0};
 
   // 选板策略
   SelectionMethod selection_method_{SelectionMethod::MIN_MOVEMENT_WITH_FACING};

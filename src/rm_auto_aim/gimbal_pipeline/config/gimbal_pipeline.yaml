@@ -237,6 +237,10 @@ gimbal_pipeline:
     controller.solver.virtual_pose.auto_switch.enable: true
     controller.solver.virtual_pose.auto_switch.enter_vyaw: 8.0
     controller.solver.virtual_pose.auto_switch.exit_vyaw: 6.0
+    # auto_switch 模式可独立配置："virtual_pose" | "virtual_fixed_id"
+    controller.solver.virtual_pose.auto_switch.selection_method: "virtual_pose"
+    # auto_switch 固定 ID（仅在 selection_method=virtual_fixed_id 时生效）
+    controller.solver.virtual_pose.auto_switch.fixed_id: 0
     controller.solver.virtual_pose.fixed_id: 0
 
     # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)

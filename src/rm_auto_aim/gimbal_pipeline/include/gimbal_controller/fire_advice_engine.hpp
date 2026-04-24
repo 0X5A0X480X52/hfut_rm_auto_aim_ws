@@ -136,6 +136,8 @@ public:
     prefer_local_ballistic_ = (mode == "local");
   }
 
+  void setFacingFilterOpeningAngleDeg(double opening_angle_deg);
+
   void setComponents(
     std::shared_ptr<ArmorPositionCalculator> position_calculator,
     std::shared_ptr<BallisticSolverClient> ballistic_client,
@@ -166,6 +168,8 @@ private:
   std::shared_ptr<BallisticSolverClient> ballistic_client_;
   std::shared_ptr<LocalTrajectoryCompensator> local_compensator_;
   bool prefer_local_ballistic_{false};
+  bool facing_filter_enabled_{false};
+  double facing_filter_cos_threshold_{-1.0};
 };
 
 class FireAdviceEngine
@@ -193,6 +197,11 @@ public:
   void setBallisticMode(const std::string & mode)
   {
     candidate_solver_.setBallisticMode(mode);
+  }
+
+  void setFacingFilterOpeningAngleDeg(double opening_angle_deg)
+  {
+    candidate_solver_.setFacingFilterOpeningAngleDeg(opening_angle_deg);
   }
 
   FireAdviceEngineResult evaluate(const FireAdviceEngineRequest & request) const;

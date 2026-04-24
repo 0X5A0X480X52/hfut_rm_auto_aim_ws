@@ -34,7 +34,8 @@ ArmorSelectionResult ArmorSelector::selectBest(
   double current_yaw,
   double current_pitch)
 {
-  bool use_virtual_mode = (selection_method_ == SelectionMethod::VIRTUAL_POSE);
+  bool auto_switch_active = false;
+  SelectionMethod effective_method = selection_method_;
   if (virtual_auto_switch_enable_) {
     const double abs_v_yaw = std::abs(target_v_yaw);
     if (virtual_mode_active_) {
@@ -44,30 +45,40 @@ ArmorSelectionResult ArmorSelector::selectBest(
     } else if (abs_v_yaw > virtual_auto_switch_enter_vyaw_) {
       virtual_mode_active_ = true;
     }
-    use_virtual_mode = use_virtual_mode || virtual_mode_active_;
+    auto_switch_active = virtual_mode_active_;
   }
 
-  if (use_virtual_mode) {
-    return selectByVirtualPose(
-      armor_positions,
-      target_center,
-      target_yaw,
-      num_armors,
-      target_v_yaw,
-      current_yaw,
-      current_pitch);
+  if (auto_switch_active) {
+    effective_method = virtual_auto_switch_method_;
   }
 
-  if (selection_method_ == SelectionMethod::VIRTUAL_FIXED_ID) {
-    return selectByVirtualFixedId(
-      armor_positions,
-      target_center,
-      num_armors,
-      current_yaw,
-      current_pitch);
+  switch (effective_method) {
+    case SelectionMethod::VIRTUAL_POSE:
+      return selectByVirtualPose(
+        armor_positions,
+        target_center,
+        target_yaw,
+        num_armors,
+        target_v_yaw,
+        current_yaw,
+        current_pitch);
+
+    case SelectionMethod::VIRTUAL_FIXED_ID: {
+      const int fixed_id = auto_switch_active ? virtual_auto_switch_fixed_id_ : virtual_fixed_id_;
+      return selectByVirtualFixedId(
+        armor_positions,
+        target_center,
+        num_armors,
+        fixed_id,
+        current_yaw,
+        current_pitch);
+    }
+
+    default:
+      break;
   }
 
-  switch (selection_method_) {
+  switch (effective_method) {
     case SelectionMethod::MIN_MOVEMENT:
       return selectByMinMovement(armor_positions, current_yaw, current_pitch);
 
@@ -149,6 +160,20 @@ void ArmorSelector::setVirtualPoseParameters(
   if (!virtual_auto_switch_enable_) {
     virtual_mode_active_ = false;
   }
+}
+
+void ArmorSelector::setVirtualAutoSwitchMethod(SelectionMethod method)
+{
+  if (method == SelectionMethod::VIRTUAL_POSE || method == SelectionMethod::VIRTUAL_FIXED_ID) {
+    virtual_auto_switch_method_ = method;
+  } else {
+    virtual_auto_switch_method_ = SelectionMethod::VIRTUAL_POSE;
+  }
+}
+
+void ArmorSelector::setVirtualAutoSwitchFixedId(int fixed_id)
+{
+  virtual_auto_switch_fixed_id_ = fixed_id;
 }
 
 void ArmorSelector::setVirtualFixedId(int fixed_id)
@@ -710,6 +735,7 @@ ArmorSelectionResult ArmorSelector::selectByVirtualFixedId(
   const std::vector<Eigen::Vector3d> & armor_positions,
   const Eigen::Vector3d & target_center,
   int num_armors,
+  int fixed_id,
   double current_yaw,
   double current_pitch) const
 {
@@ -728,7 +754,7 @@ ArmorSelectionResult ArmorSelector::selectByVirtualFixedId(
   }
 
   const int armor_count = std::max(1, std::min(num_armors, static_cast<int>(armor_positions.size())));
-  int fixed_idx = virtual_fixed_id_ % armor_count;
+  int fixed_idx = fixed_id % armor_count;
   if (fixed_idx < 0) {
     fixed_idx += armor_count;
   }

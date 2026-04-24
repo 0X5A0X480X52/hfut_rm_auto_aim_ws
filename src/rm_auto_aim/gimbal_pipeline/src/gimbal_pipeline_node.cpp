@@ -312,6 +312,10 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     get_parameter("controller.solver.virtual_pose.auto_switch.enter_vyaw").as_double();
   double virtual_auto_switch_exit_vyaw =
     get_parameter("controller.solver.virtual_pose.auto_switch.exit_vyaw").as_double();
+  std::string virtual_auto_switch_method_str =
+    get_parameter("controller.solver.virtual_pose.auto_switch.selection_method").as_string();
+  int virtual_auto_switch_fixed_id =
+    get_parameter("controller.solver.virtual_pose.auto_switch.fixed_id").as_int();
   int virtual_fixed_id = get_parameter("controller.solver.virtual_pose.fixed_id").as_int();
   double controller_delay = readCompatDoubleParameter(
     *this, "controller.solver.controller_delay", "solver.controller_delay");
@@ -325,6 +329,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   std::string selection_method_str = get_parameter("controller.solver.selection_method").as_string();
   std::string fire_policy = get_parameter("controller.fire.decision_policy").as_string();
   int fire_flight_time_iters = get_parameter("controller.fire.flight_time_iters").as_int();
+  double fire_facing_filter_opening_angle_deg =
+    get_parameter("controller.fire.facing_filter_opening_angle_deg").as_double();
   bool fire_use_gimbal_kinematics =
     get_parameter("controller.fire.use_gimbal_kinematics").as_bool();
 
@@ -352,6 +358,13 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     virtual_auto_switch_enable,
     virtual_auto_switch_enter_vyaw,
     virtual_auto_switch_exit_vyaw);
+  gimbal_controller::ArmorSelector::SelectionMethod auto_switch_method =
+    gimbal_controller::ArmorSelector::SelectionMethod::VIRTUAL_POSE;
+  if (virtual_auto_switch_method_str == "virtual_fixed_id") {
+    auto_switch_method = gimbal_controller::ArmorSelector::SelectionMethod::VIRTUAL_FIXED_ID;
+  }
+  armor_selector_->setVirtualAutoSwitchMethod(auto_switch_method);
+  armor_selector_->setVirtualAutoSwitchFixedId(virtual_auto_switch_fixed_id);
   armor_selector_->setVirtualFixedId(virtual_fixed_id);
 
   // 配置选板策略
@@ -383,6 +396,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   }
   if (fire_advice_engine_) {
     fire_advice_engine_->setFlightTimeIterations(fire_flight_time_iters);
+    fire_advice_engine_->setFacingFilterOpeningAngleDeg(fire_facing_filter_opening_angle_deg);
     fire_advice_engine_->setUseGimbalKinematics(fire_use_gimbal_kinematics);
   }
   if (gimbal_control_core_) {
@@ -857,6 +871,9 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.solver.virtual_pose.auto_switch.enable", false);
   declare_parameter("controller.solver.virtual_pose.auto_switch.enter_vyaw", 8.0);
   declare_parameter("controller.solver.virtual_pose.auto_switch.exit_vyaw", 6.0);
+  declare_parameter("controller.solver.virtual_pose.auto_switch.selection_method",
+                    std::string("virtual_pose"));
+  declare_parameter("controller.solver.virtual_pose.auto_switch.fixed_id", 0);
   declare_parameter("controller.solver.virtual_pose.fixed_id", 0);
   declare_parameter("controller.solver.controller_delay", 0.0);
   declare_parameter("controller.solver.trigger_to_muzzle_s", 0.0);
@@ -864,6 +881,7 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.fire.trigger_to_muzzle_s", 0.0);
   declare_parameter("controller.fire.decision_policy", std::string("axis_threshold"));
   declare_parameter("controller.fire.flight_time_iters", 2);
+  declare_parameter("controller.fire.facing_filter_opening_angle_deg", 180.0);
   declare_parameter("controller.fire.use_gimbal_kinematics", false);
 
   // Deprecated aliases (for migration from legacy gimbal_controller keys)

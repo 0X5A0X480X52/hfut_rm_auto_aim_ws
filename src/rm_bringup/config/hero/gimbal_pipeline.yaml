@@ -103,30 +103,31 @@ gimbal_pipeline:
     outpost.stable_frames: 4
     outpost.z_history_window: 15
     outpost.single_mode_confidence_scale: 0.70
+    # binding parameters 
     outpost.binding_enable_multi_obs: true
-    outpost.binding_transition_confirm_frames: 3
-    outpost.binding_same_panel_yaw_gate: 0.35
-    outpost.binding_same_panel_z_gate: 0.08
-    outpost.binding_same_panel_xy_gate: 0.18
-    outpost.binding_min_candidate_prob: 0.40
-    outpost.binding_min_candidate_margin: 0.12
-    outpost.binding_switch_strong_score: 0.60
-    outpost.binding_period_window: 12
-    outpost.binding_period_weight: 0.60
-    outpost.binding_period_min_spin_rate: 0.8
-    outpost.binding_period_update_min_confidence: 0.55
-    outpost.binding_period_update_min_jump: 0.015
-    outpost.binding_dz_ema_alpha: 0.20
-    outpost.binding_confidence_floor: 0.15
-    outpost.alpha_pos: 0.65
-    outpost.beta_vel: 0.30
-    outpost.alpha_yaw: 0.60
-    outpost.beta_yaw_rate: 0.25
-    outpost.assume_static_center: true
-    outpost.linear_velocity_damping: 0.90
-    outpost.yaw_rate_damping: 0.98
-    outpost.max_center_speed: 1.00
-    outpost.max_yaw_rate: 12.0
+    outpost.binding_transition_confirm_frames: 3 # 过渡状态确认帧数
+    outpost.binding_same_panel_yaw_gate: 0.35    # 同板块候选 yaw 差门限 (rad)，过大可能误绑定不同板，过小可能错过同板候选
+    outpost.binding_same_panel_z_gate: 0.08      # 同板块候选 z 差门限 (m)，过大可能误绑定不同板，过小可能错过同板候选
+    outpost.binding_same_panel_xy_gate: 0.18     # 同板块候选 xy 差门限 (m)，过大可能误绑定不同板，过小可能错过同板候选
+    outpost.binding_min_candidate_prob: 0.40     # 绑定候选最小概率门限，过高可能错过正确绑定，过低可能引入错误绑定
+    outpost.binding_min_candidate_margin: 0.12   # 绑定候选相对次优的最小概率边际，过高可能错过正确绑定，过低可能引入错误绑定
+    outpost.binding_switch_strong_score: 0.60    # 直接切换到新候选的强绑定分数门限，过高可能错过正确绑定，过低可能引入错误绑定
+    outpost.binding_period_window: 12            # 周期绑定窗口长度（帧数），过长可能引入错误绑定，过短可能错过周期绑定机会
+    outpost.binding_period_weight: 0.60          # 周期绑定候选分数权重，过高可能引入错误绑定，过低可能错过周期绑定机会
+    outpost.binding_period_min_spin_rate: 0.8    # 周期绑定最小旋转速率门限 (rad/s)，过高可能错过周期绑定机会，过低可能引入错误绑定
+    outpost.binding_period_update_min_confidence: 0.55 # 周期绑定更新最小置信度门限，过高可能错过正确绑定更新，过低可能引入错误绑定更新
+    outpost.binding_period_update_min_jump: 0.015      # 周期绑定更新最小跳变门限 (m)，过高可能错过正确绑定更新，过低可能引入错误绑定更新
+    outpost.binding_dz_ema_alpha: 0.20           # z 跳变 EMA 平滑系数，过高可能引入过度平滑导致响应迟钝，过低可能错过正确绑定更新
+    outpost.binding_confidence_floor: 0.15       # 绑定置信度下限，过高可能错过正确绑定，过低可能引入错误绑定
+    outpost.alpha_pos: 0.65                      # 位置残差权重衰减，过高可能导致 tracker 对位置残差不敏感，过低可能导致 tracker 过度依赖位置残差
+    outpost.beta_vel: 0.30                       # 速度残差权重衰减，过高可能导致 tracker 对速度残差不敏感，过低可能导致 tracker 过度依赖速度残差
+    outpost.alpha_yaw: 0.60                      # 朝向残差权重衰减，过高可能导致 tracker 对朝向残差不敏感，过低可能导致 tracker 过度依赖朝向残差
+    outpost.beta_yaw_rate: 0.25                  # 角速度残差权重衰减，过高可能导致 tracker 对角速度残差不敏感，过低可能导致 tracker 过度依赖角速度残差
+    outpost.assume_static_center: true           # 假设中心点静止，启用后 tracker 可能更稳定但对快速移动目标响应不足
+    outpost.linear_velocity_damping: 0.90        # 线速度权重衰减，过高可能导致 tracker 对线速度不敏感，过低可能导致 tracker 过度依赖线速度
+    outpost.yaw_rate_damping: 0.98               # 角速度权重衰减，过高可能导致 tracker 对角速度不敏感，过低可能导致 tracker 过度依赖角速度
+    outpost.max_center_speed: 1.00               # 最大中心点速度 (m/s)，过高可能导致 tracker 对快速移动目标响应不足，过低可能导致 tracker 过度依赖慢速假设
+    outpost.max_yaw_rate: 12.0                   # 最大 yaw 速率 (rad/s)，过高可能导致 tracker 对快速旋转目标响应不足，过低可能导致 tracker 过度依赖慢速假设
 
     # Panel mismatch detection
     panel_mismatch.enable: true
@@ -137,6 +138,19 @@ gimbal_pipeline:
   #$
 
     # Output smoother (1-Euro filter + Robbins-Monro)
+    # 1-Euro filter 参数说明：
+    # - *_min_cutoff: 1-Euro 最小截止频率
+    #   -> 目标静止时的基础平滑强度，越小滤波越强，越稳定，延迟越大
+    # - *_beta: 1-Euro 速度自适应系数，即运动越快，截止频率增加多少
+    # - *_d_cutoff: 1-Euro 导数截止频率
+    #   -> 如果这个值太小：速度变化迟钝、响应慢；如果太大：速度非常敏感，容易抖
+    # Robbins-Monro 参数说明：
+    # - rm_initial_step: 初始步长，越大收敛越快但可能不稳定，越小收敛越慢但更稳定
+    # - rm_gamma: 学习率衰减因子，范围 (0,1)，越大后期调整越慢，越小后期调整越快
+    # - rm_n0: 步长衰减起始点，越大初期调整越快，越小初期调整越慢
+    # - rm_dual_obs_boost: 遇到双目标时的步长增益，越大越快切换到新目标，但可能不稳定
+    # - rm_min_radius / rm_max_radius: 影响步长调整的目标距离范围，越大范围内调整越明显，但可能过度调整近远目标
+    # - rm_min_dz / rm_max_dz: 影响步长调整的目标高度差范围，越大范围内调整越明显，但可能过度调整不同高度的目标
     smoother.enable: true
     smoother.enable_position_smooth: true
     smoother.enable_yaw_smooth: true
@@ -203,8 +217,8 @@ gimbal_pipeline:
     controller.solver.shooting_range_height: 0.1
     controller.solver.side_angle: 15.0
     controller.solver.min_switching_v_yaw: 0.0
-    controller.solver.prediction_delay: 0.100
-    controller.solver.max_prediction_time: 0.500
+    controller.solver.prediction_delay: 0.100        # 预测延迟 (秒)，等效于提前预测时间，补偿系统延迟(仅对 predicted 策略生效)
+    controller.solver.max_prediction_time: 0.500     # 预测最大时间 (秒)，防止过远预测导致误差过大（仅对 predicted 策略生效）
     controller.solver.max_tracking_v_yaw: 12.0
     controller.solver.transfer_thresh: 5
     controller.solver.gravity: 9.8
@@ -212,6 +226,68 @@ gimbal_pipeline:
     controller.solver.iteration_times: 20
     controller.solver.pitch_offset: 0.0
     controller.solver.yaw_offset: 0.0
+
+    # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
+    # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
+    # 若启用自适应 delay（adaptive_delay.enable=true），本值作为 delay 初始值。
+    controller.solver.controller_delay: 0.00 # 秒，等效于提前预测时间，补偿系统延迟（仅对 predicted 策略生效）
+    # 触发到枪口时延（秒），可用于补偿电控触发链路（与 fire.* 同名参数含义一致）
+    # controller.solver.trigger_to_muzzle_s: 0.0
+
+    # ── 自适应 controller_delay（AIMD 策略）────────────────────────
+    # 启用后根据目标线速度/角速度及连续未开火帧数动态调整 controller_delay：
+    #   开火成功  →  delay -= add_step                       (线性减小, AD)
+    #   连续未开火超 fire_wait_threshold 帧
+    #           →  delay *= 1 + (mul_factor-1) * speed_factor (加权乘性增大, MI)
+    #     speed_factor = max(min(|v_xyz|/max_linear_speed, 1),
+    #                        min(|v_yaw|/max_angular_speed, 1))
+    # enable=false 时退化为静态 controller_delay，行为与原版完全一致。
+    controller.solver.adaptive_delay.enable: false
+    controller.solver.adaptive_delay.fire_wait_threshold: 10   # 连续未开火多少帧后开始增大
+    controller.solver.adaptive_delay.mul_factor: 1.2           # 乘性增幅因子(>1)
+    controller.solver.adaptive_delay.add_step: 0.005           # 开火成功时每帧减小量 (秒)
+    controller.solver.adaptive_delay.max_delay: 0.10           # delay 上限 (秒)
+    controller.solver.adaptive_delay.min_delay: 0.0            # delay 下限 (秒)
+    controller.solver.adaptive_delay.max_linear_speed: 3.0     # 线速度归一化参考 (m/s)
+    controller.solver.adaptive_delay.max_angular_speed: 10.0   # 角速度归一化参考 (rad/s)
+
+    # FireAdvice 触发策略参数
+    controller.fire.trigger_to_muzzle_s: 0.160           # 触发到枪口的时延补偿 (s)
+    controller.fire.decision_policy: "axis_threshold" # 开火决策策略
+    controller.fire.flight_time_iters: 2               # 飞行时间迭代次数
+    controller.fire.use_gimbal_kinematics: false      # 使用云台运动学补偿
+    # FireAdvice 装甲板朝向过滤开角（度）
+    # 定义：装甲板法向与“装甲板 -> 枪口(坐标原点)”夹角的允许全开角。
+    #   180.0: 不过滤（兼容旧行为）
+    #   120.0: 常用，过滤明显背向板
+    #   90.0 : 更严格，只保留近正向板
+    controller.fire.facing_filter_opening_angle_deg: 90.0
+
+    # ── 选板算法参数 ──────────────────────────────────
+    # selection_method: 选板算法
+    #   min_movement_with_facing  — 最小运动量 + 正面朝向 Hysteresis 过滤（默认）
+    #   min_movement_with_radial  — 过滤后按机器人中心径向夹角最小选板
+    #   min_movement              — 纯最小运动量，无朝向过滤
+    #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
+    #   virtual_pose              — 虚拟姿态选板，自动生成一个理想控制板（不要求真实存在）来选板
+    #   virtual_fixed_id           — 固定 ID 虚拟姿态选板，直接生成一个固定 ID 的理想控制板来选板
+    controller.solver.selection_method: "min_movement_with_facing"
+    # controller.solver.virtual_pose.fixed_id: 2 # "virtual_fixed_id" 时设置固定的id
+
+    # 虚拟姿态选板（"virtual_pose"）
+    # 逻辑：先按估计 yaw 找到“未转到位”的最近真实板，再做最小旋转生成虚拟控制板。
+    # 约束：虚拟板朝向沿“目标中心 -> 云台中心”连线。
+    # controller.solver.selection_method: "virtual_pose"
+    # controller.solver.selection_method: "virtual_fixed_id"
+    controller.solver.virtual_pose.auto_switch.enable: true
+    controller.solver.virtual_pose.auto_switch.enter_vyaw: 1.0
+    controller.solver.virtual_pose.auto_switch.exit_vyaw: 16.0
+    # auto_switch 模式可独立配置："virtual_pose" | "virtual_fixed_id"
+    controller.solver.virtual_pose.auto_switch.selection_method: "virtual_fixed_id"
+    # auto_switch 固定 ID（仅在 selection_method=virtual_fixed_id 时生效）
+    controller.solver.virtual_pose.auto_switch.fixed_id: 0
+
+    # 面向选板状态机参数
     controller.solver.facing_enter_angle: 5.0  # 55.0
     controller.solver.facing_exit_angle: 10.0  # 85.0
     # 径向选板动态阈值（仅对 min_movement_with_radial 生效）
@@ -228,38 +304,26 @@ gimbal_pipeline:
     controller.solver.radial_dynamic.bias_gain_deg: 60.0
     controller.solver.radial_dynamic.max_bias_deg: 50.0
 
-    # 虚拟姿态选板（"virtual_pose"）
-    # 逻辑：先按估计 yaw 找到“未转到位”的最近真实板，再做最小旋转生成虚拟控制板。
-    # 约束：虚拟板朝向沿“目标中心 -> 云台中心”连线。
-    # controller.solver.selection_method: "virtual_pose"
-    # controller.solver.selection_method: "virtual_fixed_id"
-    controller.solver.virtual_pose.auto_switch.enable: true
-    controller.solver.virtual_pose.auto_switch.enter_vyaw: 1.0
-    controller.solver.virtual_pose.auto_switch.exit_vyaw: 16.0
-    controller.solver.virtual_pose.fixed_id: 0
+    # 状态机策略参数（controller.strategy: "state_machine" 时生效）
+    # controller.state_machine.facing_enter_angle: 40.0
+    # controller.state_machine.facing_exit_angle: 55.0
+    # controller.state_machine.spin_v_yaw_thresh: 4.0
+    # controller.state_machine.calm_v_yaw_thresh: 2.0
+    # controller.state_machine.spin_enter_count: 5
+    # controller.state_machine.spin_exit_count: 5
+    # controller.state_machine.side_angle: 15.0
+    # controller.state_machine.prediction_delay: 0.0
+    # controller.state_machine.max_prediction_time: 0.5
 
-    # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
-    # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
-    # 若启用自适应 delay（adaptive_delay.enable=true），本值作为 delay 初始值。
-    controller.solver.controller_delay: 0.00
+    # 兼容旧键（Deprecated aliases，建议仅迁移时使用）
+    # solver.prediction_delay: 0.0
+    # solver.max_prediction_time: 0.5
+    # solver.controller_delay: 0.0
+    # solver.trigger_to_muzzle_s: 0.0
+    # state_machine.prediction_delay: 0.0
+    # state_machine.max_prediction_time: 0.5
 
-    # ── 自适应 controller_delay（AIMD 策略）────────────────────────
-    # 启用后根据目标线速度/角速度及连续未开火帧数动态调整 controller_delay：
-    #   开火成功  →  delay -= add_step                       (线性减小, AD)
-    #   连续未开火超 fire_wait_threshold 帧
-    #           →  delay *= 1 + (mul_factor-1) * speed_factor (加权乘性增大, MI)
-    #     speed_factor = max(min(|v_xyz|/max_linear_speed, 1),
-    #                        min(|v_yaw|/max_angular_speed, 1))
-    # enable=false 时退化为静态 controller_delay，行为与原版完全一致。
-    # controller.solver.adaptive_delay.enable: true
-    # controller.solver.adaptive_delay.fire_wait_threshold: 10   # 连续未开火多少帧后开始增大
-    # controller.solver.adaptive_delay.mul_factor: 1.2           # 乘性增幅因子(>1)
-    # controller.solver.adaptive_delay.add_step: 0.005           # 开火成功时每帧减小量 (秒)
-    # controller.solver.adaptive_delay.max_delay: 0.10           # delay 上限 (秒)
-    # controller.solver.adaptive_delay.min_delay: 0.0            # delay 下限 (秒)
-    # controller.solver.adaptive_delay.max_linear_speed: 3.0     # 线速度归一化参考 (m/s)
-    # controller.solver.adaptive_delay.max_angular_speed: 10.0   # 角速度归一化参考 (rad/s)
-
+    
     # ── GimbalCmd 输出端保护滤波器 ──────────────────────────────────
     # 在 gimbal_cmd 发布前对 yaw_diff / pitch_diff 执行多级可配置保护：
     #   0. Clamping        — 绝对限幅，防止极端控制量
@@ -271,68 +335,38 @@ gimbal_pipeline:
     # 各级独立开关；目标切换或从 idle 恢复时自动重置滤波器历史。
 
     # # 0. Clamping
-    # controller.output_filter.enable_clamping: true
-    # controller.output_filter.enable_clamping: true
-    # controller.output_filter.max_yaw_diff: 15.0      # 度，yaw_diff 绝对上限
-    # controller.output_filter.max_pitch_diff: 10.0    # 度，pitch_diff 绝对上限
+    controller.output_filter.enable_clamping: false
+    controller.output_filter.max_yaw_diff: 15.0      # 度，yaw_diff 绝对上限
+    controller.output_filter.max_pitch_diff: 10.0    # 度，pitch_diff 绝对上限
 
     # # 1. 外点检测
-    # controller.output_filter.enable_outlier_rejection: true
-    # controller.output_filter.outlier_threshold_yaw: 8.0    # 帧间跳变判定阈值 (度)
-    # controller.output_filter.outlier_threshold_pitch: 5.0  # 帧间跳变判定阈值 (度)
-    # controller.output_filter.max_outlier_count: 3          # 连续外点超此数后强制 accept
+    controller.output_filter.enable_outlier_rejection: false
+    controller.output_filter.outlier_threshold_yaw: 8.0    # 帧间跳变判定阈值 (度)
+    controller.output_filter.outlier_threshold_pitch: 5.0  # 帧间跳变判定阈值 (度)
+    controller.output_filter.max_outlier_count: 3          # 连续外点超此数后强制 accept
 
     # # 2. Rate Limiter
-    # controller.output_filter.enable_rate_limiter: true
-    # controller.output_filter.max_yaw_rate: 5.0     # 每帧最大变化量 (度/帧 @ 250Hz)
-    # controller.output_filter.max_pitch_rate: 3.0   # 每帧最大变化量 (度/帧 @ 250Hz)
+    controller.output_filter.enable_rate_limiter: false
+    controller.output_filter.max_yaw_rate: 5.0     # 每帧最大变化量 (度/帧 @ 250Hz)
+    controller.output_filter.max_pitch_rate: 3.0   # 每帧最大变化量 (度/帧 @ 250Hz)
 
     # # 3. 滑动窗口均值（默认关闭；窗口越大越平滑但延迟更大）
-    # controller.output_filter.enable_moving_average: true
-    # controller.output_filter.moving_average_window_size: 10  # 采样帧数，>=1
+    controller.output_filter.enable_moving_average: false
+    controller.output_filter.moving_average_window_size: 10  # 采样帧数，>=1
 
     # # 4. EMA 平滑（默认关闭；开启会引入 1~2 帧延迟）
-    # controller.output_filter.enable_ema: true
-    # controller.output_filter.ema_alpha: 0.6         # (0,1]，越大越跟随，越小越平滑
+    controller.output_filter.enable_ema: false
+    controller.output_filter.ema_alpha: 0.6         # (0,1]，越大越跟随，越小越平滑
 
     # # 5. 1-Euro 自适应低通滤波（默认关闭；运动快时自动减弱平滑，适合高速目标）
-    # controller.output_filter.enable_one_euro: true
-    # controller.output_filter.one_euro_freq: 250.0        # Hz，应与 control_rate 一致
-    # controller.output_filter.one_euro_min_cutoff: 0.05    # 最小截止频率 (Hz)
-    # controller.output_filter.one_euro_beta: 0.1        # 速度灵敏度（越大高速时截止频率越高）
-    # controller.output_filter.one_euro_d_cutoff: 0.01      # 导数截止频率 (Hz)
+    controller.output_filter.enable_one_euro: false
+    controller.output_filter.one_euro_freq: 250.0        # Hz，应与 control_rate 一致
+    controller.output_filter.one_euro_min_cutoff: 0.05    # 最小截止频率 (Hz)
+    controller.output_filter.one_euro_beta: 0.1        # 速度灵敏度（越大高速时截止频率越高）
+    controller.output_filter.one_euro_d_cutoff: 0.01      # 导数截止频率 (Hz)
 
-    # selection_method: 选板算法
-    #   min_movement_with_facing  — 最小运动量 + 正面朝向 Hysteresis 过滤（默认）
-    #   min_movement_with_radial  — 过滤后按机器人中心径向夹角最小选板
-    #   min_movement              — 纯最小运动量，无朝向过滤
-    #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
-    controller.solver.selection_method: "virtual_fixed_id"
-
-    # controller.state_machine.facing_enter_angle: 40.0
-    # controller.state_machine.facing_exit_angle: 55.0
-    # controller.state_machine.spin_v_yaw_thresh: 4.0
-    # controller.state_machine.calm_v_yaw_thresh: 2.0
-    # controller.state_machine.spin_enter_count: 5
-    # controller.state_machine.spin_exit_count: 5
-    # controller.state_machine.side_angle: 15.0
-    # controller.state_machine.prediction_delay: 0.0
-    # controller.state_machine.max_prediction_time: 0.5
-
+    # ── MPC 控制策略参数 ──────────────────────────────────
     # MPC 控制策略参数（controller.strategy: "mpc" 时生效）
-    # controller.mpc.N: 50
-    # controller.mpc.dt: 0.02
-    # controller.mpc.control_delay_s: 0.0
-    # controller.mpc.max_accel: 30.0
-    # controller.mpc.q_yaw: 100.0
-    # controller.mpc.q_pitch: 100.0
-    # controller.mpc.q_yaw_vel: 10.0
-    # controller.mpc.q_pitch_vel: 10.0
-    # controller.mpc.r_yaw: 0.001
-    # controller.mpc.r_pitch: 0.001
-    # controller.mpc.s_yaw: 0.001
-    # controller.mpc.s_pitch: 0.001
-
     controller.mpc.N: 50
     controller.mpc.dt: 0.05    
     controller.mpc.control_delay_s: 0.00  
@@ -377,7 +411,7 @@ gimbal_pipeline:
     controller.mpc.regularization.retry_scale: 10.0
 
     # MPC 分层诊断: 低成本常开，高成本抽样
-    controller.mpc.diagnostics.enable: true
+    controller.mpc.diagnostics.enable: false
     controller.mpc.diagnostics.low_cost_always: true
     controller.mpc.diagnostics.high_cost_enable: false
     controller.mpc.diagnostics.high_cost_sample_every: 20
@@ -414,19 +448,43 @@ gimbal_pipeline:
     # 并对每步迭代补偿子弹飞行时间、选板时考虑延迟后的云台姿态
     # enable_delay_compensation: false 时行为与原版完全一致
     controller.mpc.enable_delay_compensation: true
-    controller.mpc.prediction_delay_s: 0.16      # 额外预测延迟 (秒), 叠加在 processing_delay 之上
+    controller.mpc.prediction_delay_s: 0.0      # 额外预测延迟 (秒), 叠加在 processing_delay 之上
     controller.mpc.flight_time_iters: 2          # 飞行时间迭代补偿次数
     controller.mpc.max_processing_delay_s: 0.5   # 最大处理延迟 clamp 上限 (秒)
     # yaw 速度前馈等效前瞻时间 (秒): yaw_ff ≈ target_yaw_velocity * k_s
     # k_s=0.0 时禁用，推荐从 0.02~0.08 逐步调参
-    # controller.mpc.yaw_feedforward_k_s: 0.000
+    # controller.mpc.yaw_feedforward_k_s: 0.0
+
+    # MPC 机动自适应权重衰减（快速机动时提高控制保守性）
+    # controller.mpc.maneuver_adapt.enable: false
+    # controller.mpc.maneuver_adapt.a_max: 3.0
+    # controller.mpc.maneuver_adapt.eta: 0.2
+    # controller.mpc.maneuver_adapt.tau: 10.0
+    # controller.mpc.maneuver_adapt.r_scale: 10.0
+
+    # MPC FOV 软约束（可限制预测轨迹留在视场内）
+    # controller.mpc.fov_constraint.enable: false
+    # controller.mpc.fov_constraint.margin: 0.05
+    # controller.mpc.fov_constraint.slack_weight: 1000.0
+    # controller.mpc.fov_constraint.constraint_steps: 0
+    # controller.mpc.fov_constraint.dynamic_margin.enable: false
+    # controller.mpc.fov_constraint.dynamic_margin.vel_scale: 0.01
+    # controller.mpc.fov_constraint.fallback_fov_yaw: 0.35
+    # controller.mpc.fov_constraint.fallback_fov_pitch: 0.26
+
+    # 兼容旧键（Deprecated aliases，建议仅迁移时使用）
+    # mpc.control_delay_s: 0.0
+    # mpc.enable_delay_compensation: false
+    # mpc.prediction_delay_s: 0.0
+    # mpc.flight_time_iters: 2
+    # mpc.max_processing_delay_s: 0.5
 
     # ═══════════════════════════════════════════════════════════════
     # Prediction Logger — 预测准确率记录（可选）
     # ═══════════════════════════════════════════════════════════════
     # 启用后会将观测值与 Tracker 后验状态写入 CSV 文件，
     # 供 scripts/analyze_prediction.py 离线分析预测误差。
-    logging.enable: true
+    logging.enable: false
     logging.output_dir: "/tmp/prediction_logs"
     logging.robot_id_filter: ""      # 只记录指定 robot_id；为空则记录全部
     logging.flush_every_n: 50        # 每 N 行落盘一次，减少 I/O 阻塞
@@ -436,17 +494,12 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     # 分 update_type 的组合阈值规则（FPR≤10% 离线分析结果）：
     #   单观测(update_type=1): nis > nis_threshold_single AND innov_norm > innov_norm_threshold_single
-    # #   双观测(update_type=2): nis > nis_threshold_dual   AND innov_norm > innov_norm_threshold_dual
+    #   双观测(update_type=2): nis > nis_threshold_dual   AND innov_norm > innov_norm_threshold_dual
     # maneuver.enable: true
-    # # maneuver.nis_threshold_single: 238.807
-    # # maneuver.nis_threshold_dual: 4132.110
-    # # maneuver.innov_norm_threshold_single: 0.1279
-    # # maneuver.innov_norm_threshold_dual: 0.0613
-
-    # maneuver.nis_threshold_single: 300.0
-    # maneuver.nis_threshold_dual: 4500.0
-    # maneuver.innov_norm_threshold_single: 0.15
-    # maneuver.innov_norm_threshold_dual: 0.10
+    # maneuver.nis_threshold_single: 238.807
+    # maneuver.nis_threshold_dual: 4132.110
+    # maneuver.innov_norm_threshold_single: 0.1279
+    # maneuver.innov_norm_threshold_dual: 0.0613
 
     # ================================================================
     # 全量参数参考（注释版）
