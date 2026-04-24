@@ -2298,8 +2298,8 @@ void GimbalPipelineNode::timerCallback() {
   rm_interfaces::msg::GimbalCmd cmd;
 
   if (control_mode == SelectionResult::MODE_GUIDANCE) {
-    // 引导模式：只控制 yaw，让目标进入主相机视野
-    // 计算目标相对于云台的 yaw 角
+    // 引导模式：输出完整目标位置信息，让下位机也能控制 pitch
+    // 计算目标相对于云台的 yaw 角和 pitch 角
     const auto& robot = context.target_robot;
     const auto center = robot_description::TrackedRobotUsage::centerPosition(robot);
     double target_yaw = std::atan2(center.y(), center.x());
@@ -2307,17 +2307,23 @@ void GimbalPipelineNode::timerCallback() {
     while (yaw_diff_rad > M_PI) yaw_diff_rad -= 2.0 * M_PI;
     while (yaw_diff_rad < -M_PI) yaw_diff_rad += 2.0 * M_PI;
 
+    double target_pitch = std::atan2(
+      center.z(), std::sqrt(center.x() * center.x() + center.y() * center.y()));
+    double pitch_diff_rad = target_pitch - current_pitch_;
+    while (pitch_diff_rad > M_PI) pitch_diff_rad -= 2.0 * M_PI;
+    while (pitch_diff_rad < -M_PI) pitch_diff_rad += 2.0 * M_PI;
+
     cmd.header.stamp = now();
     // 与精确自瞄模式保持一致，输出角度制（度）
     cmd.yaw = target_yaw * 180.0 / M_PI;
     cmd.yaw_diff = yaw_diff_rad * 180.0 / M_PI;
     cmd.yaw_v = 0.0;
     cmd.yaw_a = 0.0;
-    cmd.pitch = current_pitch_ * 180.0 / M_PI;
-    cmd.pitch_diff = 0.0;
+    cmd.pitch = target_pitch * 180.0 / M_PI;
+    cmd.pitch_diff = pitch_diff_rad * 180.0 / M_PI;
     cmd.pitch_v = 0.0;
     cmd.pitch_a = 0.0;
-    cmd.distance = center.norm();
+    cmd.distance = 1.0;  // 补盲相机目标，distance 标志为 1
     cmd.fire_advice = false;  // 引导模式不开火
     cmd.target_id = robot.robot_id;
     cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_BLIND_CAMERA_RESULT;  // -2
@@ -2359,36 +2365,47 @@ void GimbalPipelineNode::timerCallback() {
       debug_gimbal_marker_pub_->publish(arr);
     }
   } else {
-    // 精确自瞄模式或无目标：使用现有控制逻辑
-    const auto control_result = gimbal_control_core_->compute(
-      context, current_gimbal_strategy_name_, selected_id, true);
-
-    if (!control_result.strategy_found) {
-      RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 2000,
-        "Gimbal strategy '%s' not found, fallback to idle cmd",
-        current_gimbal_strategy_name_.c_str());
-    }
-
-    cmd = control_result.cmd;
-
-    // 设置 mode 标志
-    if (control_mode == SelectionResult::MODE_PRECISE_AIM) {
-      cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_NORMAL_MEASUREMENT;  // 1
-    } else {
+    if (control_mode == SelectionResult::MODE_NO_TARGET) {
+      // 无目标：直接构造 idle 命令，避免无意义的 compute() 调用
+      cmd.header.stamp = now();
+      cmd.yaw = 0.0;
+      cmd.pitch = 0.0;
+      cmd.yaw_diff = 0.0;
+      cmd.pitch_diff = 0.0;
+      cmd.yaw_v = 0.0;
+      cmd.pitch_v = 0.0;
+      cmd.yaw_a = 0.0;
+      cmd.pitch_a = 0.0;
+      cmd.distance = -1.0;
+      cmd.fire_advice = false;
+      cmd.target_id = "";
       cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_NO_VALID_MEASUREMENT;  // -1
-    }
+    } else {
+      // 精确自瞄模式：使用现有控制逻辑
+      const auto control_result = gimbal_control_core_->compute(
+        context, current_gimbal_strategy_name_, selected_id, true);
 
-    // Step 5b: 发布调试信息（audit + marker）
-    if (debug_mode_ && debug_delay_audit_pub_) {
-      publishDelayAuditDebug(
-        context,
-        control_result.delay_audit,
-        current_gimbal_strategy_name_);
-    }
+      if (!control_result.strategy_found) {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 2000,
+          "Gimbal strategy '%s' not found, fallback to idle cmd",
+          current_gimbal_strategy_name_.c_str());
+      }
 
-    if (debug_mode_ && control_result.has_tracking) {
-      publishGimbalMarkers(context.target_robot, cmd);
+      cmd = control_result.cmd;
+      cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_NORMAL_MEASUREMENT;  // 1
+
+      // Step 5b: 发布调试信息（audit + marker）
+      if (debug_mode_ && debug_delay_audit_pub_) {
+        publishDelayAuditDebug(
+          context,
+          control_result.delay_audit,
+          current_gimbal_strategy_name_);
+      }
+
+      if (debug_mode_ && control_result.has_tracking) {
+        publishGimbalMarkers(context.target_robot, cmd);
+      }
     }
   }
 
