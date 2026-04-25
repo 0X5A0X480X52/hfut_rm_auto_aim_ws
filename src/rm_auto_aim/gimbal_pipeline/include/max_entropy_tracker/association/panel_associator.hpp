@@ -2,7 +2,9 @@
 #ifndef MAX_ENTROPY_TRACKER_ASSOCIATION_PANEL_ASSOCIATOR_HPP_
 #define MAX_ENTROPY_TRACKER_ASSOCIATION_PANEL_ASSOCIATOR_HPP_
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -34,6 +36,23 @@ class PanelAssociator {
 
   PanelAssociator() = default;
 
+  /// Optional periodic dz prior for 4-panel robots.
+  /// When enabled, association cost is augmented by a lightweight prior
+  /// consistent with alternating layer jumps (-dz, +dz, -dz, +dz), where
+  /// sign is chosen by spin direction.
+  void configure_periodic_binding(bool enable, double weight,
+                                  double spin_rate_gate) {
+    periodic_binding_enable_ = enable;
+    periodic_binding_weight_ = std::max(0.0, weight);
+    periodic_spin_rate_gate_ = std::max(0.0, spin_rate_gate);
+  }
+
+  /// Clear internal history used for ambiguity resolution and periodic prior.
+  void reset_history() {
+    last_confident_panel_.reset();
+    prev_z_obs_.reset();
+  }
+
   /**
    * Associate observed armor to a panel id.
    *
@@ -58,13 +77,27 @@ class PanelAssociator {
       std::optional<double> center_x = std::nullopt,
       std::optional<double> center_y = std::nullopt,
       std::optional<double> r1 = std::nullopt,
-      std::optional<double> r2 = std::nullopt) const {
+      std::optional<double> r2 = std::nullopt,
+      std::optional<double> yaw_rate_hint = std::nullopt,
+      std::optional<double> dz_unit_hint = std::nullopt) const {
+    const int spin_direction =
+        (yaw_rate_hint.has_value() &&
+         std::abs(yaw_rate_hint.value()) >= periodic_spin_rate_gate_)
+            ? ((yaw_rate_hint.value() >= 0.0) ? 1 : -1)
+            : 0;
+
+    const bool has_z_jump = z_obs.has_value() && prev_z_obs_.has_value();
+    const double z_jump = has_z_jump
+                              ? (z_obs.value() - prev_z_obs_.value())
+                              : std::numeric_limits<double>::quiet_NaN();
+
     if (!center_yaw_pred.has_value()) {
       // First frame — no prediction available
       double ay = std::atan2(std::sin(armor_yaw), std::cos(armor_yaw));
       double ay_pos = std::fmod(ay + 2.0 * M_PI, 2.0 * M_PI);
       int panel_id = static_cast<int>(std::round(ay_pos / PANEL_ANGLE_STEP)) % 4;
       double cw = normalize_angle(ay - panel_id * PANEL_ANGLE_STEP);
+      if (z_obs.has_value()) prev_z_obs_ = z_obs.value();
       return {panel_id, cw, 0.0};
     }
 
@@ -87,6 +120,28 @@ class PanelAssociator {
             cyp, pid, center_x.value(), center_y.value(),
             r1.value(), r2.value(), obs_x.value(), obs_y.value());
         cost = yaw_err + DEFAULT_POS_WEIGHT * pos_err;
+      }
+
+      if (periodic_binding_enable_ && has_z_jump &&
+          dz_unit_hint.has_value() &&
+          std::abs(dz_unit_hint.value()) > 1e-4 &&
+          last_confident_panel_.has_value() && spin_direction != 0) {
+        const int prev_pid = last_confident_panel_.value();
+        const auto layer_value = [](int panel) {
+          return (panel % 2 == 0) ? -0.5 : 0.5;
+        };
+
+        const double dz_unit = std::max(1e-4, std::abs(dz_unit_hint.value()));
+        const double expected_jump =
+            (layer_value(pid) - layer_value(prev_pid)) * dz_unit;
+
+        const int expected_next =
+            (spin_direction > 0) ? ((prev_pid + 1) % 4) : ((prev_pid + 3) % 4);
+        const double direction_penalty =
+            (pid != prev_pid && pid != expected_next) ? 0.35 : 0.0;
+
+        const double periodic_err = std::abs(z_jump - expected_jump) / dz_unit;
+        cost += periodic_binding_weight_ * (periodic_err + direction_penalty);
       }
 
       if (cost < best_cost) {
@@ -132,6 +187,8 @@ class PanelAssociator {
       if (best_yaw_err < 15.0 * M_PI / 180.0)
         last_confident_panel_ = panel_id;
     }
+
+    if (z_obs.has_value()) prev_z_obs_ = z_obs.value();
 
     double cw = normalize_angle(armor_yaw - panel_id * PANEL_ANGLE_STEP);
     return {panel_id, cw, best_yaw_err};
@@ -183,6 +240,11 @@ class PanelAssociator {
   }
 
   mutable std::optional<int> last_confident_panel_;
+  mutable std::optional<double> prev_z_obs_;
+
+  bool periodic_binding_enable_ = false;
+  double periodic_binding_weight_ = 0.0;
+  double periodic_spin_rate_gate_ = 0.8;
 };
 
 }  // namespace fyt::auto_aim

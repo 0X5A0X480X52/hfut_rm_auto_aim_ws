@@ -1,6 +1,9 @@
 # Dual-camera URDF pose config for bringup_pipeline_multicam_video_test.launch.py
 # All poses are relative to their parent frame and use: "x y z" / "roll pitch yaw".
 
+# Robot config tag, selects rm_bringup/config/<robot>/ as runtime override config.
+robot: "hero"
+
 # gimbal_link pose relative to base_link
 gimbal:
   xyz: "0 0 0"

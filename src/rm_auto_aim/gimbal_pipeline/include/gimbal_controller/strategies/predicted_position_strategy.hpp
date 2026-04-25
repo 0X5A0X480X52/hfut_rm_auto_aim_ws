@@ -15,6 +15,7 @@
 #ifndef GIMBAL_CONTROLLER__STRATEGIES__PREDICTED_POSITION_STRATEGY_HPP_
 #define GIMBAL_CONTROLLER__STRATEGIES__PREDICTED_POSITION_STRATEGY_HPP_
 
+#include "gimbal_controller/delay_management/delay_semantic_manager.hpp"
 #include "gimbal_controller/gimbal_control_strategy.hpp"
 #include "gimbal_controller/adaptive_delay_controller.hpp"
 
@@ -53,6 +54,12 @@ public:
   void setPredictionParameters(double prediction_delay, double max_prediction_time = 0.5);
 
   /**
+   * @brief 设置 processing_delay 上限
+   * @param max_processing_delay 最大处理延迟上限 (秒)
+   */
+  void setMaxProcessingDelay(double max_processing_delay);
+
+  /**
    * @brief 设置手动补偿参数
    * @param pitch_offset pitch补偿 (度)
    * @param yaw_offset yaw补偿 (度)
@@ -75,6 +82,12 @@ public:
    * @param controller_delay 额外云台前馈延迟 (秒, 0 表示禁用)
    */
   void setControllerDelay(double controller_delay);
+
+  /**
+   * @brief 设置触发到出膛延迟
+   * @param trigger_to_muzzle_s 出膛延迟 (秒)
+   */
+  void setTriggerToMuzzleDelay(double trigger_to_muzzle_s);
 
   /**
    * @brief 配置自适应 delay AIMD 参数
@@ -102,7 +115,9 @@ public:
 private:
   double prediction_delay_{0.0};      // 额外预测延迟 (秒)
   double max_prediction_time_{0.5};   // 最大预测时间 (秒)
+  double max_processing_delay_s_{0.5};  // processing_delay 上限 (秒)
   double controller_delay_{0.0};      // 云台前馈延迟 (秒, 0=禁用)
+  double trigger_to_muzzle_s_{0.0};
   double pitch_offset_{0.0};          // pitch手动补偿 (度)
   double yaw_offset_{0.0};            // yaw手动补偿 (度)
   double max_tracking_v_yaw_{6.0};    // 触发跟踪中心的角速度阈值
@@ -112,6 +127,7 @@ private:
   // 自适应 delay AIMD
   bool adaptive_delay_enabled_{false};
   AdaptiveDelayController adaptive_ctrl_;
+  delay_management::DelaySemanticManager delay_manager_;
 
   enum TrackingState { TRACKING_ARMOR = 0, TRACKING_CENTER = 1 };
   TrackingState state_{TRACKING_ARMOR};

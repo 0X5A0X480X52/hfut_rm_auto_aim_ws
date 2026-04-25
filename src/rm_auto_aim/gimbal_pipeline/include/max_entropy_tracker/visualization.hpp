@@ -16,7 +16,6 @@
 
 #include <cmath>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include <tf2/LinearMath/Quaternion.h>
@@ -31,27 +30,30 @@ namespace fyt::auto_aim {
 /// Build a MarkerArray visualising every initialised tracker.
 inline visualization_msgs::msg::MarkerArray build_tracker_markers(
     const std::string &target_frame,
-    const std::unordered_map<std::string, TrackerManager::TrackerEntry> &trackers,
+    const std::vector<TrackerManager::TrackerConstView> &tracker_views,
     const rclcpp::Time &stamp) {
   using Marker = visualization_msgs::msg::Marker;
   visualization_msgs::msg::MarkerArray marker_array;
   int id = 0;
 
-  for (const auto &[robot_id, entry] : trackers) {
-    auto &tracker = *entry.tracker;
+  for (const auto &view : tracker_views) {
+    if (!view.tracker) {
+      continue;
+    }
+    const auto &robot_id = view.robot_id;
+    const auto &tracker = *view.tracker;
     if (!tracker.is_initialized()) continue;
 
     // ---------- gather state ----------
     auto pos  = tracker.get_center_position();
     double yaw = tracker.get_yaw();
     auto [r1, r2] = tracker.get_radii();
-    double dza = tracker.get_dza();
-
-    auto idx = tracker.ukf().state_idx();
-    const auto &x = tracker.ukf().x();
-    double vx = x(idx.VX());
-    double vy = x(idx.VY());
-    double vz = x(idx.VZ());
+    const auto &filter = tracker.spin_filter();
+    double dza = filter.get_dza();
+    const auto vel = tracker.get_publish_velocity();
+    double vx = vel.x();
+    double vy = vel.y();
+    double vz = vel.z();
 
     // ---------- 1. Robot center SPHERE ----------
     {
@@ -119,51 +121,109 @@ inline visualization_msgs::msg::MarkerArray build_tracker_markers(
       if (rtype == T::OUTPOST_3 || rtype == T::BASE) n_armors = 3;
       else if (rtype == T::BALANCE_2) n_armors = 2;
 
+      const int runtime_num_armors = tracker.effective_num_armors();
+      if (runtime_num_armors > 0) n_armors = runtime_num_armors;
+
       // Armor size heuristic (same as robot_pose_estimator)
       bool is_large = (rtype == T::BALANCE_2 || rtype == T::HERO_4 ||
                        rtype == T::OUTPOST_3 || rtype == T::BASE);
       double armor_width = is_large ? 0.23 : 0.135;
 
-      bool is_current_pair = true;
-      for (int i = 0; i < n_armors; ++i) {
-        double tmp_yaw = yaw + i * (2.0 * M_PI / n_armors);
-        double r  = r1;
-        double pz = pos.z();
+      const auto runtime_offsets = tracker.build_armors_offset_for_message();
+      if (!runtime_offsets.empty()) {
+        const bool is_outpost = (robot_id == "outpost");
+        const double armor_pitch = is_outpost ? -0.2618 : 0.2618;
+        const double cos_yaw = std::cos(yaw);
+        const double sin_yaw = std::sin(yaw);
 
-        if (n_armors == 4) {
-          r  = is_current_pair ? r1 : r2;
-          pz = pos.z() + (is_current_pair ? -dza : dza);
-          is_current_pair = !is_current_pair;
+        for (size_t i = 0; i < runtime_offsets.size(); ++i) {
+          const auto &offset = runtime_offsets[i];
+          const double world_ox =
+              offset.position.x * cos_yaw - offset.position.y * sin_yaw;
+          const double world_oy =
+              offset.position.x * sin_yaw + offset.position.y * cos_yaw;
+
+          const double px = pos.x() + world_ox;
+          const double py = pos.y() + world_oy;
+          const double pz = pos.z() + offset.position.z;
+
+          // Keep the existing outward-facing yaw convention: when offset is
+          // encoded as -r*[cos(a), sin(a)], armor yaw is atan2(-oy, -ox).
+          const double tmp_yaw = std::atan2(-world_oy, -world_ox);
+
+          Marker m;
+          m.header.frame_id = target_frame;
+          m.header.stamp    = stamp;
+          m.ns   = "armor_" + robot_id;
+          m.id   = id++;
+          m.type = Marker::CUBE;
+          m.action = Marker::ADD;
+
+          m.pose.position.x = px;
+          m.pose.position.y = py;
+          m.pose.position.z = pz;
+
+          tf2::Quaternion q;
+          q.setRPY(0, armor_pitch, tmp_yaw);
+          m.pose.orientation = tf2::toMsg(q);
+
+          m.scale.x = 0.03;
+          m.scale.y = armor_width;
+          m.scale.z = 0.125;
+
+          m.color.r = 0.0f;
+          m.color.g = 0.5f;
+          m.color.b = 1.0f;
+          m.color.a = 0.8f;
+
+          m.lifetime = rclcpp::Duration::from_seconds(0.1);
+          marker_array.markers.push_back(m);
         }
+      } else {
+        bool is_current_pair = true;
+        for (int i = 0; i < n_armors; ++i) {
+          double tmp_yaw = yaw + i * (2.0 * M_PI / n_armors);
+          double r  = r1;
+          double pz = pos.z();
 
-        double px = pos.x() - r * std::cos(tmp_yaw);
-        double py = pos.y() - r * std::sin(tmp_yaw);
+          if (n_armors == 1) {
+            r = 0.0;
+            pz = pos.z();
+          } else if (n_armors == 4) {
+            r  = is_current_pair ? r1 : r2;
+            pz = pos.z() + (is_current_pair ? -dza : dza);
+            is_current_pair = !is_current_pair;
+          }
 
-        Marker m;
-        m.header.frame_id = target_frame;
-        m.header.stamp    = stamp;
-        m.ns   = "armor_" + robot_id;
-        m.id   = id++;
-        m.type = Marker::CUBE;
-        m.action = Marker::ADD;
+          double px = pos.x() - r * std::cos(tmp_yaw);
+          double py = pos.y() - r * std::sin(tmp_yaw);
 
-        m.pose.position.x = px;
-        m.pose.position.y = py;
-        m.pose.position.z = pz;
+          Marker m;
+          m.header.frame_id = target_frame;
+          m.header.stamp    = stamp;
+          m.ns   = "armor_" + robot_id;
+          m.id   = id++;
+          m.type = Marker::CUBE;
+          m.action = Marker::ADD;
 
-        // Orientation: armor faces outward (same as robot_pose_estimator)
-        tf2::Quaternion q;
-        q.setRPY(0, robot_id == "outpost" ? -0.2618 : 0.2618, tmp_yaw);
-        m.pose.orientation = tf2::toMsg(q);
+          m.pose.position.x = px;
+          m.pose.position.y = py;
+          m.pose.position.z = pz;
 
-        m.scale.x = 0.03;           // thickness
-        m.scale.y = armor_width;    // width
-        m.scale.z = 0.125;          // height
+          // Orientation: armor faces outward (same as robot_pose_estimator)
+          tf2::Quaternion q;
+          q.setRPY(0, robot_id == "outpost" ? -0.2618 : 0.2618, tmp_yaw);
+          m.pose.orientation = tf2::toMsg(q);
 
-        m.color.r = 0.0f; m.color.g = 0.5f; m.color.b = 1.0f; m.color.a = 0.8f;
+          m.scale.x = 0.03;           // thickness
+          m.scale.y = armor_width;    // width
+          m.scale.z = 0.125;          // height
 
-        m.lifetime = rclcpp::Duration::from_seconds(0.1);
-        marker_array.markers.push_back(m);
+          m.color.r = 0.0f; m.color.g = 0.5f; m.color.b = 1.0f; m.color.a = 0.8f;
+
+          m.lifetime = rclcpp::Duration::from_seconds(0.1);
+          marker_array.markers.push_back(m);
+        }
       }
     }
 

@@ -12,7 +12,6 @@ camera_matrix:
          0.0, 0.0, 1.0]
 
 distortion_model: plumb_bob
-
 distortion_coefficients:
   rows: 1
   cols: 5

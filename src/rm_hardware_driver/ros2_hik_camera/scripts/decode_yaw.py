@@ -71,30 +71,45 @@ def parse_header(f):
     return width, height, pixel_type, fps, interval
 
 
-def decode_frame_heuristic(data, width, height):
-    """启发式解码帧数据 (无 SDK 时的回退方案)"""
+def decode_frame_heuristic(data, width, height, force_color=False, bayer_pattern='RG'):
+    """启发式解码帧数据 (无 SDK 时的回退方案)
+
+    如果 `force_color` 为 True，则尝试把单通道数据按 Bayer 解码为 RGB。
+    bayer_pattern 可选值: 'RG','GB','GR','BG'，默认 'RG'.
+    """
     import numpy as np
     import cv2
-    
+
     data_len = len(data)
-    
-    # 尝试灰度图
-    if data_len == width * height:
-        arr = np.frombuffer(data, dtype=np.uint8).reshape(height, width)
-        # 转换为 RGB
-        return np.dstack([arr, arr, arr]).astype('uint8')
-    
-    # 尝试 RGB24
-    elif data_len == 3 * width * height:
+
+    # RGB24
+    if data_len == 3 * width * height:
         arr = np.frombuffer(data, dtype=np.uint8).reshape(height, width, 3)
         return arr
-    
-    # 尝试 Bayer 模式 (假设 BayerRG8)
-    elif data_len == width * height:
-        bayer = np.frombuffer(data, dtype=np.uint8).reshape(height, width)
-        rgb = cv2.cvtColor(bayer, cv2.COLOR_BayerRG2RGB)
-        return rgb
-    
+
+    # 单通道数据（可能是灰度或Bayer）
+    if data_len == width * height:
+        arr1 = np.frombuffer(data, dtype=np.uint8).reshape(height, width)
+        if force_color:
+            # 选择 Bayer 转换代码
+            code = cv2.COLOR_BayerRG2RGB
+            if bayer_pattern == 'GB':
+                code = cv2.COLOR_BayerGB2RGB
+            elif bayer_pattern == 'GR':
+                code = cv2.COLOR_BayerGR2RGB
+            elif bayer_pattern == 'BG':
+                code = cv2.COLOR_BayerBG2RGB
+
+            try:
+                rgb = cv2.cvtColor(arr1, code)
+                return rgb
+            except Exception:
+                # 若 debayer 失败，回退为灰度扩展
+                return np.dstack([arr1, arr1, arr1]).astype('uint8')
+        else:
+            # 仅扩展灰度到三通道
+            return np.dstack([arr1, arr1, arr1]).astype('uint8')
+
     return None
 
 
@@ -111,6 +126,12 @@ def main():
                        help='Override FPS (0 = use header value or default 30)')
     parser.add_argument('--format', choices=['png', 'jpg'], default='png',
                        help='Image format for saved frames')
+    parser.add_argument('--color', action='store_true',
+                       help='Force decode single-channel frames to color (debayer)')
+    parser.add_argument('--bayer-pattern', choices=['RG','GB','GR','BG'], default='RG',
+                       help='Bayer pattern to use when debayering (default RG)')
+    parser.add_argument('--rotate', type=int, choices=[0,1,2,3], default=0,
+                       help='Rotate output images by i*90 degrees clockwise (i in [0,3])')
     
     args = parser.parse_args()
     
@@ -158,10 +179,12 @@ def main():
                 import subprocess
                 
                 ffmpeg_path = shutil.which('ffmpeg')
+                # If rotation is 90 or 270 degrees, swap input size for ffmpeg
+                in_w, in_h = (width, height) if (args.rotate % 2) == 0 else (height, width)
                 if ffmpeg_path:
                     cmd = [
                         ffmpeg_path, '-y', '-f', 'rawvideo', '-pix_fmt', 'rgb24',
-                        '-s', f'{width}x{height}', '-r', str(fps), '-i', '-',
+                        '-s', f'{in_w}x{in_h}', '-r', str(fps), '-i', '-',
                         '-c:v', 'libx264', '-pix_fmt', 'yuv420p', out_video
                     ]
                     print(f"Launching ffmpeg: {' '.join(cmd)}")
@@ -170,8 +193,8 @@ def main():
                     # 回退到 OpenCV VideoWriter
                     print("ffmpeg not found, using OpenCV VideoWriter")
                     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                    cv_writer = cv2.VideoWriter(out_video, fourcc, float(fps), 
-                                                (int(width), int(height)))
+                    vw_size = (int(width), int(height)) if (args.rotate % 2) == 0 else (int(height), int(width))
+                    cv_writer = cv2.VideoWriter(out_video, fourcc, float(fps), vw_size)
                     if not cv_writer.isOpened():
                         raise RuntimeError('Failed to open OpenCV VideoWriter')
             
@@ -187,8 +210,10 @@ def main():
                     print(f"Warning: Incomplete frame {frame_idx}")
                     break
                 
-                # 解码帧
-                rgb_frame = decode_frame_heuristic(data, width, height)
+                # 解码帧（可选择强制解码为彩色）
+                rgb_frame = decode_frame_heuristic(data, width, height,
+                                                   force_color=args.color,
+                                                   bayer_pattern=args.bayer_pattern)
                 
                 if rgb_frame is None:
                     if mode == 'raw':
@@ -202,10 +227,17 @@ def main():
                     continue
                 
                 # 输出帧
+                # Apply rotation (clockwise k*90) if requested
+                rotate_k = args.rotate % 4
+                if rotate_k != 0:
+                    # np.rot90 rotates counter-clockwise; use negative to rotate clockwise
+                    import numpy as _np
+                    rgb_frame = _np.rot90(rgb_frame, -rotate_k)
+
                 if mode == 'ffmpeg':
                     # RGB 格式用于 ffmpeg
                     rgb_bytes = rgb_frame.tobytes()
-                    
+
                     if ffmpeg_proc:
                         try:
                             ffmpeg_proc.stdin.write(rgb_bytes)
@@ -215,12 +247,12 @@ def main():
                         # OpenCV 需要 BGR
                         bgr_frame = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
                         cv_writer.write(bgr_frame)
-                    
+
                     if save_frames:
                         img_path = os.path.join(out_dir, f'frame_{frame_idx:06d}.{img_format}')
                         bgr_frame = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
                         cv2.imwrite(img_path, bgr_frame)
-                        
+
                 elif mode == 'images':
                     img_path = os.path.join(out_dir, f'frame_{frame_idx:06d}.{img_format}')
                     bgr_frame = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)

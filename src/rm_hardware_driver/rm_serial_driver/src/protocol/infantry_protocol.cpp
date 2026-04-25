@@ -24,13 +24,14 @@ ProtocolInfantry::ProtocolInfantry(std::string_view port_name, bool enable_data_
 }
 
 void ProtocolInfantry::send(const rm_interfaces::msg::GimbalCmd &data) {
+  const auto safe_data = sanitizeForTransport(data);
   FixedPacket<24> packet;
-  packet.loadData<unsigned char>(data.fire_advice ? FireState::Fire : FireState::NotFire, 1);
-  packet.loadData<float>(static_cast<float>(data.pitch), 2);
-  packet.loadData<float>(static_cast<float>(data.yaw), 6);
-  packet.loadData<float>(static_cast<float>(data.distance), 10);
-  packet.loadData<float>(static_cast<float>(data.pitch_v), 14);
-  packet.loadData<float>(static_cast<float>(data.yaw_v), 18);
+  packet.loadData<unsigned char>(safe_data.fire_advice ? FireState::Fire : FireState::NotFire, 1);
+  packet.loadData<float>(static_cast<float>(safe_data.pitch), 2);
+  packet.loadData<float>(static_cast<float>(safe_data.yaw), 6);
+  packet.loadData<float>(static_cast<float>(safe_data.distance), 10);
+  packet.loadData<float>(static_cast<float>(safe_data.pitch_v), 14);
+  packet.loadData<float>(static_cast<float>(safe_data.yaw_v), 18);
   packet_tool_->sendPacket(packet);
 }
 

@@ -36,7 +36,7 @@ include_directories(
 
 # ─── Collect all source files (include src root + subdirectories) ─
 # Some CMake versions/policies may miss src/*.cpp when only using src/**/*.cpp.
-file(GLOB_RECURSE ALL_SRCS
+file(GLOB_RECURSE ALL_SRCS CONFIGURE_DEPENDS
   "src/*.cpp"
   "src/**/*.cpp"
 )
@@ -121,6 +121,34 @@ if(BUILD_TESTING)
     rclcpp_components
   )
   target_link_libraries(test_mpc_core
+    Eigen3::Eigen
+    ${qpOASES_LIBRARY}
+  )
+
+  ament_add_gtest(test_outpost_binding test/test_outpost_binding.cpp
+    ${ALL_SRCS}
+  )
+  target_include_directories(test_outpost_binding PRIVATE
+    include
+    ${EIGEN3_INCLUDE_DIRS}
+    ${qpOASES_INCLUDE_DIR}
+  )
+  ament_target_dependencies(test_outpost_binding
+    rclcpp
+    rm_interfaces
+    rm_utils
+    geometry_msgs
+    std_msgs
+    sensor_msgs
+    visualization_msgs
+    tf2
+    tf2_ros
+    tf2_geometry_msgs
+    message_filters
+    angles
+    rclcpp_components
+  )
+  target_link_libraries(test_outpost_binding
     Eigen3::Eigen
     ${qpOASES_LIBRARY}
   )

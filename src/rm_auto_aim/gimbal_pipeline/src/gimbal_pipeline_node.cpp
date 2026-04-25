@@ -11,8 +11,9 @@
 #include <cmath>
 #include <limits>
 #include <rm_utils/heartbeat.hpp>
-#include <set>
 #include <sstream>
+#include <iomanip>
+#include <unordered_set>
 
 #include "rm_utils/logger/log.hpp"
 
@@ -27,6 +28,145 @@
 #include "gimbal_controller/strategies/mpc_control_strategy.hpp"
 #include "gimbal_controller/strategies/predicted_position_strategy.hpp"
 #include "gimbal_controller/strategies/state_machine_strategy.hpp"
+#include "gimbal_controller/fire_advisor.hpp"
+
+namespace
+{
+
+bool hasParameterOverride(rclcpp::Node & node, const std::string & key)
+{
+  const auto params_interface = node.get_node_parameters_interface();
+  if (!params_interface) {
+    return false;
+  }
+  const auto & overrides = params_interface->get_parameter_overrides();
+  return overrides.find(key) != overrides.end();
+}
+
+bool shouldWarnDeprecatedOnce(const std::string & deprecated_key)
+{
+  static std::unordered_set<std::string> warned_keys;
+  return warned_keys.insert(deprecated_key).second;
+}
+
+double readCompatDoubleParameter(
+  rclcpp::Node & node,
+  const std::string & canonical_key,
+  const std::string & deprecated_key,
+  double conflict_eps = 1e-9)
+{
+  const double canonical_value = node.get_parameter(canonical_key).as_double();
+  const double deprecated_value = node.get_parameter(deprecated_key).as_double();
+  const bool canonical_overridden = hasParameterOverride(node, canonical_key);
+  const bool deprecated_overridden = hasParameterOverride(node, deprecated_key);
+
+  if (deprecated_overridden && !canonical_overridden) {
+    if (shouldWarnDeprecatedOnce(deprecated_key)) {
+      RCLCPP_WARN(
+        node.get_logger(),
+        "Parameter '%s' is deprecated; please use '%s'. Applying deprecated value: %.6f",
+        deprecated_key.c_str(),
+        canonical_key.c_str(),
+        deprecated_value);
+    }
+    return deprecated_value;
+  }
+
+  if (deprecated_overridden && canonical_overridden &&
+    std::abs(canonical_value - deprecated_value) > conflict_eps)
+  {
+    if (shouldWarnDeprecatedOnce(deprecated_key)) {
+      RCLCPP_WARN(
+        node.get_logger(),
+        "Both deprecated '%s' and canonical '%s' are set with different values "
+        "(deprecated=%.6f, canonical=%.6f). Canonical value will be used.",
+        deprecated_key.c_str(),
+        canonical_key.c_str(),
+        deprecated_value,
+        canonical_value);
+    }
+  }
+
+  return canonical_value;
+}
+
+int readCompatIntParameter(
+  rclcpp::Node & node,
+  const std::string & canonical_key,
+  const std::string & deprecated_key)
+{
+  const int canonical_value = node.get_parameter(canonical_key).as_int();
+  const int deprecated_value = node.get_parameter(deprecated_key).as_int();
+  const bool canonical_overridden = hasParameterOverride(node, canonical_key);
+  const bool deprecated_overridden = hasParameterOverride(node, deprecated_key);
+
+  if (deprecated_overridden && !canonical_overridden) {
+    if (shouldWarnDeprecatedOnce(deprecated_key)) {
+      RCLCPP_WARN(
+        node.get_logger(),
+        "Parameter '%s' is deprecated; please use '%s'. Applying deprecated value: %d",
+        deprecated_key.c_str(),
+        canonical_key.c_str(),
+        deprecated_value);
+    }
+    return deprecated_value;
+  }
+
+  if (deprecated_overridden && canonical_overridden && canonical_value != deprecated_value) {
+    if (shouldWarnDeprecatedOnce(deprecated_key)) {
+      RCLCPP_WARN(
+        node.get_logger(),
+        "Both deprecated '%s' and canonical '%s' are set with different values "
+        "(deprecated=%d, canonical=%d). Canonical value will be used.",
+        deprecated_key.c_str(),
+        canonical_key.c_str(),
+        deprecated_value,
+        canonical_value);
+    }
+  }
+
+  return canonical_value;
+}
+
+bool readCompatBoolParameter(
+  rclcpp::Node & node,
+  const std::string & canonical_key,
+  const std::string & deprecated_key)
+{
+  const bool canonical_value = node.get_parameter(canonical_key).as_bool();
+  const bool deprecated_value = node.get_parameter(deprecated_key).as_bool();
+  const bool canonical_overridden = hasParameterOverride(node, canonical_key);
+  const bool deprecated_overridden = hasParameterOverride(node, deprecated_key);
+
+  if (deprecated_overridden && !canonical_overridden) {
+    if (shouldWarnDeprecatedOnce(deprecated_key)) {
+      RCLCPP_WARN(
+        node.get_logger(),
+        "Parameter '%s' is deprecated; please use '%s'. Applying deprecated value: %s",
+        deprecated_key.c_str(),
+        canonical_key.c_str(),
+        deprecated_value ? "true" : "false");
+    }
+    return deprecated_value;
+  }
+
+  if (deprecated_overridden && canonical_overridden && canonical_value != deprecated_value) {
+    if (shouldWarnDeprecatedOnce(deprecated_key)) {
+      RCLCPP_WARN(
+        node.get_logger(),
+        "Both deprecated '%s' and canonical '%s' are set with different values "
+        "(deprecated=%s, canonical=%s). Canonical value will be used.",
+        deprecated_key.c_str(),
+        canonical_key.c_str(),
+        deprecated_value ? "true" : "false",
+        canonical_value ? "true" : "false");
+    }
+  }
+
+  return canonical_value;
+}
+
+}  // namespace
 
 namespace fyt::auto_aim {
 
@@ -58,6 +198,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   predict_rate_ = get_parameter("predict_rate").as_double();
   debug_mode_ = get_parameter("debug_mode").as_bool();
   visualization_frame_ = get_parameter("visualization_frame").as_string();
+  tracker_timeout_s_ = std::max(get_parameter("tracker_timeout").as_double(), 1e-3);
 
   tracker_config_ = UnifiedConfig::create_default();
   applyTrackerParamsToConfig();
@@ -81,8 +222,28 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       get_parameter("default_r1").as_double(),
       get_parameter("default_r2").as_double(),
       get_parameter("default_dza").as_double(),
-      get_parameter("tracker_timeout").as_double(),
+      tracker_timeout_s_,
       get_parameter("enable_oscillation_detection").as_bool());
+
+  robot_description_facade_ = std::make_unique<robot_description::RobotDescriptionFacade>();
+  robot_description_facade_->setStrictUnknownReject(
+      get_parameter("robot_description.strict_unknown_reject").as_bool());
+
+  {
+    std::ostringstream oss;
+    const auto supported_ids = robot_description_facade_->supportedRobotIds();
+    for (size_t i = 0; i < supported_ids.size(); ++i) {
+      if (i != 0) {
+        oss << ",";
+      }
+      oss << supported_ids[i];
+    }
+    RCLCPP_INFO(
+      get_logger(),
+      "RobotDescription initialized (strict_unknown_reject=%s, supported_ids=[%s])",
+      robot_description_facade_->strictUnknownReject() ? "true" : "false",
+      oss.str().c_str());
+  }
 
   RCLCPP_INFO(get_logger(), "Tracker initialized (predict_rate=%.1f Hz)",
               predict_rate_);
@@ -127,8 +288,10 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   double shooting_range_h = get_parameter("controller.solver.shooting_range_height").as_double();
   double side_angle = get_parameter("controller.solver.side_angle").as_double();
   double min_switching_v_yaw = get_parameter("controller.solver.min_switching_v_yaw").as_double();
-  double prediction_delay = get_parameter("controller.solver.prediction_delay").as_double();
-  double max_prediction_time = get_parameter("controller.solver.max_prediction_time").as_double();
+  double prediction_delay = readCompatDoubleParameter(
+    *this, "controller.solver.prediction_delay", "solver.prediction_delay");
+  double max_prediction_time = readCompatDoubleParameter(
+    *this, "controller.solver.max_prediction_time", "solver.max_prediction_time");
   double max_tracking_v_yaw = get_parameter("controller.solver.max_tracking_v_yaw").as_double();
   int transfer_thresh = get_parameter("controller.solver.transfer_thresh").as_int();
   double gravity = get_parameter("controller.solver.gravity").as_double();
@@ -144,8 +307,32 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   double radial_dynamic_min_angle_deg = get_parameter("controller.solver.radial_dynamic.min_angle_deg").as_double();
   double radial_dynamic_bias_gain_deg = get_parameter("controller.solver.radial_dynamic.bias_gain_deg").as_double();
   double radial_dynamic_max_bias_deg = get_parameter("controller.solver.radial_dynamic.max_bias_deg").as_double();
-  double controller_delay = get_parameter("controller.solver.controller_delay").as_double();
+  bool virtual_auto_switch_enable = get_parameter("controller.solver.virtual_pose.auto_switch.enable").as_bool();
+  double virtual_auto_switch_enter_vyaw =
+    get_parameter("controller.solver.virtual_pose.auto_switch.enter_vyaw").as_double();
+  double virtual_auto_switch_exit_vyaw =
+    get_parameter("controller.solver.virtual_pose.auto_switch.exit_vyaw").as_double();
+  std::string virtual_auto_switch_method_str =
+    get_parameter("controller.solver.virtual_pose.auto_switch.selection_method").as_string();
+  int virtual_auto_switch_fixed_id =
+    get_parameter("controller.solver.virtual_pose.auto_switch.fixed_id").as_int();
+  int virtual_fixed_id = get_parameter("controller.solver.virtual_pose.fixed_id").as_int();
+  double controller_delay = readCompatDoubleParameter(
+    *this, "controller.solver.controller_delay", "solver.controller_delay");
+  double trigger_to_muzzle_s = readCompatDoubleParameter(
+    *this, "controller.solver.trigger_to_muzzle_s", "solver.trigger_to_muzzle_s");
+  if (hasParameterOverride(*this, "controller.fire.trigger_to_muzzle_s")) {
+    trigger_to_muzzle_s = get_parameter("controller.fire.trigger_to_muzzle_s").as_double();
+  }
+  double max_processing_delay_s = readCompatDoubleParameter(
+    *this, "controller.mpc.max_processing_delay_s", "mpc.max_processing_delay_s");
   std::string selection_method_str = get_parameter("controller.solver.selection_method").as_string();
+  std::string fire_policy = get_parameter("controller.fire.decision_policy").as_string();
+  int fire_flight_time_iters = get_parameter("controller.fire.flight_time_iters").as_int();
+  double fire_facing_filter_opening_angle_deg =
+    get_parameter("controller.fire.facing_filter_opening_angle_deg").as_double();
+  bool fire_use_gimbal_kinematics =
+    get_parameter("controller.fire.use_gimbal_kinematics").as_bool();
 
   facing_enter_angle_deg_ = facing_enter_angle;
   facing_exit_angle_deg_ = facing_exit_angle;
@@ -155,6 +342,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   radial_dynamic_min_angle_deg_ = std::max(radial_dynamic_min_angle_deg, 0.0);
   radial_dynamic_bias_gain_deg_ = std::max(radial_dynamic_bias_gain_deg, 0.0);
   radial_dynamic_max_bias_deg_ = std::max(radial_dynamic_max_bias_deg, 0.0);
+  virtual_auto_switch_enable_ = virtual_auto_switch_enable;
+  mpc_dt_debug_ = std::max(get_parameter("controller.mpc.dt").as_double(), 1e-4);
 
   armor_selector_->setParameters(side_angle, min_switching_v_yaw);
   armor_selector_->setFacingParameters(facing_enter_angle, facing_exit_angle);
@@ -165,6 +354,18 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     radial_dynamic_min_angle_deg,
     radial_dynamic_bias_gain_deg,
     radial_dynamic_max_bias_deg);
+  armor_selector_->setVirtualPoseParameters(
+    virtual_auto_switch_enable,
+    virtual_auto_switch_enter_vyaw,
+    virtual_auto_switch_exit_vyaw);
+  gimbal_controller::ArmorSelector::SelectionMethod auto_switch_method =
+    gimbal_controller::ArmorSelector::SelectionMethod::VIRTUAL_POSE;
+  if (virtual_auto_switch_method_str == "virtual_fixed_id") {
+    auto_switch_method = gimbal_controller::ArmorSelector::SelectionMethod::VIRTUAL_FIXED_ID;
+  }
+  armor_selector_->setVirtualAutoSwitchMethod(auto_switch_method);
+  armor_selector_->setVirtualAutoSwitchFixedId(virtual_auto_switch_fixed_id);
+  armor_selector_->setVirtualFixedId(virtual_fixed_id);
 
   // 配置选板策略
   gimbal_controller::ArmorSelector::SelectionMethod sel_method =
@@ -175,6 +376,10 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     sel_method = gimbal_controller::ArmorSelector::SelectionMethod::MIN_MOVEMENT_WITH_RADIAL;
   } else if (selection_method_str == "decision_angle") {
     sel_method = gimbal_controller::ArmorSelector::SelectionMethod::DECISION_ANGLE;
+  } else if (selection_method_str == "virtual_pose") {
+    sel_method = gimbal_controller::ArmorSelector::SelectionMethod::VIRTUAL_POSE;
+  } else if (selection_method_str == "virtual_fixed_id") {
+    sel_method = gimbal_controller::ArmorSelector::SelectionMethod::VIRTUAL_FIXED_ID;
   }
   armor_selector_->setSelectionMethod(sel_method);
   radial_selection_enabled_ =
@@ -182,6 +387,28 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   RCLCPP_INFO(get_logger(), "[GimbalController] selection_method: %s", selection_method_str.c_str());
 
   fire_advisor_->setParameters(shooting_range_w, shooting_range_h);
+  if (fire_policy == "ellipse") {
+    fire_advisor_->setDecisionPolicy(
+      std::make_shared<gimbal_controller::EllipseFireDecisionPolicy>());
+  } else {
+    fire_advisor_->setDecisionPolicy(
+      std::make_shared<gimbal_controller::AxisThresholdFireDecisionPolicy>());
+  }
+  if (fire_advice_engine_) {
+    fire_advice_engine_->setFlightTimeIterations(fire_flight_time_iters);
+    fire_advice_engine_->setFacingFilterOpeningAngleDeg(fire_facing_filter_opening_angle_deg);
+    fire_advice_engine_->setUseGimbalKinematics(fire_use_gimbal_kinematics);
+  }
+  if (gimbal_control_core_) {
+    gimbal_controller::FireDecisionConfig fire_cfg;
+    fire_cfg.prediction_delay_s = std::max(prediction_delay, 0.0);
+    fire_cfg.control_latency_s = std::max(controller_delay, 0.0);
+    fire_cfg.trigger_to_muzzle_s = std::max(trigger_to_muzzle_s, 0.0);
+    fire_cfg.max_processing_delay_s = std::max(max_processing_delay_s, 0.0);
+    fire_cfg.include_processing_delay = true;
+    fire_cfg.include_control_latency_in_target_prediction = false;
+    gimbal_control_core_->setFireDecisionConfig(fire_cfg);
+  }
   local_compensator_->setParameters(bullet_speed_, gravity, resistance,
                                     iteration_times);
 
@@ -191,9 +418,11 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       gimbal_strategies_["predicted"]);
   if (predicted_strategy) {
     predicted_strategy->setPredictionParameters(prediction_delay, max_prediction_time);
+    predicted_strategy->setMaxProcessingDelay(max_processing_delay_s);
     predicted_strategy->setManualOffset(pitch_offset, yaw_offset);
     predicted_strategy->setTrackingCenterParams(max_tracking_v_yaw, transfer_thresh);
     predicted_strategy->setControllerDelay(controller_delay);
+    predicted_strategy->setTriggerToMuzzleDelay(trigger_to_muzzle_s);
   }
   auto current_strategy = std::dynamic_pointer_cast<
       gimbal_controller::CurrentPositionStrategy>(
@@ -201,6 +430,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   if (current_strategy) {
     current_strategy->setManualOffset(pitch_offset, yaw_offset);
     current_strategy->setControllerDelay(controller_delay);
+    current_strategy->setMaxProcessingDelay(max_processing_delay_s);
+    current_strategy->setTriggerToMuzzleDelay(trigger_to_muzzle_s);
   }
 
   // Configure adaptive controller_delay (AIMD)
@@ -243,8 +474,14 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   int sm_spin_enter = get_parameter("controller.state_machine.spin_enter_count").as_int();
   int sm_spin_exit = get_parameter("controller.state_machine.spin_exit_count").as_int();
   double sm_side_angle = get_parameter("controller.state_machine.side_angle").as_double();
-  double sm_prediction_delay = get_parameter("controller.state_machine.prediction_delay").as_double();
-  double sm_max_prediction = get_parameter("controller.state_machine.max_prediction_time").as_double();
+  double sm_prediction_delay = readCompatDoubleParameter(
+    *this,
+    "controller.state_machine.prediction_delay",
+    "state_machine.prediction_delay");
+  double sm_max_prediction = readCompatDoubleParameter(
+    *this,
+    "controller.state_machine.max_prediction_time",
+    "state_machine.max_prediction_time");
 
   auto sm_strategy_ptr = std::dynamic_pointer_cast<
       gimbal_controller::StateMachineStrategy>(
@@ -256,7 +493,9 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
                                        sm_side_angle);
     sm_strategy_ptr->setPredictionParameters(sm_prediction_delay,
                                              sm_max_prediction);
+    sm_strategy_ptr->setMaxProcessingDelay(max_processing_delay_s);
     sm_strategy_ptr->setManualOffset(pitch_offset, yaw_offset);
+    sm_strategy_ptr->setTriggerToMuzzleDelay(trigger_to_muzzle_s);
   }
 
   // ── 配置 GimbalCmd 输出端保护滤波器 ──
@@ -281,7 +520,9 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     fcfg.one_euro_min_cutoff         = get_parameter("controller.output_filter.one_euro_min_cutoff").as_double();
     fcfg.one_euro_beta               = get_parameter("controller.output_filter.one_euro_beta").as_double();
     fcfg.one_euro_d_cutoff           = get_parameter("controller.output_filter.one_euro_d_cutoff").as_double();
-    cmd_filter_.setConfig(fcfg);
+    if (gimbal_control_core_) {
+      gimbal_control_core_->setFilterConfig(fcfg);
+    }
     RCLCPP_INFO(get_logger(),
       "[GimbalCmdFilter] clamp=%s(%.1f°,%.1f°) outlier=%s(%.1f°,%.1f°,max%d)"
       " rate=%s(%.1f°,%.1f°) mean=%s(win=%d) ema=%s(a=%.2f) 1euro=%s(f=%.0f,mc=%.2f,b=%.4f)",
@@ -353,6 +594,10 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
             "~/selected_target", rclcpp::SensorDataQoS());
     debug_target_pub_ = create_publisher<rm_interfaces::msg::Target>(
         "~/target", sensor_qos);
+    debug_delay_audit_pub_ = create_publisher<rm_interfaces::msg::DelayAudit>(
+      "~/delay_audit", rclcpp::SensorDataQoS());
+    debug_armor_selection_pub_ = create_publisher<std_msgs::msg::String>(
+      "~/armor_selection_debug", rclcpp::SensorDataQoS());
     debug_tracker_marker_pub_ =
         create_publisher<visualization_msgs::msg::MarkerArray>(
             "~/tracker_markers", 10);
@@ -423,6 +668,7 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("debug_mode", false);
   declare_parameter("enable_oscillation_detection", false);
   declare_parameter("visualization_frame", "odom");
+  declare_parameter("robot_description.strict_unknown_reject", true);
 
   // UKF
   declare_parameter("ukf.alpha", 0.001);
@@ -465,12 +711,72 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("tracker.max_match_yaw_diff", 1.0);
   declare_parameter("tracker.n_panels", 4);
   declare_parameter("tracker.panel_angle_step", M_PI / 2.0);
+  declare_parameter("tracker.periodic_binding_enable", false);
+  declare_parameter("tracker.periodic_binding_weight", 0.35);
+  declare_parameter("tracker.periodic_binding_spin_rate_gate", 0.8);
 
   // Constraints
   declare_parameter("constraints.min_radius", 0.12);
   declare_parameter("constraints.max_radius", 0.5);
   declare_parameter("constraints.min_dz", -1.0);
   declare_parameter("constraints.max_dz", 1.0);
+
+  // Outpost-specific (known 3-armor geometry + max-entropy mode switch)
+  declare_parameter("outpost.translation_model", "CV");
+  declare_parameter("outpost.rotation_model", "CV");
+  declare_parameter("outpost.tracking_thres", 2);
+  declare_parameter("outpost.lost_thres", 40);
+  declare_parameter("outpost.temp_lost_thres", 30);
+  declare_parameter("outpost.max_match_distance", 2.0);
+  declare_parameter("outpost.max_match_yaw_diff", 1.0);
+  declare_parameter("outpost.singer_alpha", 0.0);
+  declare_parameter("outpost.singer_sigma", 0.0);
+  declare_parameter("outpost.spin_process_noise_theta_rate", 0.0);
+  declare_parameter("outpost.spin_process_noise_theta_acc", 0.0);
+  declare_parameter("outpost.radius", 0.26);
+  // Outpost semantic contract:
+  //   id0=highest, id1=middle, id2=lowest.
+  declare_parameter("outpost.z_offset_0", 0.06);
+  declare_parameter("outpost.z_offset_1", 0.0);
+  declare_parameter("outpost.z_offset_2", -0.06);
+  declare_parameter("outpost.panel_angle_step", 2.0 * M_PI / 3.0);
+  declare_parameter("outpost.softmax_temperature", 1.5);
+  declare_parameter("outpost.weight_yaw", 1.0);
+  declare_parameter("outpost.weight_z_state", 6.0);
+  declare_parameter("outpost.weight_z_history", 2.0);
+  declare_parameter("outpost.weight_xy_residual", 2.5);
+  declare_parameter("outpost.weight_switch_penalty", 0.05);
+  declare_parameter("outpost.entropy_enter", 0.75);
+  declare_parameter("outpost.entropy_exit", 0.55);
+  declare_parameter("outpost.max_prob_enter", 0.60);
+  declare_parameter("outpost.max_prob_exit", 0.75);
+  declare_parameter("outpost.stable_frames", 4);
+  declare_parameter("outpost.z_history_window", 15);
+  declare_parameter("outpost.single_mode_confidence_scale", 0.70);
+  declare_parameter("outpost.binding_enable_multi_obs", true);
+  declare_parameter("outpost.binding_transition_confirm_frames", 3);
+  declare_parameter("outpost.binding_same_panel_yaw_gate", 0.35);
+  declare_parameter("outpost.binding_same_panel_z_gate", 0.08);
+  declare_parameter("outpost.binding_same_panel_xy_gate", 0.18);
+  declare_parameter("outpost.binding_min_candidate_prob", 0.40);
+  declare_parameter("outpost.binding_min_candidate_margin", 0.12);
+  declare_parameter("outpost.binding_switch_strong_score", 0.60);
+  declare_parameter("outpost.binding_period_window", 12);
+  declare_parameter("outpost.binding_period_weight", 0.60);
+  declare_parameter("outpost.binding_period_min_spin_rate", 0.8);
+  declare_parameter("outpost.binding_period_update_min_confidence", 0.55);
+  declare_parameter("outpost.binding_period_update_min_jump", 0.015);
+  declare_parameter("outpost.binding_dz_ema_alpha", 0.20);
+  declare_parameter("outpost.binding_confidence_floor", 0.15);
+  declare_parameter("outpost.alpha_pos", 0.65);
+  declare_parameter("outpost.beta_vel", 0.30);
+  declare_parameter("outpost.alpha_yaw", 0.60);
+  declare_parameter("outpost.beta_yaw_rate", 0.25);
+  declare_parameter("outpost.assume_static_center", true);
+  declare_parameter("outpost.linear_velocity_damping", 0.90);
+  declare_parameter("outpost.yaw_rate_damping", 0.98);
+  declare_parameter("outpost.max_center_speed", 1.00);
+  declare_parameter("outpost.max_yaw_rate", 12.0);
 
   // Maneuver detection
   declare_parameter("maneuver.enable", true);
@@ -562,8 +868,27 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.solver.radial_dynamic.min_angle_deg", 5.0);
   declare_parameter("controller.solver.radial_dynamic.bias_gain_deg", 0.0);
   declare_parameter("controller.solver.radial_dynamic.max_bias_deg", 0.0);
+  declare_parameter("controller.solver.virtual_pose.auto_switch.enable", false);
+  declare_parameter("controller.solver.virtual_pose.auto_switch.enter_vyaw", 8.0);
+  declare_parameter("controller.solver.virtual_pose.auto_switch.exit_vyaw", 6.0);
+  declare_parameter("controller.solver.virtual_pose.auto_switch.selection_method",
+                    std::string("virtual_pose"));
+  declare_parameter("controller.solver.virtual_pose.auto_switch.fixed_id", 0);
+  declare_parameter("controller.solver.virtual_pose.fixed_id", 0);
   declare_parameter("controller.solver.controller_delay", 0.0);
+  declare_parameter("controller.solver.trigger_to_muzzle_s", 0.0);
   declare_parameter("controller.solver.selection_method", std::string("min_movement_with_facing"));
+  declare_parameter("controller.fire.trigger_to_muzzle_s", 0.0);
+  declare_parameter("controller.fire.decision_policy", std::string("axis_threshold"));
+  declare_parameter("controller.fire.flight_time_iters", 2);
+  declare_parameter("controller.fire.facing_filter_opening_angle_deg", 180.0);
+  declare_parameter("controller.fire.use_gimbal_kinematics", false);
+
+  // Deprecated aliases (for migration from legacy gimbal_controller keys)
+  declare_parameter("solver.prediction_delay", 0.0);
+  declare_parameter("solver.max_prediction_time", 0.5);
+  declare_parameter("solver.controller_delay", 0.0);
+  declare_parameter("solver.trigger_to_muzzle_s", 0.0);
 
   // Adaptive controller_delay (AIMD)
   declare_parameter("controller.solver.adaptive_delay.enable",              false);
@@ -586,6 +911,10 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.state_machine.prediction_delay", 0.0);
   declare_parameter("controller.state_machine.max_prediction_time", 0.5);
 
+  // Deprecated aliases (for migration from legacy gimbal_controller keys)
+  declare_parameter("state_machine.prediction_delay", 0.0);
+  declare_parameter("state_machine.max_prediction_time", 0.5);
+
   // MPC strategy
   declare_parameter("controller.mpc.N", 20);
   declare_parameter("controller.mpc.dt", 0.01);
@@ -606,6 +935,13 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.mpc.flight_time_iters", 2);
   declare_parameter("controller.mpc.max_processing_delay_s", 0.5);
   declare_parameter("controller.mpc.yaw_feedforward_k_s", 0.0);
+
+  // Deprecated aliases (for migration from old unscoped mpc delay keys)
+  declare_parameter("mpc.control_delay_s", 0.0);
+  declare_parameter("mpc.enable_delay_compensation", false);
+  declare_parameter("mpc.prediction_delay_s", 0.0);
+  declare_parameter("mpc.flight_time_iters", 2);
+  declare_parameter("mpc.max_processing_delay_s", 0.5);
 
   // MPC 机动自适应权重衰减
   declare_parameter("controller.mpc.maneuver_adapt.enable",  false);
@@ -643,6 +979,39 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.mpc.fov_constraint.dynamic_margin.vel_scale",0.01);
   declare_parameter("controller.mpc.fov_constraint.fallback_fov_yaw",        0.35);
   declare_parameter("controller.mpc.fov_constraint.fallback_fov_pitch",      0.26);
+
+  // MPC 数值稳健性: 在线 RMS 归一化
+  declare_parameter("controller.mpc.normalization.enable", false);
+  declare_parameter("controller.mpc.normalization.mode", std::string("rms"));
+  declare_parameter("controller.mpc.normalization.window_size", 80);
+  declare_parameter("controller.mpc.normalization.min_samples", 10);
+  declare_parameter("controller.mpc.normalization.rms_epsilon", 1e-6);
+  declare_parameter("controller.mpc.normalization.typical_state.yaw", 1.0);
+  declare_parameter("controller.mpc.normalization.typical_state.pitch", 1.0);
+  declare_parameter("controller.mpc.normalization.typical_state.yaw_vel", 1.0);
+  declare_parameter("controller.mpc.normalization.typical_state.pitch_vel", 1.0);
+  declare_parameter("controller.mpc.normalization.typical_control.yaw_acc", 1.0);
+  declare_parameter("controller.mpc.normalization.typical_control.pitch_acc", 1.0);
+  declare_parameter("controller.mpc.normalization.typical_delta_control.yaw_acc", 1.0);
+  declare_parameter("controller.mpc.normalization.typical_delta_control.pitch_acc", 1.0);
+
+  // MPC 数值稳健性: Hessian 自适应对角正则
+  declare_parameter("controller.mpc.regularization.enable", false);
+  declare_parameter("controller.mpc.regularization.epsilon_abs", 1e-8);
+  declare_parameter("controller.mpc.regularization.epsilon_rel", 1e-6);
+  declare_parameter("controller.mpc.regularization.epsilon_max", 1e-2);
+  declare_parameter("controller.mpc.regularization.retry_on_fail", true);
+  declare_parameter("controller.mpc.regularization.retry_scale", 10.0);
+
+  // MPC 数值诊断: 低成本常开 + 高成本抽样
+  declare_parameter("controller.mpc.diagnostics.enable", false);
+  declare_parameter("controller.mpc.diagnostics.low_cost_always", true);
+  declare_parameter("controller.mpc.diagnostics.high_cost_enable", false);
+  declare_parameter("controller.mpc.diagnostics.high_cost_sample_every", 20);
+  declare_parameter("controller.mpc.diagnostics.log_every", 50);
+  declare_parameter("controller.mpc.diagnostics.log_on_failure", true);
+  declare_parameter("controller.mpc.diagnostics.active_tol", 1e-4);
+  declare_parameter("controller.mpc.diagnostics.rank_tol_rel", 1e-9);
 
   // ─── GimbalCmd 输出端保护滤波器 ──────────────────────────────
   // 0. Clamping — 绝对限幅
@@ -738,6 +1107,17 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
   c.tracker.n_panels = get_parameter("tracker.n_panels").as_int();
   c.tracker.panel_angle_step =
       get_parameter("tracker.panel_angle_step").as_double();
+    c.tracker.periodic_binding_enable =
+      get_parameter("tracker.periodic_binding_enable").as_bool();
+    c.tracker.periodic_binding_weight =
+      get_parameter("tracker.periodic_binding_weight").as_double();
+    c.tracker.periodic_binding_spin_rate_gate =
+      get_parameter("tracker.periodic_binding_spin_rate_gate").as_double();
+
+    c.tracker.periodic_binding_weight =
+      std::max(0.0, c.tracker.periodic_binding_weight);
+    c.tracker.periodic_binding_spin_rate_gate =
+      std::max(0.0, c.tracker.periodic_binding_spin_rate_gate);
 
   c.constraints.min_radius =
       get_parameter("constraints.min_radius").as_double();
@@ -766,6 +1146,166 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("panel_mismatch.confirm_count").as_int();
   c.panel_mismatch.reinit_count =
       get_parameter("panel_mismatch.reinit_count").as_int();
+
+    c.outpost.translation_model = translation_model_from_string(
+      get_parameter("outpost.translation_model").as_string());
+    c.outpost.rotation_model = rotation_model_from_string(
+      get_parameter("outpost.rotation_model").as_string());
+    c.outpost.tracking_thres = get_parameter("outpost.tracking_thres").as_int();
+    c.outpost.lost_thres = get_parameter("outpost.lost_thres").as_int();
+    c.outpost.temp_lost_thres =
+      get_parameter("outpost.temp_lost_thres").as_int();
+    c.outpost.max_match_distance =
+      get_parameter("outpost.max_match_distance").as_double();
+    c.outpost.max_match_yaw_diff =
+      get_parameter("outpost.max_match_yaw_diff").as_double();
+    c.outpost.singer_alpha = get_parameter("outpost.singer_alpha").as_double();
+    c.outpost.singer_sigma = get_parameter("outpost.singer_sigma").as_double();
+    c.outpost.spin_process_noise_theta_rate =
+      get_parameter("outpost.spin_process_noise_theta_rate").as_double();
+    c.outpost.spin_process_noise_theta_acc =
+      get_parameter("outpost.spin_process_noise_theta_acc").as_double();
+    c.outpost.radius = get_parameter("outpost.radius").as_double();
+    c.outpost.z_offset_0 = get_parameter("outpost.z_offset_0").as_double();
+    c.outpost.z_offset_1 = get_parameter("outpost.z_offset_1").as_double();
+    c.outpost.z_offset_2 = get_parameter("outpost.z_offset_2").as_double();
+    c.outpost.panel_angle_step =
+      get_parameter("outpost.panel_angle_step").as_double();
+    c.outpost.softmax_temperature =
+      get_parameter("outpost.softmax_temperature").as_double();
+    c.outpost.weight_yaw = get_parameter("outpost.weight_yaw").as_double();
+    c.outpost.weight_z_state =
+      get_parameter("outpost.weight_z_state").as_double();
+    c.outpost.weight_z_history =
+      get_parameter("outpost.weight_z_history").as_double();
+    c.outpost.weight_xy_residual =
+      get_parameter("outpost.weight_xy_residual").as_double();
+    c.outpost.weight_switch_penalty =
+      get_parameter("outpost.weight_switch_penalty").as_double();
+    c.outpost.entropy_enter =
+      get_parameter("outpost.entropy_enter").as_double();
+    c.outpost.entropy_exit =
+      get_parameter("outpost.entropy_exit").as_double();
+    c.outpost.max_prob_enter =
+      get_parameter("outpost.max_prob_enter").as_double();
+    c.outpost.max_prob_exit =
+      get_parameter("outpost.max_prob_exit").as_double();
+    c.outpost.stable_frames =
+      get_parameter("outpost.stable_frames").as_int();
+    c.outpost.z_history_window =
+      get_parameter("outpost.z_history_window").as_int();
+    c.outpost.single_mode_confidence_scale =
+      get_parameter("outpost.single_mode_confidence_scale").as_double();
+    c.outpost.binding_enable_multi_obs =
+      get_parameter("outpost.binding_enable_multi_obs").as_bool();
+    c.outpost.binding_transition_confirm_frames =
+      get_parameter("outpost.binding_transition_confirm_frames").as_int();
+    c.outpost.binding_same_panel_yaw_gate =
+      get_parameter("outpost.binding_same_panel_yaw_gate").as_double();
+    c.outpost.binding_same_panel_z_gate =
+      get_parameter("outpost.binding_same_panel_z_gate").as_double();
+    c.outpost.binding_same_panel_xy_gate =
+      get_parameter("outpost.binding_same_panel_xy_gate").as_double();
+    c.outpost.binding_min_candidate_prob =
+      get_parameter("outpost.binding_min_candidate_prob").as_double();
+    c.outpost.binding_min_candidate_margin =
+      get_parameter("outpost.binding_min_candidate_margin").as_double();
+    c.outpost.binding_switch_strong_score =
+      get_parameter("outpost.binding_switch_strong_score").as_double();
+    c.outpost.binding_period_window =
+      get_parameter("outpost.binding_period_window").as_int();
+    c.outpost.binding_period_weight =
+      get_parameter("outpost.binding_period_weight").as_double();
+    c.outpost.binding_period_min_spin_rate =
+      get_parameter("outpost.binding_period_min_spin_rate").as_double();
+    c.outpost.binding_period_update_min_confidence =
+      get_parameter("outpost.binding_period_update_min_confidence").as_double();
+    c.outpost.binding_period_update_min_jump =
+      get_parameter("outpost.binding_period_update_min_jump").as_double();
+    c.outpost.binding_dz_ema_alpha =
+      get_parameter("outpost.binding_dz_ema_alpha").as_double();
+    c.outpost.binding_confidence_floor =
+      get_parameter("outpost.binding_confidence_floor").as_double();
+    c.outpost.alpha_pos = get_parameter("outpost.alpha_pos").as_double();
+    c.outpost.beta_vel = get_parameter("outpost.beta_vel").as_double();
+    c.outpost.alpha_yaw = get_parameter("outpost.alpha_yaw").as_double();
+    c.outpost.beta_yaw_rate =
+      get_parameter("outpost.beta_yaw_rate").as_double();
+    c.outpost.assume_static_center =
+      get_parameter("outpost.assume_static_center").as_bool();
+    c.outpost.linear_velocity_damping =
+      get_parameter("outpost.linear_velocity_damping").as_double();
+    c.outpost.yaw_rate_damping =
+      get_parameter("outpost.yaw_rate_damping").as_double();
+    c.outpost.max_center_speed =
+      get_parameter("outpost.max_center_speed").as_double();
+    c.outpost.max_yaw_rate =
+      get_parameter("outpost.max_yaw_rate").as_double();
+
+    c.outpost.tracking_thres = std::max(1, c.outpost.tracking_thres);
+    c.outpost.lost_thres = std::max(1, c.outpost.lost_thres);
+    c.outpost.temp_lost_thres = std::max(1, c.outpost.temp_lost_thres);
+    c.outpost.max_match_distance = std::max(0.0, c.outpost.max_match_distance);
+    c.outpost.max_match_yaw_diff = std::max(0.0, c.outpost.max_match_yaw_diff);
+
+    c.outpost.binding_transition_confirm_frames =
+      std::max(1, c.outpost.binding_transition_confirm_frames);
+    c.outpost.binding_same_panel_yaw_gate =
+      std::max(1e-3, c.outpost.binding_same_panel_yaw_gate);
+    c.outpost.binding_same_panel_z_gate =
+      std::max(1e-3, c.outpost.binding_same_panel_z_gate);
+    c.outpost.binding_same_panel_xy_gate =
+      std::max(1e-3, c.outpost.binding_same_panel_xy_gate);
+    c.outpost.binding_min_candidate_prob =
+      std::clamp(c.outpost.binding_min_candidate_prob, 0.0, 1.0);
+    c.outpost.binding_min_candidate_margin =
+      std::clamp(c.outpost.binding_min_candidate_margin, 0.0, 1.0);
+    c.outpost.binding_switch_strong_score =
+      std::clamp(c.outpost.binding_switch_strong_score, 0.0, 1.0);
+    c.outpost.binding_period_window = std::max(3, c.outpost.binding_period_window);
+    c.outpost.binding_period_weight =
+      std::max(0.0, c.outpost.binding_period_weight);
+    c.outpost.binding_period_min_spin_rate =
+      std::max(0.0, c.outpost.binding_period_min_spin_rate);
+    c.outpost.binding_period_update_min_confidence =
+      std::clamp(c.outpost.binding_period_update_min_confidence, 0.0, 1.0);
+    c.outpost.binding_period_update_min_jump =
+      std::max(0.0, c.outpost.binding_period_update_min_jump);
+    c.outpost.binding_dz_ema_alpha =
+      std::clamp(c.outpost.binding_dz_ema_alpha, 0.01, 1.0);
+    c.outpost.binding_confidence_floor =
+      std::clamp(c.outpost.binding_confidence_floor, 0.0, 0.95);
+    c.outpost.weight_xy_residual = std::max(0.0, c.outpost.weight_xy_residual);
+    c.outpost.weight_switch_penalty = std::max(0.0, c.outpost.weight_switch_penalty);
+
+  const bool z_descending =
+      (c.outpost.z_offset_0 > c.outpost.z_offset_1) &&
+      (c.outpost.z_offset_1 > c.outpost.z_offset_2);
+  if (!z_descending) {
+    RCLCPP_WARN(
+        get_logger(),
+        "Outpost z-offset semantic mismatch: expected z0>z1>z2 for "
+        "[highest,middle,lowest], got [%.4f, %.4f, %.4f]",
+        c.outpost.z_offset_0, c.outpost.z_offset_1, c.outpost.z_offset_2);
+  }
+
+  const double expected_step = 2.0 * M_PI / 3.0;
+  if (std::abs(std::abs(c.outpost.panel_angle_step) - expected_step) > 1e-3) {
+    RCLCPP_WARN(
+        get_logger(),
+        "Outpost panel_angle_step=%.6f differs from 2pi/3; semantic contract "
+        "(top-down clockwise: 0->2->1) assumes 120deg spacing.",
+        c.outpost.panel_angle_step);
+  }
+
+  static bool outpost_semantic_logged = false;
+  if (!outpost_semantic_logged) {
+    outpost_semantic_logged = true;
+    RCLCPP_INFO(
+        get_logger(),
+        "Outpost semantic contract enabled: id0=highest@0deg, clockwise order "
+        "id0->id2->id1.");
+  }
 
   // Output smoother
   smoother_config_.enable = get_parameter("smoother.enable").as_bool();
@@ -840,33 +1380,29 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
 
 void GimbalPipelineNode::armorsCallback(
     const rm_interfaces::msg::Armors::SharedPtr msg) {
-  if (msg->armors.empty()) {
-    RCLCPP_INFO(get_logger(), "Received empty armors message, skipping tracker update");
-    return;
-  }
-
   rclcpp::Time msg_time(msg->header.stamp);
   double current_time = msg_time.seconds();
-
-  // ── Step 1: Predict all existing trackers ──
-  tracker_manager_->predict_all(current_time);
-  auto removed = tracker_manager_->remove_stale(current_time);
-  if (!removed.empty() && debug_mode_) {
-    RCLCPP_INFO(get_logger(), "Removed %zu stale trackers", removed.size());
+  if (msg->armors.empty()) {
+    RCLCPP_DEBUG_THROTTLE(
+      get_logger(), *get_clock(), 1000,
+      "Received empty armors message, running missing-target update");
   }
 
-  // ── Step 2: Group observations by robot ID ──
+  // ── Step 1: Group observations by robot ID ──
   std::unordered_map<std::string, std::vector<ObservationData>> obs_by_robot;
   std::string sf =
       msg->header.frame_id.empty() ? source_frame_ : msg->header.frame_id;
 
-  // Valid robot ID whitelist to filter out misclassified detections
-  static const std::set<std::string> valid_robot_ids = {
-      "1", "2", "3", "4", "5", "outpost", "base", "sentry", "guard"};
+  const bool strict_unknown_reject =
+      robot_description_facade_ && robot_description_facade_->strictUnknownReject();
 
   for (const auto &armor : msg->armors) {
-    // Skip invalid/unknown robot IDs to prevent false tracker creation
-    if (valid_robot_ids.count(armor.number) == 0) {
+    const bool supported_robot_id =
+        robot_description_facade_ &&
+        robot_description_facade_->isSupportedRobotId(armor.number);
+
+    // Strict mode: skip unsupported IDs to prevent false tracker creation.
+    if (strict_unknown_reject && !supported_robot_id) {
       if (debug_mode_)
         RCLCPP_WARN(get_logger(), "Ignoring armor with invalid ID: '%s'",
                     armor.number.c_str());
@@ -905,72 +1441,37 @@ void GimbalPipelineNode::armorsCallback(
     }
   }
 
-  // ── Step 3: Update trackers ──
-  for (auto &[rid, obs_list] : obs_by_robot) {
-    last_obs_counts_[rid] = static_cast<int>(obs_list.size());
-    last_dual_obs_[rid] = (obs_list.size() >= 2);
-    bool is_ok = tracker_manager_->update(rid, obs_list, current_time);
-
-    if (is_ok) {
-      auto *t = tracker_manager_->get(rid);
-      if (t && t->is_initialized() &&
-          smoothers_.find(rid) == smoothers_.end()) {
-        OutputSmoother sm(smoother_config_);
-        auto [r1, r2] = t->get_radii();
-        double dza = t->get_dza();
-        sm.initialize(r1, r2, dza);
-        smoothers_.emplace(rid, std::move(sm));
-
-        // Co-initialise outlier filter for this robot
-        OutlierFilterConfig ocfg;
-        ocfg.enable          = smoother_config_.enable_outlier_filter;
-        ocfg.method          = smoother_config_.outlier_method;
-        ocfg.window_size     = smoother_config_.outlier_window_size;
-        ocfg.min_samples     = smoother_config_.outlier_min_samples;
-        ocfg.mad_k           = smoother_config_.outlier_mad_k;
-        ocfg.iqr_k           = smoother_config_.outlier_iqr_k;
-        ocfg.mahal_threshold = smoother_config_.outlier_mahal_threshold;
-        outlier_filters_.emplace(rid, ObservationOutlierFilter(ocfg));
-      }
-    }
+  // ── Step 2: Run tracker core frame process in manager ──
+  auto frame_result = tracker_manager_->process_frame(
+      obs_by_robot, current_time, smoother_config_);
+  if (!frame_result.removed_stale_ids.empty() && debug_mode_) {
+    RCLCPP_INFO(get_logger(), "Removed %zu stale trackers",
+                frame_result.removed_stale_ids.size());
+  }
+  if (!frame_result.removed_lost_ids.empty() && debug_mode_) {
+    RCLCPP_INFO(get_logger(), "Removed %zu lost trackers",
+                frame_result.removed_lost_ids.size());
   }
 
-  // Clean up smoothers for removed trackers
-  for (const auto &rid : removed) {
-    smoothers_.erase(rid);
-    last_dual_obs_.erase(rid);
-    outlier_filters_.erase(rid);
-    last_smoothed_outputs_.erase(rid);
-  }
-
-  // ── Step 3.5: Notify trackers that did NOT receive observations this frame ──
-  // This drives the state machine: TRACKING → TEMP_LOST → LOST for
-  // missing targets, preventing "ghost tracking" of disappeared targets.
-  {
-    std::set<std::string> observed_ids;
-    for (const auto &[rid, _] : obs_by_robot) {
-      observed_ids.insert(rid);
-    }
-    tracker_manager_->notify_missing(observed_ids, current_time);
-  }
-
-  // ── Step 4: Build TrackedRobots message (internal) ──
+  // ── Step 3: Build TrackedRobots message (internal) ──
   auto tracked_msg = buildTrackedRobotsMsg(msg->header);
 
   // ── Log tracker posterior states (after update, before selection) ──
   if (prediction_logger_) {
     int64_t ts_ns = msg_time.nanoseconds();
     for (const auto &robot : tracked_msg.robots) {
+      const auto center_position = robot_description::TrackedRobotUsage::centerPosition(robot);
+      const auto linear_velocity = robot_description::TrackedRobotUsage::linearVelocity(robot);
       LogTrackerState st;
-      st.center_x           = robot.center_position.x;
-      st.center_y           = robot.center_position.y;
-      st.center_z           = robot.center_position.z;
-      st.vel_x              = robot.center_velocity.x;
-      st.vel_y              = robot.center_velocity.y;
-      st.vel_z              = robot.center_velocity.z;
-      st.yaw                = robot.yaw;
-      st.yaw_velocity       = robot.yaw_velocity;
-      st.yaw_acceleration   = robot.yaw_acceleration;
+      st.center_x           = center_position.x();
+      st.center_y           = center_position.y();
+      st.center_z           = center_position.z();
+      st.vel_x              = linear_velocity.x();
+      st.vel_y              = linear_velocity.y();
+      st.vel_z              = linear_velocity.z();
+      st.yaw                = robot_description::TrackedRobotUsage::yaw(robot);
+      st.yaw_velocity       = robot_description::TrackedRobotUsage::yawVelocity(robot);
+      st.yaw_acceleration   = robot_description::TrackedRobotUsage::yawAcceleration(robot);
       st.radius_1           = robot.radius;
       st.radius_2           = robot.radius_2;
       st.dza                = robot.d_za;
@@ -983,7 +1484,7 @@ void GimbalPipelineNode::armorsCallback(
       // ── 机动检测指标：从对应 tracker 的 UKF 内部读取 ──
       auto *tracker = tracker_manager_->get(robot.robot_id);
       if (tracker && tracker->is_initialized()) {
-        const auto &ukf = tracker->ukf();
+        const auto &ukf = tracker->spin_filter();
         const auto &idx = ukf.state_idx();
         const auto &xv  = ukf.x();
         const auto &Pv  = ukf.P();
@@ -1028,19 +1529,68 @@ void GimbalPipelineNode::armorsCallback(
           st.accel_z         = kNaN;
           st.accel_magnitude = kNaN;
         }
+
+        if (robot.robot_id == "outpost") {
+          const auto *outpost_tracker =
+              dynamic_cast<const OutpostArmorTracker *>(tracker);
+          if (outpost_tracker != nullptr) {
+            const auto &snap = outpost_tracker->debug_snapshot();
+            if (snap.valid) {
+              st.outpost_mode = snap.track_mode;
+              st.estimated_id = snap.estimated_id;
+              st.runtime_panel_id = snap.runtime_panel_id;
+              st.bound_height_label = snap.bound_height_label;
+              st.obs_inferred_id = snap.obs_inferred_id;
+              st.obs_inferred_id_z = snap.obs_inferred_id_z;
+              st.candidate_panel_id = snap.candidate_panel_id;
+              st.candidate_prob = snap.candidate_prob;
+              st.candidate_margin = snap.candidate_margin;
+              st.selected_xy_residual = snap.selected_xy_residual;
+              st.outpost_entropy = snap.entropy_norm;
+              st.outpost_max_prob = snap.max_prob;
+              st.hyp_cost_0 = snap.hyp_costs[0];
+              st.hyp_cost_1 = snap.hyp_costs[1];
+              st.hyp_cost_2 = snap.hyp_costs[2];
+              st.hyp_prob_0 = snap.hyp_probs[0];
+              st.hyp_prob_1 = snap.hyp_probs[1];
+              st.hyp_prob_2 = snap.hyp_probs[2];
+              st.center_yaw_est = snap.center_yaw_est;
+              st.has_observation = snap.has_observation ? 1 : 0;
+              st.obs_x = snap.obs_x;
+              st.obs_y = snap.obs_y;
+              st.obs_z = snap.obs_z;
+              st.obs_yaw = snap.obs_yaw;
+              st.obs_z_jump = snap.obs_z_jump;
+              st.obs_dz_from_audit_center = snap.obs_dz_from_audit_center;
+              st.obs_z_audit_cost_0 = snap.obs_z_audit_costs[0];
+              st.obs_z_audit_cost_1 = snap.obs_z_audit_costs[1];
+              st.obs_z_audit_cost_2 = snap.obs_z_audit_costs[2];
+              st.binding_confidence = snap.binding_confidence;
+              st.switch_event = snap.switch_event;
+              st.switch_reason = snap.switch_reason;
+              st.transition_state = snap.transition_state;
+              st.period_confidence = snap.period_confidence;
+              st.period_update_applied = snap.period_update_applied;
+              st.period_phase_index = snap.period_phase_index;
+              st.spin_direction = snap.spin_direction;
+              st.dz_small_est = snap.dz_small_est;
+              st.dz_large_est = snap.dz_large_est;
+            }
+          }
+        }
       }
 
       prediction_logger_->logTrackerState(ts_ns, robot.robot_id, st);
     }
   }
 
-  // ── Step 5: Target selection (direct C++ call, no ROS topic!) ──
+  // ── Step 4: Target selection (direct C++ call, no ROS topic!) ──
   SelectionResult sel_result;
   if (!tracked_msg.robots.empty()) {
     sel_result = selectTargetInternal(tracked_msg);
   }
 
-  // ── Step 6: Store results for timerCallback (thread-safe) ──
+  // ── Step 5: Store results for timerCallback (thread-safe) ──
   {
     std::lock_guard<std::mutex> lock(pipeline_mutex_);
     latest_tracked_robots_ =
@@ -1050,7 +1600,8 @@ void GimbalPipelineNode::armorsCallback(
     latest_update_time_ = now();  // record local clock for processing_delay
   }
 
-  // ── Step 7: Debug publishing ──
+  // ── Step 6: Debug publishing ──
+  const auto tracker_views = tracker_manager_->initialized_tracker_views();
   if (debug_mode_) {
     if (debug_tracked_robots_pub_ && !tracked_msg.robots.empty())
       debug_tracked_robots_pub_->publish(tracked_msg);
@@ -1068,7 +1619,7 @@ void GimbalPipelineNode::armorsCallback(
     if (debug_tracker_marker_pub_) {
       rclcpp::Time stamp(msg->header.stamp);
       auto marker_array = build_tracker_markers(
-          visualization_frame_, tracker_manager_->trackers(), stamp);
+          visualization_frame_, tracker_views, stamp);
       debug_tracker_marker_pub_->publish(marker_array);
     }
 
@@ -1077,17 +1628,17 @@ void GimbalPipelineNode::armorsCallback(
     }
   }
 
-  // ── Step 8: Publish maneuver states (always-on, for chart monitoring) ──
+  // ── Step 7: Publish maneuver states (always-on, for chart monitoring) ──
   if (maneuver_states_pub_) {
     rm_interfaces::msg::ManeuverStates states_msg;
     states_msg.header.stamp    = msg->header.stamp;
     states_msg.header.frame_id = target_frame_;
-    for (const auto &[robot_id, entry] : tracker_manager_->trackers()) {
-      if (!entry.tracker || !entry.tracker->is_initialized()) continue;
-      const auto result = entry.tracker->assess_maneuver();
-      const auto &ukf   = entry.tracker->ukf();
+    for (const auto &view : tracker_views) {
+      if (!view.tracker) continue;
+      const auto result = view.tracker->assess_maneuver();
+      const auto &ukf   = view.tracker->spin_filter();
       rm_interfaces::msg::ManeuverState s;
-      s.robot_id        = robot_id;
+      s.robot_id        = view.robot_id;
       s.is_maneuvering  = result.is_maneuvering;
       s.nis             = result.nis;
       s.innov_norm      = result.innov_norm;
@@ -1114,72 +1665,26 @@ rm_interfaces::msg::TrackedRobots GimbalPipelineNode::buildTrackedRobotsMsg(
     auto *tracker = tracker_manager_->get(rid);
     if (!tracker || (!tracker->is_tracking() && !tracker->is_temp_lost())) continue;
 
-    // ── Extract raw tracker state ─────────────────────────────────
-    const auto pos  = tracker->get_center_position();
-    const auto idx  = tracker->ukf().state_idx();
-    const auto &x   = tracker->ukf().x();
-    const Eigen::Vector3d vel(x(idx.VX()), x(idx.VY()), x(idx.VZ()));
-    const double yaw   = tracker->get_yaw();
-    const double v_yaw = x(idx.DELTA_RATE());
-    const auto [r1, r2] = tracker->get_radii();
-    const double dza  = tracker->get_dza();
-
-    bool is_dual = false;
-    {
-      auto dual_it = last_dual_obs_.find(rid);
-      if (dual_it != last_dual_obs_.end()) is_dual = dual_it->second;
-    }
     const rclcpp::Time stamp(header.stamp);
     const double ts = stamp.seconds();
-
-    // ── Stage 1: Outlier detection (independent of smoother.enable) ──
-    // If an outlier is detected, hold the last valid SmoothedOutput so
-    // the One-Euro filter internal state is never corrupted by a jump.
-    SmoothedOutput smoothed;
-    bool has_smoothed = false;
-    bool is_outlier   = false;
-
-    if (smoother_config_.enable_outlier_filter) {
-      auto of_it = outlier_filters_.find(rid);
-      if (of_it != outlier_filters_.end()) {
-        is_outlier = of_it->second.update(pos, yaw);
-      }
-    }
-
-    if (is_outlier) {
-      // Hold strategy: reuse last valid smoothed output
-      auto prev_it = last_smoothed_outputs_.find(rid);
-      if (prev_it != last_smoothed_outputs_.end()) {
-        smoothed     = prev_it->second;
-        has_smoothed = true;
-      }
-      // If no previous smoothed output exists (outlier on very first frame)
-      // fall through with has_smoothed = false → raw output is used downstream
-    } else {
-      // ── Stage 2: Output smoothing (independent switch) ────────────
-      auto sm_it = smoothers_.find(rid);
-      if (sm_it != smoothers_.end() && smoother_config_.enable) {
-        smoothed = sm_it->second.smooth(pos, yaw, vel, v_yaw, r1, r2, dza,
-                                         is_dual, ts);
-        has_smoothed = true;
-      }
-      // Update hold-cache with valid (non-outlier) smoothed result
-      if (has_smoothed) {
-        last_smoothed_outputs_[rid] = smoothed;
-      }
-    }
+    auto post = tracker_manager_->post_process_output(rid, ts, smoother_config_);
+    const SmoothedOutput *smoothed = post.has_smoothed ? &post.smoothed : nullptr;
+    const int visible_armor_count =
+        tracker_manager_->visible_observation_count(rid);
 
     // Publish target for debug
     if (debug_mode_ && debug_target_pub_) {
-      auto target = has_smoothed
-          ? buildTargetMessage(header, rid, *tracker, &smoothed)
-          : buildTargetMessage(header, rid, *tracker, nullptr);
+      auto target = buildTargetMessage(header, rid, *tracker, smoothed);
       debug_target_pub_->publish(target);
     }
 
-    auto robot = has_smoothed
-        ? buildTrackedRobotMessage(header, rid, *tracker, &smoothed)
-        : buildTrackedRobotMessage(header, rid, *tracker, nullptr);
+    auto robot = buildTrackedRobotMessage(
+        header, rid, *tracker, smoothed, visible_armor_count);
+
+    if (robot.robot_id.empty()) {
+      continue;
+    }
+
     tracked_msg.robots.push_back(robot);
   }
 
@@ -1192,13 +1697,22 @@ rm_interfaces::msg::TrackedRobots GimbalPipelineNode::buildTrackedRobotsMsg(
 
 rm_interfaces::msg::Target GimbalPipelineNode::buildTargetMessage(
     const std_msgs::msg::Header &header, const std::string &robot_id,
-    AdaptiveArmorTracker &tracker, const SmoothedOutput *smoothed) {
+  BaseTracker &tracker, const SmoothedOutput *smoothed) {
   rm_interfaces::msg::Target target;
   target.header = header;
   target.header.frame_id = target_frame_;
   target.tracking = true;
   target.id = robot_id;
+
+  // Keep debug target semantic aligned with tracked robot profile.
   target.armors_num = 4;
+  if (robot_id == "outpost" || robot_id == "base") {
+    target.armors_num = 3;
+  }
+  const int runtime_num_armors = tracker.effective_num_armors();
+  if (runtime_num_armors > 0) {
+    target.armors_num = runtime_num_armors;
+  }
 
   if (smoothed) {
     target.position.x = smoothed->center_position.x();
@@ -1217,17 +1731,19 @@ rm_interfaces::msg::Target GimbalPipelineNode::buildTargetMessage(
     target.position.x = pos.x();
     target.position.y = pos.y();
     target.position.z = pos.z();
-    auto idx = tracker.ukf().state_idx();
-    const auto &x = tracker.ukf().x();
-    target.velocity.x = x(idx.VX());
-    target.velocity.y = x(idx.VY());
-    target.velocity.z = x(idx.VZ());
+    const auto &filter = tracker.spin_filter();
+    auto idx = filter.state_idx();
+    const auto &x = filter.x();
+    const auto pub_vel = tracker.get_publish_velocity();
+    target.velocity.x = pub_vel.x();
+    target.velocity.y = pub_vel.y();
+    target.velocity.z = pub_vel.z();
     target.yaw = tracker.get_yaw();
     target.v_yaw = x(idx.DELTA_RATE());
     auto [r1, r2] = tracker.get_radii();
     target.radius_1 = r1;
     target.radius_2 = r2;
-    target.d_za = tracker.get_dza();
+    target.d_za = filter.get_dza();
   }
 
   target.d_zc = 0.0;
@@ -1238,156 +1754,36 @@ rm_interfaces::msg::Target GimbalPipelineNode::buildTargetMessage(
 
 rm_interfaces::msg::TrackedRobot GimbalPipelineNode::buildTrackedRobotMessage(
     const std_msgs::msg::Header &header, const std::string &robot_id,
-    AdaptiveArmorTracker &tracker, const SmoothedOutput *smoothed) {
-  rm_interfaces::msg::TrackedRobot msg;
-  msg.header = header;
-  msg.header.frame_id = target_frame_;
-  msg.robot_id = robot_id;
-  msg.robot_type = static_cast<uint8_t>(inferRobotType(robot_id));
+  BaseTracker &tracker, const SmoothedOutput *smoothed,
+  int visible_armor_count) {
+  rm_interfaces::msg::TrackedRobot empty_msg;
 
-  if (tracker.is_tracking())
-    msg.track_state = rm_interfaces::msg::TrackedRobot::TRACKING;
-  else if (tracker.is_temp_lost())
-    msg.track_state = rm_interfaces::msg::TrackedRobot::TEMP_LOST;
-  else
-    msg.track_state = rm_interfaces::msg::TrackedRobot::DETECTING;
-
-  auto idx = tracker.ukf().state_idx();
-  const auto &x = tracker.ukf().x();
-
-  if (smoothed) {
-    msg.center_position.x = smoothed->center_position.x();
-    msg.center_position.y = smoothed->center_position.y();
-    msg.center_position.z = smoothed->center_position.z();
-    msg.center_velocity.x = smoothed->velocity.x();
-    msg.center_velocity.y = smoothed->velocity.y();
-    msg.center_velocity.z = smoothed->velocity.z();
-    msg.yaw = smoothed->yaw;
-    msg.yaw_velocity = smoothed->yaw_velocity;
-    msg.radius = smoothed->r1;
-    msg.radius_2 = smoothed->r2;
-    msg.d_za = smoothed->dza;
-  } else {
-    auto pos = tracker.get_center_position();
-    msg.center_position.x = pos.x();
-    msg.center_position.y = pos.y();
-    msg.center_position.z = pos.z();
-    msg.center_velocity.x = x(idx.VX());
-    msg.center_velocity.y = x(idx.VY());
-    msg.center_velocity.z = x(idx.VZ());
-    msg.yaw = tracker.get_yaw();
-    msg.yaw_velocity = x(idx.DELTA_RATE());
-    auto [r1, r2] = tracker.get_radii();
-    msg.radius = r1;
-    msg.radius_2 = r2;
-    msg.d_za = tracker.get_dza();
+  if (!robot_description_facade_) {
+    RCLCPP_ERROR_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "RobotDescriptionFacade is not initialized, skip TrackedRobot build");
+    return empty_msg;
   }
 
-  if (idx.has("AX")) {
-    msg.center_acceleration.x = x(idx.AX());
-    msg.center_acceleration.y = x(idx.AY());
-    msg.center_acceleration.z = x(idx.AZ());
-  } else {
-    msg.center_acceleration.x = 0.0;
-    msg.center_acceleration.y = 0.0;
-    msg.center_acceleration.z = 0.0;
+  robot_description::TrackedRobotBuildInput input{
+    header,
+    target_frame_,
+    robot_id,
+    tracker,
+    smoothed,
+    visible_armor_count};
+
+  auto build_result = robot_description_facade_->tryBuildTrackedRobot(input);
+  if (!build_result.ok()) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "Rejected TrackedRobot build for id='%s': %s",
+      robot_id.c_str(),
+      build_result.reason.c_str());
+    return empty_msg;
   }
 
-  msg.yaw_acceleration =
-      idx.has("DELTA_ACC") ? x(idx.get("DELTA_ACC")) : 0.0;
-  msg.d_zc = 0.0;
-  msg.num_armors = inferNumArmors(robot_id, msg.robot_type);
-
-  double off_r1 = smoothed ? smoothed->r1 : msg.radius;
-  double off_r2 = smoothed ? smoothed->r2 : msg.radius_2;
-  double off_dza = smoothed ? smoothed->dza : msg.d_za;
-  msg.armors_offset =
-      generateArmorsOffset(msg.num_armors, off_r1, off_r2, off_dza, msg.d_zc);
-
-  try {
-    const auto &P = tracker.ukf().P();
-    int dim = static_cast<int>(P.rows());
-    msg.covariance_dim = dim;
-    msg.state_covariance.resize(dim * dim);
-    for (int r = 0; r < dim; ++r)
-      for (int c = 0; c < dim; ++c)
-        msg.state_covariance[r * dim + c] = P(r, c);
-  } catch (...) {
-    msg.state_covariance.clear();
-    msg.covariance_dim = 0;
-  }
-
-  msg.bound_armor_ids = {robot_id};
-
-  if (tracker.is_tracking())
-    msg.confidence = 1.0;
-  else if (tracker.is_temp_lost())
-    msg.confidence = 0.7;
-  else
-    msg.confidence = 0.3;
-
-  msg.is_visible = tracker.is_tracking() || tracker.is_temp_lost();
-  auto it = last_obs_counts_.find(robot_id);
-  msg.visible_armor_count =
-      (msg.is_visible && it != last_obs_counts_.end()) ? it->second : 0;
-
-  return msg;
-}
-
-/* ================================================================ */
-/*  Tracker helpers                                                  */
-/* ================================================================ */
-
-uint8_t GimbalPipelineNode::inferRobotType(
-    const std::string &robot_id) const {
-  if (robot_id == "outpost")
-    return rm_interfaces::msg::TrackedRobot::OUTPOST_3;
-  if (robot_id == "base") return rm_interfaces::msg::TrackedRobot::BASE;
-  if (robot_id == "sentry") return rm_interfaces::msg::TrackedRobot::SENTRY;
-  if (robot_id == "1") return rm_interfaces::msg::TrackedRobot::HERO_4;
-  if (robot_id == "2" || robot_id == "3" || robot_id == "4" ||
-      robot_id == "5")
-    return rm_interfaces::msg::TrackedRobot::STANDARD_4;
-  return rm_interfaces::msg::TrackedRobot::UNKNOWN;
-}
-
-int GimbalPipelineNode::inferNumArmors(const std::string & /*robot_id*/,
-                                       int robot_type) const {
-  using T = rm_interfaces::msg::TrackedRobot;
-  if (robot_type == T::OUTPOST_3 || robot_type == T::BASE) return 3;
-  if (robot_type == T::BALANCE_2) return 2;
-  return 4;
-}
-
-std::vector<geometry_msgs::msg::Pose>
-GimbalPipelineNode::generateArmorsOffset(int num_armors, double r1,
-                                          double r2, double d_za,
-                                          double d_zc) const {
-  std::vector<geometry_msgs::msg::Pose> offsets;
-  bool is_current_pair = true;
-
-  for (int i = 0; i < num_armors; ++i) {
-    double angle = i * (2.0 * M_PI / num_armors);
-    double r, dz;
-    if (num_armors == 4) {
-      r = is_current_pair ? r1 : r2;
-      dz = d_zc + (is_current_pair ? -d_za : d_za);
-      is_current_pair = !is_current_pair;
-    } else {
-      r = r1;
-      dz = d_zc;
-    }
-    geometry_msgs::msg::Pose pose;
-    pose.position.x = -r * std::cos(angle);
-    pose.position.y = -r * std::sin(angle);
-    pose.position.z = dz;
-    pose.orientation.x = 0.0;
-    pose.orientation.y = 0.0;
-    pose.orientation.z = 0.0;
-    pose.orientation.w = 1.0;
-    offsets.push_back(pose);
-  }
-  return offsets;
+  return build_result.robot;
 }
 
 /* ================================================================ */
@@ -1446,6 +1842,12 @@ void GimbalPipelineNode::initGimbalComponents() {
   local_compensator_ =
       std::make_shared<gimbal_controller::LocalTrajectoryCompensator>();
   fire_advisor_ = std::make_shared<gimbal_controller::FireAdvisor>();
+  fire_advice_engine_ = std::make_shared<gimbal_controller::FireAdviceEngine>();
+  fire_advice_engine_->setComponents(
+    position_calculator_, ballistic_client_, local_compensator_, fire_advisor_);
+  fire_advice_engine_->setBallisticMode(ballistic_mode_);
+  gimbal_control_core_ = std::make_shared<gimbal_controller::GimbalControlCore>();
+  gimbal_control_core_->setFireModules(fire_advice_engine_, fire_advisor_);
 }
 
 void GimbalPipelineNode::initGimbalStrategies() {
@@ -1454,6 +1856,7 @@ void GimbalPipelineNode::initGimbalStrategies() {
   current_s->setComponents(position_calculator_, armor_selector_,
                            ballistic_client_, local_compensator_,
                            fire_advisor_);
+  current_s->setBallisticMode(ballistic_mode_);
   gimbal_strategies_["current"] = current_s;
 
   auto predicted_s =
@@ -1461,16 +1864,35 @@ void GimbalPipelineNode::initGimbalStrategies() {
   predicted_s->setComponents(position_calculator_, armor_selector_,
                              ballistic_client_, local_compensator_,
                              fire_advisor_);
+  predicted_s->setBallisticMode(ballistic_mode_);
   gimbal_strategies_["predicted"] = predicted_s;
 
   auto mpc_s = std::make_shared<gimbal_controller::MpcControlStrategy>();
   mpc_s->setComponents(position_calculator_, armor_selector_,
                        ballistic_client_, local_compensator_, fire_advisor_);
+  mpc_s->setBallisticMode(ballistic_mode_);
   mpc_s->initReferenceGenerator();
+
+  const double mpc_control_delay_s = readCompatDoubleParameter(
+    *this, "controller.mpc.control_delay_s", "mpc.control_delay_s");
+  const bool mpc_enable_delay_compensation = readCompatBoolParameter(
+    *this, "controller.mpc.enable_delay_compensation", "mpc.enable_delay_compensation");
+  const double mpc_prediction_delay_s = readCompatDoubleParameter(
+    *this, "controller.mpc.prediction_delay_s", "mpc.prediction_delay_s");
+  double mpc_trigger_to_muzzle_s = readCompatDoubleParameter(
+    *this, "controller.solver.trigger_to_muzzle_s", "solver.trigger_to_muzzle_s");
+  if (hasParameterOverride(*this, "controller.fire.trigger_to_muzzle_s")) {
+    mpc_trigger_to_muzzle_s = get_parameter("controller.fire.trigger_to_muzzle_s").as_double();
+  }
+  const int mpc_flight_time_iters = readCompatIntParameter(
+    *this, "controller.mpc.flight_time_iters", "mpc.flight_time_iters");
+  const double mpc_max_processing_delay_s = readCompatDoubleParameter(
+    *this, "controller.mpc.max_processing_delay_s", "mpc.max_processing_delay_s");
+
   mpc_s->setMpcParameters(
     get_parameter("controller.mpc.N").as_int(),
     get_parameter("controller.mpc.dt").as_double(),
-    get_parameter("controller.mpc.control_delay_s").as_double(),
+    mpc_control_delay_s,
     get_parameter("controller.mpc.max_accel").as_double(),
     get_parameter("controller.mpc.q_yaw").as_double(),
     get_parameter("controller.mpc.q_pitch").as_double(),
@@ -1481,10 +1903,11 @@ void GimbalPipelineNode::initGimbalStrategies() {
     get_parameter("controller.mpc.s_yaw").as_double(),
     get_parameter("controller.mpc.s_pitch").as_double());
   mpc_s->setDelayCompensation(
-    get_parameter("controller.mpc.enable_delay_compensation").as_bool(),
-    get_parameter("controller.mpc.prediction_delay_s").as_double(),
-    get_parameter("controller.mpc.flight_time_iters").as_int(),
-    get_parameter("controller.mpc.max_processing_delay_s").as_double());
+    mpc_enable_delay_compensation,
+    mpc_prediction_delay_s,
+    mpc_trigger_to_muzzle_s,
+    mpc_flight_time_iters,
+    mpc_max_processing_delay_s);
   mpc_s->setYawFeedforward(
     get_parameter("controller.mpc.yaw_feedforward_k_s").as_double());
   mpc_s->setManeuverAdaptParameters(
@@ -1527,12 +1950,50 @@ void GimbalPipelineNode::initGimbalStrategies() {
     get_parameter("controller.mpc.fov_constraint.dynamic_margin.vel_scale").as_double(),
     get_parameter("controller.mpc.fov_constraint.fallback_fov_yaw").as_double(),
     get_parameter("controller.mpc.fov_constraint.fallback_fov_pitch").as_double());
+  mpc_s->setNumericalNormalizationParameters(
+    get_parameter("controller.mpc.normalization.enable").as_bool(),
+    get_parameter("controller.mpc.normalization.window_size").as_int(),
+    get_parameter("controller.mpc.normalization.min_samples").as_int(),
+    get_parameter("controller.mpc.normalization.rms_epsilon").as_double(),
+    get_parameter("controller.mpc.normalization.mode").as_string(),
+    Eigen::Vector4d(
+      get_parameter("controller.mpc.normalization.typical_state.yaw").as_double(),
+      get_parameter("controller.mpc.normalization.typical_state.pitch").as_double(),
+      get_parameter("controller.mpc.normalization.typical_state.yaw_vel").as_double(),
+      get_parameter("controller.mpc.normalization.typical_state.pitch_vel").as_double()),
+    Eigen::Vector2d(
+      get_parameter("controller.mpc.normalization.typical_control.yaw_acc").as_double(),
+      get_parameter("controller.mpc.normalization.typical_control.pitch_acc").as_double()),
+    Eigen::Vector2d(
+      get_parameter("controller.mpc.normalization.typical_delta_control.yaw_acc").as_double(),
+      get_parameter("controller.mpc.normalization.typical_delta_control.pitch_acc").as_double()));
+  mpc_s->setHessianRegularizationParameters(
+    get_parameter("controller.mpc.regularization.enable").as_bool(),
+    get_parameter("controller.mpc.regularization.epsilon_abs").as_double(),
+    get_parameter("controller.mpc.regularization.epsilon_rel").as_double(),
+    get_parameter("controller.mpc.regularization.epsilon_max").as_double(),
+    get_parameter("controller.mpc.regularization.retry_on_fail").as_bool(),
+    get_parameter("controller.mpc.regularization.retry_scale").as_double());
+  mpc_s->setDiagnosticsParameters(
+    get_parameter("controller.mpc.diagnostics.enable").as_bool(),
+    get_parameter("controller.mpc.diagnostics.low_cost_always").as_bool(),
+    get_parameter("controller.mpc.diagnostics.high_cost_enable").as_bool(),
+    get_parameter("controller.mpc.diagnostics.high_cost_sample_every").as_int(),
+    get_parameter("controller.mpc.diagnostics.log_every").as_int(),
+    get_parameter("controller.mpc.diagnostics.log_on_failure").as_bool(),
+    get_parameter("controller.mpc.diagnostics.active_tol").as_double(),
+    get_parameter("controller.mpc.diagnostics.rank_tol_rel").as_double());
   gimbal_strategies_["mpc"] = mpc_s;
 
   auto sm_s = std::make_shared<gimbal_controller::StateMachineStrategy>();
   sm_s->setComponents(position_calculator_, armor_selector_,
                       ballistic_client_, local_compensator_, fire_advisor_);
+  sm_s->setBallisticMode(ballistic_mode_);
   gimbal_strategies_["state_machine"] = sm_s;
+
+  if (gimbal_control_core_) {
+    gimbal_control_core_->setStrategies(&gimbal_strategies_);
+  }
 }
 
 /* ================================================================ */
@@ -1559,14 +2020,9 @@ void GimbalPipelineNode::cameraInfoCallback(
   double fov_half_yaw = std::atan(static_cast<double>(msg->width) / (2.0 * fx));
   double fov_half_pitch = std::atan(static_cast<double>(msg->height) / (2.0 * fy));
 
-  // 更新 MPC 策略的 FOV
-  auto mpc_it = gimbal_strategies_.find("mpc");
-  if (mpc_it != gimbal_strategies_.end()) {
-    auto mpc_s = std::dynamic_pointer_cast<gimbal_controller::MpcControlStrategy>(
-        mpc_it->second);
-    if (mpc_s) {
-      mpc_s->updateFov(fov_half_yaw, fov_half_pitch);
-    }
+  // 通过核心类透传 FOV 更新，避免 node 直接耦合具体策略实现。
+  if (gimbal_control_core_) {
+    gimbal_control_core_->updateFov(fov_half_yaw, fov_half_pitch);
   }
 
   RCLCPP_INFO_ONCE(get_logger(),
@@ -1592,44 +2048,15 @@ void GimbalPipelineNode::updateGimbalState() {
   }
 }
 
-/* ================================================================ */
-/*  Timer callback — 250 Hz control loop                             */
-/* ================================================================ */
-
-void GimbalPipelineNode::timerCallback() {
-  if (!enable_) {
-    rm_interfaces::msg::GimbalCmd idle_cmd;
-    idle_cmd.yaw_diff = 0;
-    idle_cmd.pitch_diff = 0;
-    idle_cmd.distance = -1;
-    idle_cmd.fire_advice = false;
-    gimbal_cmd_pub_->publish(idle_cmd);
-    // idle 期间清空滤波器状态，恢复跟踪时允许首帧自由跳变
-    cmd_filter_.reset();
-    prev_tracking_target_id_.clear();
-    return;
-  }
-
-  updateGimbalState();
-
-  auto strategy = getGimbalStrategy(current_gimbal_strategy_name_);
-  if (!strategy) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
-                         "Gimbal strategy '%s' not found",
-                         current_gimbal_strategy_name_.c_str());
-    return;
-  }
-
-  gimbal_controller::GimbalControlContext context;
-  context.current_yaw = current_yaw_;
-  context.current_pitch = current_pitch_;
-  context.bullet_speed = bullet_speed_;
-  context.current_time = now();
+void GimbalPipelineNode::buildControlContextFromCache(
+    gimbal_controller::GimbalControlContext & context,
+    std::string & selected_id) {
   context.is_tracking = false;
+  context.is_temp_lost = false;
+  context.is_maneuvering = false;
 
   // Read shared state (thread-safe)
   rm_interfaces::msg::TrackedRobots::SharedPtr robots;
-  std::string selected_id;
   rclcpp::Time data_update_time{0, 0, RCL_ROS_TIME};
   {
     std::lock_guard<std::mutex> lock(pipeline_mutex_);
@@ -1638,72 +2065,138 @@ void GimbalPipelineNode::timerCallback() {
     data_update_time = latest_update_time_;
   }
 
-  if (robots && !robots->robots.empty()) {
-    // ── Cache freshness check ──
-    // If data is too old (e.g., camera stopped, detection crashed),
-    // treat as no target to prevent chasing stale predictions.
-    double data_age = (now() - data_update_time).seconds();
-    const double max_data_age = 0.5;  // seconds
-    if (data_age > max_data_age) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                           "Stale tracking data (age=%.3fs > %.3fs), ignoring",
-                           data_age, max_data_age);
-      // Fall through — context.is_tracking stays false, idle cmd will be sent
-    } else if (!selected_id.empty()) {
-      for (const auto &robot : robots->robots) {
-        if (robot.robot_id == selected_id) {
-          context.target_robot = robot;
-          // Use local clock timestamp to avoid cross-clock-domain mismatch
-          // (camera hardware stamps vs system wall clock)
-          context.target_stamp = data_update_time;
-          context.is_tracking =
-              (robot.track_state ==
-                   rm_interfaces::msg::TrackedRobot::TRACKING);
-          // TEMP_LOST: hold last command but do NOT actively track
-          context.is_temp_lost =
-              (robot.track_state ==
-                   rm_interfaces::msg::TrackedRobot::TEMP_LOST);
-          {
-            auto *t = tracker_manager_->get(robot.robot_id);
-            context.is_maneuvering = (t && t->is_initialized()) ?
-                t->assess_maneuver().is_maneuvering : false;
-          }
-          break;
-        }
-      }
-    } else {
-      // No selection — use first robot
-      context.target_robot = robots->robots[0];
-      context.target_stamp = data_update_time;
-      context.is_tracking =
-          (context.target_robot.track_state ==
-               rm_interfaces::msg::TrackedRobot::TRACKING);
-      context.is_temp_lost =
-          (context.target_robot.track_state ==
-               rm_interfaces::msg::TrackedRobot::TEMP_LOST);
-      {
-        auto *t = tracker_manager_->get(context.target_robot.robot_id);
-        context.is_maneuvering = (t && t->is_initialized()) ?
-            t->assess_maneuver().is_maneuvering : false;
+  if (!robots || robots->robots.empty()) {
+    return;
+  }
+
+  // Cache freshness check: stale target cache should not drive control.
+  const double data_age = (context.current_time - data_update_time).seconds();
+  const double max_data_age = std::max(tracker_timeout_s_, 1e-3);
+  if (data_age > max_data_age) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 1000,
+      "Stale tracking data (age=%.3fs > %.3fs), ignoring",
+      data_age, max_data_age);
+    return;
+  }
+
+  const rm_interfaces::msg::TrackedRobot * selected_robot = nullptr;
+  if (!selected_id.empty()) {
+    for (const auto & robot : robots->robots) {
+      if (robot.robot_id == selected_id) {
+        selected_robot = &robot;
+        break;
       }
     }
+  } else {
+    selected_robot = &robots->robots[0];
+    selected_id = selected_robot->robot_id;
   }
 
-  auto cmd = strategy->solve(context);
-
-  // ── GimbalCmd 输出端保护滤波 ──
-  // 目标切换（或从无目标变为有目标）时重置滤波器，允许首帧自由跳变快速锁定
-  const std::string &current_target = context.is_tracking ? selected_id : std::string("");
-  if (current_target != prev_tracking_target_id_) {
-    cmd_filter_.reset();
+  if (!selected_robot) {
+    return;
   }
-  cmd_filter_.filter(cmd);
-  prev_tracking_target_id_ = current_target;
 
-  gimbal_cmd_pub_->publish(cmd);
+  context.target_robot = *selected_robot;
+  context.target_stamp = data_update_time;
+  context.is_tracking =
+      (selected_robot->track_state == rm_interfaces::msg::TrackedRobot::TRACKING);
+  context.is_temp_lost =
+      (selected_robot->track_state == rm_interfaces::msg::TrackedRobot::TEMP_LOST);
 
-  if (debug_mode_ && context.is_tracking)
-    publishGimbalMarkers(context.target_robot, cmd);
+  auto * tracker = tracker_manager_->get(selected_robot->robot_id);
+  context.is_maneuvering = (tracker && tracker->is_initialized()) ?
+    tracker->assess_maneuver().is_maneuvering : false;
+}
+
+void GimbalPipelineNode::publishDelayAuditDebug(
+    const gimbal_controller::GimbalControlContext & context,
+    const gimbal_controller::DelayAuditSnapshot & audit,
+    const std::string & strategy_name) {
+  if (!debug_delay_audit_pub_) {
+    return;
+  }
+
+  rm_interfaces::msg::DelayAudit msg;
+  msg.header.stamp = context.current_time;
+  msg.header.frame_id = target_frame_;
+  msg.strategy_name = audit.strategy_name.empty() ? strategy_name : audit.strategy_name;
+  msg.valid = audit.valid;
+  msg.tracking = audit.tracking;
+  msg.processing_delay_s = audit.processing_delay_s;
+  msg.prediction_extra_s = audit.prediction_extra_s;
+  msg.flight_time_s = audit.flight_time_s;
+  msg.total_prediction_time_s = audit.total_prediction_time_s;
+  msg.control_latency_s = audit.control_latency_s;
+  msg.fire_control_compensation_s = audit.fire_control_compensation_s;
+  msg.control_delay_steps = audit.control_delay_steps;
+  msg.uses_delayed_b = audit.uses_delayed_b;
+  msg.double_compensation_risk = audit.double_compensation_risk;
+  debug_delay_audit_pub_->publish(msg);
+}
+
+/* ================================================================ */
+/*  Timer callback — 250 Hz control loop                             */
+/* ================================================================ */
+
+void GimbalPipelineNode::timerCallback() {
+  // Step 0: 核心类可用性检查
+  if (!gimbal_control_core_) {
+    RCLCPP_ERROR_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "GimbalControlCore is not initialized, skipping control cycle");
+    return;
+  }
+
+  gimbal_controller::GimbalControlContext context;
+  context.current_time = now();
+
+  // Step 1: 控制禁用时发布 idle 命令并早返回
+  if (!enable_) {
+    const auto idle_result = gimbal_control_core_->compute(
+      context, current_gimbal_strategy_name_, std::string(), false);
+    gimbal_cmd_pub_->publish(idle_result.cmd);
+    return;
+  }
+
+  // Step 2: 更新云台姿态并填充控制上下文基础字段
+  updateGimbalState();
+  context.current_yaw = current_yaw_;
+  context.current_pitch = current_pitch_;
+  context.bullet_speed = bullet_speed_;
+
+  // Step 3: 从共享缓存构建目标上下文
+  std::string selected_id;
+  buildControlContextFromCache(context, selected_id);
+
+  // Step 4: 核心类统一生成命令（strategy + finalize + filter + audit）
+  const auto control_result = gimbal_control_core_->compute(
+    context, current_gimbal_strategy_name_, selected_id, true);
+  if (!control_result.strategy_found) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "Gimbal strategy '%s' not found, fallback to idle cmd",
+      current_gimbal_strategy_name_.c_str());
+  }
+
+  // Step 5: 发布控制命令
+  gimbal_cmd_pub_->publish(control_result.cmd);
+
+  // Step 6: 发布调试信息（audit + marker）
+  if (debug_mode_ && debug_delay_audit_pub_) {
+    publishDelayAuditDebug(
+      context,
+      control_result.delay_audit,
+      current_gimbal_strategy_name_);
+  }
+
+  if (debug_mode_ && debug_armor_selection_pub_ && control_result.has_tracking) {
+    publishArmorSelectionDebug(context, current_gimbal_strategy_name_);
+  }
+
+  if (debug_mode_ && control_result.has_tracking) {
+    publishGimbalMarkers(context.target_robot, control_result.cmd);
+  }
 }
 
 /* ================================================================ */
@@ -1798,6 +2291,24 @@ void GimbalPipelineNode::initMarkers() {
   radial_allowed_bounds_marker_.color.g = 0.85;
   radial_allowed_bounds_marker_.color.b = 0.2;
 
+  virtual_armor_marker_.ns = "virtual_armor";
+  virtual_armor_marker_.type = visualization_msgs::msg::Marker::CUBE;
+  virtual_armor_marker_.scale.x = 0.03;
+  virtual_armor_marker_.scale.y = 0.23;
+  virtual_armor_marker_.scale.z = 0.125;
+  virtual_armor_marker_.color.a = 0.95;
+  virtual_armor_marker_.color.r = 0.1;
+  virtual_armor_marker_.color.g = 0.95;
+  virtual_armor_marker_.color.b = 0.35;
+
+  virtual_armor_text_marker_.ns = "virtual_armor_text";
+  virtual_armor_text_marker_.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+  virtual_armor_text_marker_.scale.z = 0.12;
+  virtual_armor_text_marker_.color.a = 1.0;
+  virtual_armor_text_marker_.color.r = 0.1;
+  virtual_armor_text_marker_.color.g = 1.0;
+  virtual_armor_text_marker_.color.b = 0.6;
+
   color_palette_.clear();
   for (int i = 0; i < 10; ++i) {
     float hue = i * 36.0f;
@@ -1810,13 +2321,24 @@ void GimbalPipelineNode::publishGimbalMarkers(
     const rm_interfaces::msg::GimbalCmd &cmd) {
   if (!debug_gimbal_marker_pub_) return;
 
+  const auto normalized_target = robot_description::TrackedRobotUsage::normalizeState(target_robot);
+  const auto center_position = robot_description::TrackedRobotUsage::centerPosition(normalized_target);
+  const auto linear_velocity = robot_description::TrackedRobotUsage::linearVelocity(normalized_target);
+  const double target_yaw = robot_description::TrackedRobotUsage::yaw(normalized_target);
+  const double target_yaw_velocity =
+      robot_description::TrackedRobotUsage::yawVelocity(normalized_target);
+
   visualization_msgs::msg::MarkerArray marker_array;
+  const bool has_valid_measurement =
+    cmd.mode == rm_interfaces::msg::GimbalCmd::MODE_NORMAL_MEASUREMENT &&
+    cmd.distance > 0.0;
 
   // Position
   position_marker_.header = target_robot.header;
   position_marker_.id = 0;
   position_marker_.action = visualization_msgs::msg::Marker::ADD;
-  position_marker_.pose.position = target_robot.center_position;
+  position_marker_.pose.position =
+    robot_description::TrackedRobotUsage::toPoint(center_position);
   position_marker_.pose.orientation.w = 1.0;
   marker_array.markers.push_back(position_marker_);
 
@@ -1825,37 +2347,40 @@ void GimbalPipelineNode::publishGimbalMarkers(
   target_velocity_marker_.id = 0;
   target_velocity_marker_.action = visualization_msgs::msg::Marker::ADD;
   target_velocity_marker_.points.clear();
-  geometry_msgs::msg::Point vel_start = target_robot.center_position;
-  geometry_msgs::msg::Point vel_end = target_robot.center_position;
-  vel_end.x += target_robot.center_velocity.x * 0.5;
-  vel_end.y += target_robot.center_velocity.y * 0.5;
-  vel_end.z += target_robot.center_velocity.z * 0.5;
+  geometry_msgs::msg::Point vel_start =
+    robot_description::TrackedRobotUsage::toPoint(center_position);
+  geometry_msgs::msg::Point vel_end = vel_start;
+  vel_end.x += linear_velocity.x() * 0.5;
+  vel_end.y += linear_velocity.y() * 0.5;
+  vel_end.z += linear_velocity.z() * 0.5;
   target_velocity_marker_.points.push_back(vel_start);
   target_velocity_marker_.points.push_back(vel_end);
   marker_array.markers.push_back(target_velocity_marker_);
 
   // Armor plates
-  if (!target_robot.armors_offset.empty()) {
-    for (size_t i = 0; i < target_robot.armors_offset.size(); ++i) {
+  if (!normalized_target.armors_offset.empty()) {
+    for (size_t i = 0; i < normalized_target.armors_offset.size(); ++i) {
       auto armor_marker = armors_marker_;
       armor_marker.header = target_robot.header;
       armor_marker.id = static_cast<int>(i);
       armor_marker.action = visualization_msgs::msg::Marker::ADD;
-      double cos_yaw = std::cos(target_robot.yaw);
-      double sin_yaw = std::sin(target_robot.yaw);
-      const auto &offset = target_robot.armors_offset[i];
+      double cos_yaw = std::cos(target_yaw);
+      double sin_yaw = std::sin(target_yaw);
+      const auto &offset = normalized_target.armors_offset[i];
       armor_marker.pose.position.x =
-          target_robot.center_position.x +
+          center_position.x() +
           offset.position.x * cos_yaw - offset.position.y * sin_yaw;
       armor_marker.pose.position.y =
-          target_robot.center_position.y +
+          center_position.y() +
           offset.position.x * sin_yaw + offset.position.y * cos_yaw;
       armor_marker.pose.position.z =
-          target_robot.center_position.z + offset.position.z;
+          center_position.z() + offset.position.z;
+        const bool is_outpost = (normalized_target.robot_id == "outpost");
+        const double armor_pitch = is_outpost ? -0.2618 : 0.2618;
       tf2::Quaternion q;
-      q.setRPY(0, 0.2618,
-               target_robot.yaw +
-                   i * (2 * M_PI / target_robot.num_armors));
+        q.setRPY(0, armor_pitch,
+               target_yaw +
+                   i * (2 * M_PI / normalized_target.num_armors));
       armor_marker.pose.orientation.x = q.x();
       armor_marker.pose.orientation.y = q.y();
       armor_marker.pose.orientation.z = q.z();
@@ -1865,10 +2390,10 @@ void GimbalPipelineNode::publishGimbalMarkers(
   }
 
   // Allowed radial selection range marker (for min_movement_with_radial)
-  if (radial_selection_enabled_ && armor_selector_ && target_robot.num_armors > 0) {
-    const double center_x = target_robot.center_position.x;
-    const double center_y = target_robot.center_position.y;
-    const double center_z = target_robot.center_position.z;
+  if (radial_selection_enabled_ && armor_selector_ && normalized_target.num_armors > 0) {
+    const double center_x = center_position.x();
+    const double center_y = center_position.y();
+    const double center_z = center_position.z();
 
     // Direction from robot center to our gimbal origin (world origin approximation).
     double axis_yaw = std::atan2(-center_y, -center_x);
@@ -1878,19 +2403,19 @@ void GimbalPipelineNode::publishGimbalMarkers(
     double bias_deg = 0.0;
     if (radial_dynamic_enable_) {
       speed_norm = std::clamp(
-        std::abs(target_robot.yaw_velocity) / radial_dynamic_v_yaw_ref_, 0.0, 1.0);
+        std::abs(target_yaw_velocity) / radial_dynamic_v_yaw_ref_, 0.0, 1.0);
       const double scale = 1.0 - radial_dynamic_shrink_ratio_ * speed_norm;
       enter_deg = std::max(enter_deg * scale, radial_dynamic_min_angle_deg_);
       const double bias_mag = std::min(
         radial_dynamic_bias_gain_deg_ * speed_norm,
         radial_dynamic_max_bias_deg_);
-      bias_deg = (target_robot.yaw_velocity >= 0.0 ? 1.0 : -1.0) * bias_mag;
+      bias_deg = (target_yaw_velocity >= 0.0 ? 1.0 : -1.0) * bias_mag;
       axis_yaw += bias_deg * M_PI / 180.0;
     }
     const double enter_rad = enter_deg * M_PI / 180.0;
 
     double radius = 0.25;
-    for (const auto & offset : target_robot.armors_offset) {
+    for (const auto & offset : normalized_target.armors_offset) {
       const double r = std::hypot(offset.position.x, offset.position.y);
       if (r > radius) {
         radius = r;
@@ -1949,8 +2474,61 @@ void GimbalPipelineNode::publishGimbalMarkers(
     marker_array.markers.push_back(radial_allowed_bounds_marker_);
   }
 
+  // Virtual armor marker (only when auto-switch virtual mode is enabled and active)
+  {
+    virtual_armor_marker_.header = target_robot.header;
+    virtual_armor_marker_.id = 0;
+    virtual_armor_marker_.action = visualization_msgs::msg::Marker::DELETE;
+    virtual_armor_text_marker_.header = target_robot.header;
+    virtual_armor_text_marker_.id = 0;
+    virtual_armor_text_marker_.action = visualization_msgs::msg::Marker::DELETE;
+
+    if (virtual_auto_switch_enable_ && armor_selector_ && position_calculator_) {
+      auto armor_positions = position_calculator_->calculate(normalized_target);
+      if (!armor_positions.empty()) {
+        // Use a local copy to avoid mutating runtime selector state during debug visualization.
+        auto debug_selector = *armor_selector_;
+        auto virtual_selection = debug_selector.selectBest(
+          armor_positions,
+          center_position,
+          target_yaw,
+          normalized_target.num_armors,
+          target_yaw_velocity,
+          current_yaw_,
+          current_pitch_);
+
+        if (virtual_selection.is_virtual_target && !virtual_selection.is_center_fallback) {
+          virtual_armor_marker_.action = visualization_msgs::msg::Marker::ADD;
+          virtual_armor_marker_.pose.position =
+            robot_description::TrackedRobotUsage::toPoint(virtual_selection.position);
+
+          const double normal_yaw =
+            std::atan2(-center_position.y(), -center_position.x());
+          tf2::Quaternion q_virtual;
+          q_virtual.setRPY(0.0, 0.2618, normal_yaw);
+          virtual_armor_marker_.pose.orientation.x = q_virtual.x();
+          virtual_armor_marker_.pose.orientation.y = q_virtual.y();
+          virtual_armor_marker_.pose.orientation.z = q_virtual.z();
+          virtual_armor_marker_.pose.orientation.w = q_virtual.w();
+
+          virtual_armor_text_marker_.action = visualization_msgs::msg::Marker::ADD;
+          virtual_armor_text_marker_.pose.position = virtual_armor_marker_.pose.position;
+          virtual_armor_text_marker_.pose.position.z += 0.18;
+          virtual_armor_text_marker_.pose.orientation.w = 1.0;
+          std::ostringstream oss;
+          oss << std::fixed << std::setprecision(3)
+              << "vidx=" << virtual_selection.real_selected_index
+              << " dYaw=" << virtual_selection.virtual_delta_yaw;
+          virtual_armor_text_marker_.text = oss.str();
+        }
+      }
+    }
+    marker_array.markers.push_back(virtual_armor_marker_);
+    marker_array.markers.push_back(virtual_armor_text_marker_);
+  }
+
   // Selection target
-  if (cmd.distance > 0) {
+  if (has_valid_measurement) {
     selection_marker_.header = target_robot.header;
     selection_marker_.id = 0;
     selection_marker_.action = visualization_msgs::msg::Marker::ADD;
@@ -1967,7 +2545,7 @@ void GimbalPipelineNode::publishGimbalMarkers(
   }
 
   // Predicted hit (for predicted strategy)
-  if (current_gimbal_strategy_name_ == "predicted" && cmd.distance > 0) {
+  if (current_gimbal_strategy_name_ == "predicted" && has_valid_measurement) {
     predicted_marker_.header = target_robot.header;
     predicted_marker_.id = 0;
     predicted_marker_.action = visualization_msgs::msg::Marker::ADD;
@@ -1977,7 +2555,7 @@ void GimbalPipelineNode::publishGimbalMarkers(
   }
 
   // Trajectory
-  if (cmd.distance > 0) {
+  if (has_valid_measurement) {
     trajectory_marker_.header.frame_id = "gimbal_link";
     trajectory_marker_.header.stamp = target_robot.header.stamp;
     trajectory_marker_.id = 0;
@@ -2024,11 +2602,12 @@ void GimbalPipelineNode::publishManeuverMarkers(
 
   int id = 0;
 
-  for (const auto &[robot_id, entry] : tracker_manager_->trackers()) {
-    if (!entry.tracker || !entry.tracker->is_initialized()) continue;
+  const auto tracker_views = tracker_manager_->initialized_tracker_views();
+  for (const auto &view : tracker_views) {
+    if (!view.tracker) continue;
 
-    const auto result = entry.tracker->assess_maneuver();
-    const auto pos    = entry.tracker->get_center_position();
+    const auto result = view.tracker->assess_maneuver();
+    const auto pos    = view.tracker->get_center_position();
 
     // Estimate robot top: center pos + half robot height (~0.25 m)
     const double top_z = pos.z() + 0.25;
@@ -2078,6 +2657,77 @@ void GimbalPipelineNode::publishManeuverMarkers(
   }
 
   if (!arr.markers.empty()) debug_maneuver_pub_->publish(arr);
+}
+
+void GimbalPipelineNode::publishArmorSelectionDebug(
+    const gimbal_controller::GimbalControlContext &context,
+    const std::string &strategy_name) {
+  if (!debug_armor_selection_pub_ || !armor_selector_ || !position_calculator_) {
+    return;
+  }
+  if (!context.is_tracking) {
+    return;
+  }
+
+  const auto normalized_target = robot_description::TrackedRobotUsage::normalizeState(context.target_robot);
+  const auto center_position = robot_description::TrackedRobotUsage::centerPosition(normalized_target);
+  const double target_yaw = robot_description::TrackedRobotUsage::yaw(normalized_target);
+  const double target_yaw_velocity = robot_description::TrackedRobotUsage::yawVelocity(normalized_target);
+
+  std::vector<Eigen::Vector3d> armor_positions;
+  Eigen::Vector3d select_center = center_position;
+  double select_yaw = target_yaw;
+
+  if (strategy_name == "mpc") {
+    const double t_ahead = mpc_dt_debug_;
+    armor_positions = position_calculator_->calculatePredicted(normalized_target, t_ahead);
+    select_center = robot_description::TrackedRobotUsage::predictCenter(
+      normalized_target,
+      t_ahead,
+      robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
+    select_yaw = robot_description::TrackedRobotUsage::predictYaw(
+      normalized_target,
+      t_ahead,
+      robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
+  } else {
+    armor_positions = position_calculator_->calculate(normalized_target);
+  }
+
+  if (armor_positions.empty()) {
+    return;
+  }
+
+  auto debug_selector = *armor_selector_;
+  const auto selection = debug_selector.selectBest(
+    armor_positions,
+    select_center,
+    select_yaw,
+    normalized_target.num_armors,
+    target_yaw_velocity,
+    context.current_yaw,
+    context.current_pitch);
+
+  std_msgs::msg::String out;
+  std::ostringstream oss;
+  oss << std::fixed << std::setprecision(4)
+      << "strategy=" << strategy_name
+      << " sel=" << selection.selected_index
+      << " real_sel=" << selection.real_selected_index
+      << " is_virtual=" << (selection.is_virtual_target ? 1 : 0)
+      << " fallback=" << (selection.is_center_fallback ? 1 : 0)
+      << " dist=" << selection.distance
+      << " move=" << selection.gimbal_movement
+      << " v_yaw=" << selection.virtual_robot_yaw
+      << " d_yaw=" << selection.virtual_delta_yaw
+      << " pos=(" << selection.position.x() << "," << selection.position.y() << ","
+      << selection.position.z() << ")"
+      << " real=(" << selection.real_position.x() << "," << selection.real_position.y() << ","
+      << selection.real_position.z() << ")";
+  if (strategy_name == "mpc") {
+    oss << " note=first_predicted_selection";
+  }
+  out.data = oss.str();
+  debug_armor_selection_pub_->publish(out);
 }
 
 std::array<float, 4> GimbalPipelineNode::hsvToRgb(float h, float s,
