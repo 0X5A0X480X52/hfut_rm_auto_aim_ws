@@ -9,7 +9,7 @@ gimbal_pipeline:
     default_r1: 0.15
     default_r2: 0.20
     default_dza: 0.0
-    tracker_timeout: 5.50
+    tracker_timeout: 0.50
     debug_mode: true
     enable_oscillation_detection: false
     visualization_frame: "odom"
@@ -51,8 +51,8 @@ gimbal_pipeline:
 
     # Tracker logic
     tracker.tracking_thres: 2
-    tracker.lost_thres: 4
-    tracker.temp_lost_thres: 3
+    tracker.lost_thres: 10
+    tracker.temp_lost_thres: 5
     tracker.max_match_distance: 2.0
     tracker.max_match_yaw_diff: 1.0
     tracker.n_panels: 4

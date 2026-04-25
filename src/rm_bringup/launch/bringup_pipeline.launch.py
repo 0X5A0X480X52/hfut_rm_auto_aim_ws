@@ -110,6 +110,7 @@ def generate_launch_description():
         default_path = get_pkg_params(pkg_name, param_file)
         if robot_name and robot_name != 'default':
             override_path = os.path.join(bringup_config_root, robot_name, param_file)
+            print(f"Checking for robot-specific override params at: {override_path}")
             if os.path.isfile(override_path):
                 return [default_path, override_path]
         return [default_path]
