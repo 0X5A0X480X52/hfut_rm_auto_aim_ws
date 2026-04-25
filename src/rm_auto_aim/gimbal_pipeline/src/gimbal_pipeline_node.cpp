@@ -273,6 +273,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       get_parameter("selector.blind_camera_frame").as_string();
   guidance_end_yaw_threshold_deg_ =
       get_parameter("selector.guidance_end_yaw_threshold").as_double();
+  enable_guidance_timeout_ =
+      get_parameter("selector.enable_guidance_timeout").as_bool();
   initSelectionStrategy();
 
   RCLCPP_INFO(get_logger(), "[GimbalPipelineNode] selector_strategy: %s", selector_strategy_name_.c_str());
@@ -285,7 +287,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   ballistic_mode_ = get_parameter("controller.ballistic_mode").as_string();
   max_yaw_v_ = get_parameter("controller.max_yaw_v").as_double();
   max_pitch_v_ = get_parameter("controller.max_pitch_v").as_double();
-  guidance_vel_gain_ = get_parameter("controller.guidance_vel_gain").as_double();
+  guidance_accel_limit_ = get_parameter("controller.guidance_accel_limit").as_double();
+  guidance_max_vel_ = get_parameter("controller.guidance_max_vel").as_double();
 
   // TF2 buffer was already created above (shared with TFHandler & MessageFilter).
 
@@ -819,6 +822,7 @@ void GimbalPipelineNode::declareTargetSelectorParameters() {
   declare_parameter("selector.main_camera_frame", "camera_optical_frame");
   declare_parameter("selector.blind_camera_frame", "blind_camera_1_optical_frame");
   declare_parameter("selector.guidance_end_yaw_threshold", 5.0);  // 引导结束的 yaw deviation 阈值（度）
+  declare_parameter("selector.enable_guidance_timeout", false);   // 是否启用引导超时检测，默认关闭
 }
 
 void GimbalPipelineNode::declareGimbalControllerParameters() {
@@ -828,7 +832,8 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.ballistic_mode", "service");
   declare_parameter("controller.max_yaw_v", 90.0);
   declare_parameter("controller.max_pitch_v", 30.0);
-  declare_parameter("controller.guidance_vel_gain", 1.5);
+  declare_parameter("controller.guidance_accel_limit", 10.0);  // 引导模式角加速度限幅 (rad/s²)
+  declare_parameter("controller.guidance_max_vel", 3.0);       // 引导模式最大角速度 (rad/s)
 
   // Solver
   declare_parameter("controller.solver.shooting_range_width", 0.135);
@@ -1854,6 +1859,7 @@ SelectionResult GimbalPipelineNode::selectTargetInternal(
       auto result = buildGuidanceResult(*nearest);
       guidance_state_ = GuidanceState::ROTATING;
       guidance_start_time_ = this->now();
+      guidance_vel_initialized_ = false;  // 下个周期从实测速度重新初始化引导速度指令
       RCLCPP_INFO(get_logger(), "Guidance started: target %s from blind camera (dist=%.2f)",
                   result.robot_id.c_str(), result.distance);
       current_target_id_ = result.robot_id;
@@ -1917,7 +1923,7 @@ SelectionResult GimbalPipelineNode::buildGuidanceResult(const rm_interfaces::msg
 
 bool GimbalPipelineNode::checkGuidanceComplete(const rm_interfaces::msg::TrackedRobot *robot) {
   double elapsed = (this->now() - guidance_start_time_).seconds();
-  bool timeout = (elapsed > GUIDANCE_TIMEOUT);
+  bool timeout = enable_guidance_timeout_ && (elapsed > GUIDANCE_TIMEOUT);
 
   double yaw_deviation = M_PI;
   if (robot) {
@@ -2151,8 +2157,23 @@ void GimbalPipelineNode::updateGimbalState() {
     tf2::fromMsg(msg_q, tf_q);
     double roll, pitch, yaw;
     tf2::Matrix3x3(tf_q).getRPY(roll, pitch, yaw);
-    current_yaw_ = yaw;
-    current_pitch_ = -pitch;
+    double new_yaw = yaw;
+    double new_pitch = -pitch;
+
+    // 用位置差分估计当前角速度（用于引导模式速度平滑起步）
+    const double dt = 1.0 / control_rate_;
+    double dy = new_yaw - current_yaw_;
+    while (dy > M_PI) dy -= 2.0 * M_PI;
+    while (dy < -M_PI) dy += 2.0 * M_PI;
+    current_yaw_v_measured_ = dy / dt;
+
+    double dp = new_pitch - current_pitch_;
+    while (dp > M_PI) dp -= 2.0 * M_PI;
+    while (dp < -M_PI) dp += 2.0 * M_PI;
+    current_pitch_v_measured_ = dp / dt;
+
+    current_yaw_ = new_yaw;
+    current_pitch_ = new_pitch;
   } catch (const tf2::TransformException &) {
     // fall through — use joint_states values
   }
@@ -2352,9 +2373,41 @@ rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildGuidanceCommand(
   cmd.pitch_diff = pitch_diff_rad * 180.0 / M_PI;
   cmd.pitch_a = 0.0;
 
-  // 从 yaw_diff 计算期望转速（下位机需要速度指令驱动电机）
-  cmd.yaw_v = yaw_diff_rad * guidance_vel_gain_ * 180.0 / M_PI;
-  cmd.pitch_v = pitch_diff_rad * guidance_vel_gain_ * 180.0 / M_PI;
+  // 引导速度平滑控制：从实测速度起步，加速度限幅，接近目标时减速至零
+  const double dt = 1.0 / control_rate_;
+
+  // 首次进入引导时，从实测角速度开始，避免速度跳变
+  if (!guidance_vel_initialized_) {
+    last_guidance_cmd_yaw_v_ = current_yaw_v_measured_;
+    last_guidance_cmd_pitch_v_ = current_pitch_v_measured_;
+    guidance_vel_initialized_ = true;
+  }
+
+  // 计算目标速度：基于匀减速停车约束 v_target = sign(err) * min(sqrt(2*a*|err|), v_max)
+  double yaw_v_limit = std::sqrt(2.0 * guidance_accel_limit_ * std::abs(yaw_diff_rad));
+  double yaw_v_target = std::copysign(std::min(yaw_v_limit, guidance_max_vel_), yaw_diff_rad);
+
+  double pitch_v_limit = std::sqrt(2.0 * guidance_accel_limit_ * std::abs(pitch_diff_rad));
+  double pitch_v_target = std::copysign(std::min(pitch_v_limit, guidance_max_vel_), pitch_diff_rad);
+
+  // 加速度限幅：平滑过渡到目标速度
+  double yaw_v_cmd = last_guidance_cmd_yaw_v_;
+  yaw_v_cmd += std::clamp(yaw_v_target - yaw_v_cmd,
+                          -guidance_accel_limit_ * dt,
+                           guidance_accel_limit_ * dt);
+  last_guidance_cmd_yaw_v_ = yaw_v_cmd;
+
+  double pitch_v_cmd = last_guidance_cmd_pitch_v_;
+  pitch_v_cmd += std::clamp(pitch_v_target - pitch_v_cmd,
+                            -guidance_accel_limit_ * dt,
+                             guidance_accel_limit_ * dt);
+  last_guidance_cmd_pitch_v_ = pitch_v_cmd;
+
+  // 转换为 deg/s 输出
+  cmd.yaw_v = yaw_v_cmd * 180.0 / M_PI;
+  cmd.pitch_v = pitch_v_cmd * 180.0 / M_PI;
+
+  // 硬件保护：硬限幅（使用原有 max_yaw_v_ / max_pitch_v_ 作为最终安全边界）
   if (max_yaw_v_ > 0.0) {
     cmd.yaw_v = std::clamp(cmd.yaw_v, -max_yaw_v_, max_yaw_v_);
   }

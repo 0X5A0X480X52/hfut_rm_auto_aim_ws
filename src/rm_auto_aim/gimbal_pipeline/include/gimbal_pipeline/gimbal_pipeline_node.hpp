@@ -203,6 +203,16 @@ class GimbalPipelineNode : public rclcpp::Node {
   rclcpp::Time guidance_start_time_;
   static constexpr double GUIDANCE_TIMEOUT{3.0};  // 引导超时（秒），超时后重置计时器
   double guidance_end_yaw_threshold_deg_{5.0};    // 引导结束的 yaw deviation 阈值（度），目标进入主相机视野中心时结束引导
+  bool enable_guidance_timeout_{false};           // 是否启用引导超时检测，默认关闭
+
+  // 引导速度平滑控制
+  double current_yaw_v_measured_{0.0};            // 从 TF 差分估计的当前角速度 (rad/s)
+  double current_pitch_v_measured_{0.0};
+  double last_guidance_cmd_yaw_v_{0.0};           // 上一周期引导模式输出的速度指令 (rad/s)
+  double last_guidance_cmd_pitch_v_{0.0};
+  bool guidance_vel_initialized_{false};          // 是否已从实测速度初始化引导速度指令
+  double guidance_accel_limit_{10.0};             // 引导模式角加速度限幅 (rad/s²)
+  double guidance_max_vel_{3.0};                  // 引导模式最大角速度 (rad/s)
 
   /* ================================================================ */
   /*  Gimbal controller state (from GimbalControllerNode)             */
@@ -224,7 +234,6 @@ class GimbalPipelineNode : public rclcpp::Node {
   double bullet_speed_{20.0};
   double max_yaw_v_{540.0};
   double max_pitch_v_{360.0};
-  double guidance_vel_gain_{1.5};
   double control_rate_{250.0};
   std::string ballistic_mode_{"service"};
   bool enable_{true};
