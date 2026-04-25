@@ -105,6 +105,17 @@ class GimbalPipelineNode : public rclcpp::Node {
   SelectionResult selectTargetInternal(
       const rm_interfaces::msg::TrackedRobots &robots);
 
+  // ── selectTargetInternal helper functions ───────────────────────────────
+  void separateTargetsByCamera(
+      const rm_interfaces::msg::TrackedRobots &robots,
+      std::vector<const rm_interfaces::msg::TrackedRobot*> &main_targets,
+      std::vector<const rm_interfaces::msg::TrackedRobot*> &blind_targets);
+  const rm_interfaces::msg::TrackedRobot* selectNearestTarget(
+      const std::vector<const rm_interfaces::msg::TrackedRobot*> &targets);
+  double calculateYawDeviation(const rm_interfaces::msg::TrackedRobot &robot);
+  SelectionResult buildGuidanceResult(const rm_interfaces::msg::TrackedRobot &robot);
+  bool checkGuidanceComplete(const rm_interfaces::msg::TrackedRobot *robot);
+
   /* ================================================================ */
   /*  Gimbal controller logic (from GimbalControllerNode)             */
   /* ================================================================ */
@@ -121,6 +132,19 @@ class GimbalPipelineNode : public rclcpp::Node {
       const gimbal_controller::GimbalControlContext &context,
       const gimbal_controller::DelayAuditSnapshot &audit,
       const std::string &strategy_name);
+
+  // ── timerCallback helper functions ─────────────────────────────────────
+  void publishIdleCommand();
+  rm_interfaces::msg::GimbalCmd buildGuidanceCommand(
+      const gimbal_controller::GimbalControlContext &context);
+  rm_interfaces::msg::GimbalCmd buildNoTargetCommand();
+  rm_interfaces::msg::GimbalCmd buildNormalCommand(
+      const gimbal_controller::GimbalControlContext &context,
+      const std::string &selected_id);
+  void publishGuidanceDebugMarker(
+      const rm_interfaces::msg::TrackedRobot &robot,
+      const Eigen::Vector3d &center);
+
   void timerCallback();
   void applyPendingRuntimeUpdates();
   void setModeCallback(
