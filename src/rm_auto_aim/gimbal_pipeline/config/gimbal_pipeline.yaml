@@ -203,6 +203,9 @@ gimbal_pipeline:
     controller.control_rate: 250.0
     controller.strategy: "mpc"    # "current" | "predicted" | "mpc" | "state_machine"
     controller.ballistic_mode: "local"  # "service" | "local"
+    controller.max_yaw_v: 90.0        # yaw_v 限幅 (deg/s)，防异常值损坏机械结构
+    controller.max_pitch_v: 60.0      # pitch_v 限幅 (deg/s)
+    controller.guidance_vel_gain: 1.5 # 引导模式速度比例增益 (rad/s per rad of error)
 
     controller.solver.shooting_range_width: 0.1
     controller.solver.shooting_range_height: 0.1

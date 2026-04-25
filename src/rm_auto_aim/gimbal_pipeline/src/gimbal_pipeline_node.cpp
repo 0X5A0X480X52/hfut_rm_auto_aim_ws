@@ -283,6 +283,9 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   current_gimbal_strategy_name_ =
       get_parameter("controller.strategy").as_string();
   ballistic_mode_ = get_parameter("controller.ballistic_mode").as_string();
+  max_yaw_v_ = get_parameter("controller.max_yaw_v").as_double();
+  max_pitch_v_ = get_parameter("controller.max_pitch_v").as_double();
+  guidance_vel_gain_ = get_parameter("controller.guidance_vel_gain").as_double();
 
   // TF2 buffer was already created above (shared with TFHandler & MessageFilter).
 
@@ -822,6 +825,9 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.control_rate", 250.0);
   declare_parameter("controller.strategy", "current");
   declare_parameter("controller.ballistic_mode", "service");
+  declare_parameter("controller.max_yaw_v", 90.0);
+  declare_parameter("controller.max_pitch_v", 30.0);
+  declare_parameter("controller.guidance_vel_gain", 1.5);
 
   // Solver
   declare_parameter("controller.solver.shooting_range_width", 0.135);
@@ -2320,12 +2326,23 @@ void GimbalPipelineNode::timerCallback() {
     // 与精确自瞄模式保持一致，输出角度制（度）
     cmd.yaw = target_yaw * 180.0 / M_PI;
     cmd.yaw_diff = yaw_diff_rad * 180.0 / M_PI;
-    cmd.yaw_v = 0.0;
     cmd.yaw_a = 0.0;
     cmd.pitch = target_pitch * 180.0 / M_PI;
     cmd.pitch_diff = pitch_diff_rad * 180.0 / M_PI;
-    cmd.pitch_v = 0.0;
     cmd.pitch_a = 0.0;
+
+    // 引导模式下从 yaw_diff 计算期望转速，打破循环依赖
+    // （下位机需要 yaw_v/pitch_v 驱动电机，不能使用实测值）
+    {
+      cmd.yaw_v = yaw_diff_rad * guidance_vel_gain_ * 180.0 / M_PI;
+      cmd.pitch_v = pitch_diff_rad * guidance_vel_gain_ * 180.0 / M_PI;
+      if (max_yaw_v_ > 0.0) {
+        cmd.yaw_v = std::clamp(cmd.yaw_v, -max_yaw_v_, max_yaw_v_);
+      }
+      if (max_pitch_v_ > 0.0) {
+        cmd.pitch_v = std::clamp(cmd.pitch_v, -max_pitch_v_, max_pitch_v_);
+      }
+    }
     cmd.distance = 1.0;  // 补盲相机目标，distance 标志为 1
     cmd.fire_advice = false;  // 引导模式不开火
     cmd.target_id = robot.robot_id;
@@ -2412,7 +2429,7 @@ void GimbalPipelineNode::timerCallback() {
     }
   }
 
-  // Step 5: 发布控制命令
+  // Step 6: 发布控制命令
   gimbal_cmd_pub_->publish(cmd);
 }
 

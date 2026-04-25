@@ -198,6 +198,9 @@ class GimbalPipelineNode : public rclcpp::Node {
   double current_yaw_{0.0};
   double current_pitch_{0.0};
   double bullet_speed_{20.0};
+  double max_yaw_v_{540.0};
+  double max_pitch_v_{360.0};
+  double guidance_vel_gain_{1.5};
   double control_rate_{250.0};
   std::string ballistic_mode_{"service"};
   bool enable_{true};
