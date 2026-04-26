@@ -1,9 +1,9 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
-#include <sensor_msgs/msg/camera_info.hpp>
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>
-#include <camera_info_manager/camera_info_manager.hpp>
+#include <rm_interfaces/srv/get_camera_info.hpp>
+#include <rm_utils/heartbeat.hpp>
 
 namespace blind_vision
 {
@@ -23,40 +23,29 @@ public:
     // 初始化相机
     init_camera(cap_, camera_name_);
 
-    // 创建独立的发布者
+    // 创建图像发布者
     bool use_sensor_data_qos = this->declare_parameter("use_sensor_data_qos", false);
     rclcpp::QoS image_qos = use_sensor_data_qos
       ? rclcpp::QoS(rclcpp::KeepLast(10)).reliability(rclcpp::ReliabilityPolicy::BestEffort)
       : rclcpp::QoS(rclcpp::KeepLast(10));
     image_pub_ = this->create_publisher<sensor_msgs::msg::Image>("image_raw", image_qos);
-    camera_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>("camera_info", image_qos);
 
-    // 加载相机内参
-    camera_info_manager_ =
-      std::make_unique<camera_info_manager::CameraInfoManager>(this, camera_name_);
-    auto camera_info_url = this->declare_parameter<std::string>(
-      "camera_info_url", "package://usb_camera_driver/config/camera_info_1.yaml");
-    if (camera_info_manager_->validateURL(camera_info_url)) {
-      camera_info_manager_->loadCameraInfo(camera_info_url);
-      camera_info_msg_ = camera_info_manager_->getCameraInfo();
-    } else {
-      RCLCPP_WARN(this->get_logger(), "Invalid camera info URL: %s, using default", camera_info_url.c_str());
-      // 使用默认 camera_info
-      camera_info_msg_.header.frame_id = frame_id_;
-      camera_info_msg_.width = width_;
-      camera_info_msg_.height = height_;
-      // 设置默认内参矩阵 (需要根据实际相机标定)
-      camera_info_msg_.k = {500.0, 0.0, width_ / 2.0, 0.0, 500.0, height_ / 2.0, 0.0, 0.0, 1.0};
-      camera_info_msg_.d = {0.0, 0.0, 0.0, 0.0, 0.0};
-      camera_info_msg_.r = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
-      camera_info_msg_.p = {500.0, 0.0, width_ / 2.0, 0.0, 0.0, 500.0, height_ / 2.0, 0.0, 0.0, 0.0, 1.0, 0.0};
-    }
-    camera_info_msg_.header.frame_id = frame_id_;
+    // 创建相机信息服务
+    camera_info_srv_ = this->create_service<rm_interfaces::srv::GetCameraInfo>(
+      "get_camera_info",
+      [this](const std::shared_ptr<rm_interfaces::srv::GetCameraInfo::Request>,
+             std::shared_ptr<rm_interfaces::srv::GetCameraInfo::Response> response) {
+        response->width = width_;
+        response->height = height_;
+      });
 
     // 定时器发布帧
     timer_ = this->create_wall_timer(
       std::chrono::milliseconds(static_cast<int>(1000.0 / fps_)),
       std::bind(&USBCameraNode::timer_callback, this));
+
+    // Heartbeat
+    heartbeat_ = fyt::HeartBeatPublisher::create(this);
   }
 
   ~USBCameraNode()
@@ -72,10 +61,9 @@ private:
   std::string frame_id_;
   cv::VideoCapture cap_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_pub_;
-  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
-  std::unique_ptr<camera_info_manager::CameraInfoManager> camera_info_manager_;
-  sensor_msgs::msg::CameraInfo camera_info_msg_;
+  rclcpp::Service<rm_interfaces::srv::GetCameraInfo>::SharedPtr camera_info_srv_;
+  fyt::HeartBeatPublisher::SharedPtr heartbeat_;
 
   void init_camera(cv::VideoCapture& cap, const std::string& side)
   {
@@ -120,14 +108,10 @@ private:
         rgb_frame
       ).toImageMsg();
 
-      auto stamp = this->now();
-      msg->header.stamp = stamp;
+      msg->header.stamp = this->now();
       msg->header.frame_id = frame_id_;
 
-      camera_info_msg_.header.stamp = stamp;
-
       image_pub_->publish(*msg);
-      camera_info_pub_->publish(camera_info_msg_);
     }
     catch (const cv::Exception& e) {
       RCLCPP_ERROR(this->get_logger(), "%s camera processing error: %s", camera_name_.c_str(), e.what());

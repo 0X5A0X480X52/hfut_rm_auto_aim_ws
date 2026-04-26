@@ -41,6 +41,7 @@
 #include "rm_interfaces/msg/target.hpp"
 #include "rm_interfaces/msg/blind.hpp"
 #include "rm_interfaces/srv/set_mode.hpp"
+#include "rm_interfaces/srv/get_camera_info.hpp"
 #include "rm_utils/heartbeat.hpp"
 #include "rm_utils/logger/log.hpp"
 
@@ -94,7 +95,19 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr cam_info_sub_;
   cv::Point2f cam_center_;
   float camera_yaw_;
+  float camera_pitch_;  // Camera pitch angle in degrees
   std::shared_ptr<sensor_msgs::msg::CameraInfo> cam_info_;
+
+  // Image and FOV parameters for angle estimation
+  int image_width_;
+  int image_height_;
+  float h_fov_;  // Horizontal field of view in degrees
+  float v_fov_;  // Vertical field of view in degrees
+
+  // Camera info service client (lazy fetch on first image)
+  rclcpp::Client<rm_interfaces::srv::GetCameraInfo>::SharedPtr camera_info_client_;
+  bool camera_info_fetched_{false};
+  bool fetchCameraInfoFromDriver();
 
   // Image subscription
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr img_sub_;

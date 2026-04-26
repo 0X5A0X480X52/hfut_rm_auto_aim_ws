@@ -2,12 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-GimbalPipeline with main camera and blind camera.
+GimbalPipeline with main camera and blind camera (no camera intrinsics).
 
 Pipeline:
   main_camera (hik/mindvision + armor_detector) --\
-                                                     +--> armor_fusion --> /armor_fusion/armors --> gimbal_pipeline
-  blind_camera_1 (usb_camera + armor_detector) ----/
+                                                     +--> gimbal_pipeline
+  blind_camera_1 (usb_camera + blind_detector) -----/
 
 Topic naming:
   Main camera (no namespace):
@@ -15,10 +15,13 @@ Topic naming:
     - /camera_info
     - /armor_detector/armors
 
-  Blind camera (namespace: blind_camera_1):
-    - /blind_camera_1/image_raw
-    - /blind_camera_1/camera_info
-    - /blind_camera_1/armor_detector/armors
+  Blind detector:
+    - Subscribes to: /blind_camera_1/image_raw
+    - Publishes to:  /blind_detector/blind
+
+gimbal_pipeline subscribes to:
+  - armors -> /armor_detector/armors  (main camera with PnP)
+  - blind  -> /blind_detector/blind   (blind camera, no PnP)
 """
 
 import os
@@ -102,13 +105,6 @@ def generate_launch_description():
         default_value=launch_params.get('namespace', ''),
         description='Namespace for all nodes'
     )
-    declare_enable_visualization = DeclareLaunchArgument(
-        'enable_visualization',
-        default_value='true',
-        description='Enable fusion markers'
-    )
-
-    # Robot description with main camera and blind camera
     robot_description = Command([
         FindExecutable(name='xacro'),
         ' ',
@@ -141,32 +137,6 @@ def generate_launch_description():
         parameters=[get_pkg_params('ballistic_solver', 'ballistic_solver.yaml')],
     )
 
-    # Armor fusion node
-    fusion_node = Node(
-        package='armor_fusion',
-        executable='armor_fusion_node',
-        name='armor_fusion',
-        output='screen',
-        emulate_tty=True,
-        parameters=[
-            get_pkg_params('armor_fusion', 'fusion_params.yaml'),
-            {
-                'camera_topics': [
-                    '/armor_detector/armors',           # Main camera (no namespace)
-                    '/blind_camera_1/armor_detector/armors',
-                ],
-                'camera_info_topics': [
-                    '/camera_info',                     # Main camera
-                    '/blind_camera_1/camera_info',
-                ],
-                'target_frame': 'odom',
-                'output_topic': '/armor_fusion/armors',
-                'enable_visualization': LaunchConfiguration('enable_visualization'),
-                'console_debug': LaunchConfiguration('debug'),
-            },
-        ],
-    )
-
     # Gimbal pipeline
     gimbal_pipeline_node = Node(
         package='gimbal_pipeline',
@@ -177,10 +147,13 @@ def generate_launch_description():
         parameters=[
             get_pkg_params('gimbal_pipeline', 'gimbal_pipeline.yaml'),
             {'debug_mode': LaunchConfiguration('debug')},
+            # 补盲相机话题列表 — 如需多个补盲相机，在此追加:
+            # {'blind.topics': ['/blind_detector/blind_camera_1/blind',
+            #                   '/blind_detector/blind_camera_2/blind']},
         ],
         remappings=[
             ('cmd_gimbal', '/armor_solver/cmd_gimbal'),
-            ('armors', '/armor_fusion/armors'),
+            ('armors', '/armor_detector/armors'),
         ],
     )
 
@@ -252,33 +225,43 @@ def generate_launch_description():
         )
         return [container]
 
-    # Blind camera + detector container
+    # Blind camera + blind_detector container
     def create_blind_camera_detector_container(context):
         debug_enabled = LaunchConfiguration('debug').perform(context).lower() == 'true'
 
         blind_camera_node = ComposableNode(
             package='usb_camera_driver',
             plugin='blind_vision::USBCameraNode',
-            name='usb_camera',
+            name='usb_camera_node',
             namespace='blind_camera_1',
             parameters=[get_usb_camera_params('blind_camera_1')],
             extra_arguments=[{'use_intra_process_comms': True}],
         )
 
-        # Blind camera armor detector (namespace: blind_camera_1)
-        blind_armor_detector_node = ComposableNode(
-            package='armor_detector',
+        # Blind detector (no PnP, only estimates yaw/pitch from pixel positions)
+        # Uses same detection params as armor_detector
+        blind_detector_node = ComposableNode(
+            package='blind_detector',
             plugin='fyt::auto_aim::ArmorDetectorNode',
-            name='armor_detector',
+            name='blind_detector',
             namespace='blind_camera_1',
             parameters=[
                 get_bringup_params('armor_detector'),
-                {'debug': debug_enabled},
+                {
+                    'camera_name': 'blind_camera_1',
+                    'camera_yaw': 0.0,
+                    'camera_pitch': 0.0,
+                    # image_width/image_height fetched from usb_camera via service
+                    'h_fov': 60.0,
+                    'v_fov': 45.0,
+                    'debug': debug_enabled,
+                },
             ],
-            # Remap to local topics within blind_camera_1 namespace
+            # Remap image subscription to usb_camera's output
+            # and blind output to a clean topic for gimbal_pipeline
             remappings=[
-                ('/image_raw', 'image_raw'),
-                ('/camera_info', 'camera_info'),
+                ('blind_camera_1_image_raw', 'image_raw'),
+                ('blind_detector/blind_camera_1/blind', '/blind_detector/blind'),
             ],
             extra_arguments=[{'use_intra_process_comms': True}],
         )
@@ -288,7 +271,7 @@ def generate_launch_description():
             namespace='',
             package='rclcpp_components',
             executable='component_container_mt',
-            composable_node_descriptions=[blind_camera_node, blind_armor_detector_node],
+            composable_node_descriptions=[blind_camera_node, blind_detector_node],
             output='both',
             emulate_tty=True,
         )
@@ -333,12 +316,8 @@ def generate_launch_description():
         period=2.0,
         actions=[OpaqueFunction(function=create_blind_camera_detector_container)],
     )
-    delay_fusion = TimerAction(
-        period=2.8,
-        actions=[fusion_node],
-    )
     delay_gimbal_pipeline = TimerAction(
-        period=3.2,
+        period=2.8,
         actions=[gimbal_pipeline_node],
     )
 
@@ -349,7 +328,6 @@ def generate_launch_description():
         declare_virtual_serial,
         declare_debug,
         declare_namespace,
-        declare_enable_visualization,
 
         robot_state_publisher,
         push_namespace,
@@ -358,6 +336,5 @@ def generate_launch_description():
         delay_ballistic,
         delay_main_camera_detector,
         delay_blind_camera_detector,
-        delay_fusion,
         delay_gimbal_pipeline,
     ])

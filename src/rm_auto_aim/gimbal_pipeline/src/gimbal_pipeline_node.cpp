@@ -557,6 +557,26 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       std::bind(&GimbalPipelineNode::cameraInfoCallback, this,
                 std::placeholders::_1));
 
+  // Subscribe: blind detector (for guidance without camera intrinsics)
+  // Supports multiple blind cameras — each topic gets its own subscription.
+  // Topic names are configured via the "blind.topics" string-array parameter.
+  blind_topics_ = declare_parameter("blind.topics",
+      std::vector<std::string>{"/blind_detector/blind"});
+  blind_sync_timeout_ = declare_parameter("blind.sync_timeout", 0.05);
+  blind_selection_strategy_name_ = declare_parameter("blind.selector.strategy", "min_yaw");
+
+  for (const auto &topic : blind_topics_) {
+    if (topic.empty()) continue;
+    auto sub = create_subscription<rm_interfaces::msg::Blind>(
+      topic, rclcpp::SensorDataQoS(),
+      [this, topic](const rm_interfaces::msg::Blind::SharedPtr msg) {
+        blindCallback(msg, topic);
+      });
+    blind_subs_.push_back(std::move(sub));
+    RCLCPP_INFO(get_logger(), "Subscribed to blind topic: %s", topic.c_str());
+  }
+  initBlindSelectionStrategies();
+
   // Publish: cmd_gimbal (output to serial driver)
   gimbal_cmd_pub_ = create_publisher<rm_interfaces::msg::GimbalCmd>(
       "cmd_gimbal", rclcpp::SensorDataQoS());
@@ -2320,7 +2340,20 @@ void GimbalPipelineNode::timerCallback() {
       cmd = buildGuidanceCommand(context);
       break;
     case SelectionResult::MODE_NO_TARGET:
-      cmd = buildNoTargetCommand();
+      {
+        auto best_blind = collectBlindCandidates();
+        if (best_blind) {
+          if (!blind_guidance_active_) {
+            blind_guidance_active_ = true;
+            guidance_vel_initialized_ = false;
+          }
+          latest_blind_msg_ = best_blind;
+          cmd = buildBlindGuidanceCommand();
+        } else {
+          blind_guidance_active_ = false;
+          cmd = buildNoTargetCommand();
+        }
+      }
       break;
     default:
       cmd = buildNormalCommand(context, selected_id);
@@ -2336,6 +2369,54 @@ void GimbalPipelineNode::timerCallback() {
 /* ================================================================ */
 /*  timerCallback helper functions                                   */
 /* ================================================================ */
+
+void GimbalPipelineNode::initBlindSelectionStrategies() {
+  // 最小 yaw 偏差策略
+  blind_selection_strategies_["min_yaw"] =
+    [](const std::vector<rm_interfaces::msg::Blind::SharedPtr> &candidates,
+       double current_yaw) -> rm_interfaces::msg::Blind::SharedPtr {
+      return *std::min_element(candidates.begin(), candidates.end(),
+        [current_yaw](const rm_interfaces::msg::Blind::SharedPtr &a,
+                       const rm_interfaces::msg::Blind::SharedPtr &b) {
+          double diff_a = a->yaw * M_PI / 180.0 - current_yaw;
+          while (diff_a > M_PI) diff_a -= 2.0 * M_PI;
+          while (diff_a < -M_PI) diff_a += 2.0 * M_PI;
+          double diff_b = b->yaw * M_PI / 180.0 - current_yaw;
+          while (diff_b > M_PI) diff_b -= 2.0 * M_PI;
+          while (diff_b < -M_PI) diff_b += 2.0 * M_PI;
+          return std::abs(diff_a) < std::abs(diff_b);
+        });
+    };
+
+  RCLCPP_INFO(get_logger(),
+    "Blind selection strategy: %s", blind_selection_strategy_name_.c_str());
+}
+
+rm_interfaces::msg::Blind::SharedPtr GimbalPipelineNode::collectBlindCandidates() {
+  std::vector<rm_interfaces::msg::Blind::SharedPtr> fresh_blinds;
+  {
+    std::lock_guard<std::mutex> lock(blind_buffer_mutex_);
+    const rclcpp::Time now = this->now();
+    for (const auto &[topic, msg] : blind_latest_per_topic_) {
+      if (!msg || msg->number == "-1") continue;
+      const double age = (now - rclcpp::Time(msg->header.stamp)).seconds();
+      if (age > blind_sync_timeout_) continue;
+      fresh_blinds.push_back(msg);
+    }
+  }
+
+  if (fresh_blinds.empty()) return nullptr;
+  if (fresh_blinds.size() == 1) return fresh_blinds[0];
+
+  auto it = blind_selection_strategies_.find(blind_selection_strategy_name_);
+  if (it == blind_selection_strategies_.end()) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000,
+      "Unknown blind selection strategy '%s', using min_yaw fallback",
+      blind_selection_strategy_name_.c_str());
+    it = blind_selection_strategies_.find("min_yaw");
+  }
+  return it->second(fresh_blinds, current_yaw_);
+}
 
 void GimbalPipelineNode::publishIdleCommand() {
   gimbal_controller::GimbalControlContext context;
@@ -2368,52 +2449,11 @@ rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildGuidanceCommand(
   cmd.header.stamp = now();
   cmd.yaw = target_yaw * 180.0 / M_PI;
   cmd.yaw_diff = yaw_diff_rad * 180.0 / M_PI;
-  cmd.yaw_a = 0.0;
   cmd.pitch = target_pitch * 180.0 / M_PI;
   cmd.pitch_diff = pitch_diff_rad * 180.0 / M_PI;
-  cmd.pitch_a = 0.0;
 
-  // 引导速度平滑控制：从实测速度起步，加速度限幅，接近目标时减速至零
-  const double dt = 1.0 / control_rate_;
-
-  // 首次进入引导时，从实测角速度开始，避免速度跳变
-  if (!guidance_vel_initialized_) {
-    last_guidance_cmd_yaw_v_ = current_yaw_v_measured_;
-    last_guidance_cmd_pitch_v_ = current_pitch_v_measured_;
-    guidance_vel_initialized_ = true;
-  }
-
-  // 计算目标速度：基于匀减速停车约束 v_target = sign(err) * min(sqrt(2*a*|err|), v_max)
-  double yaw_v_limit = std::sqrt(2.0 * guidance_accel_limit_ * std::abs(yaw_diff_rad));
-  double yaw_v_target = std::copysign(std::min(yaw_v_limit, guidance_max_vel_), yaw_diff_rad);
-
-  double pitch_v_limit = std::sqrt(2.0 * guidance_accel_limit_ * std::abs(pitch_diff_rad));
-  double pitch_v_target = std::copysign(std::min(pitch_v_limit, guidance_max_vel_), pitch_diff_rad);
-
-  // 加速度限幅：平滑过渡到目标速度
-  double yaw_v_cmd = last_guidance_cmd_yaw_v_;
-  yaw_v_cmd += std::clamp(yaw_v_target - yaw_v_cmd,
-                          -guidance_accel_limit_ * dt,
-                           guidance_accel_limit_ * dt);
-  last_guidance_cmd_yaw_v_ = yaw_v_cmd;
-
-  double pitch_v_cmd = last_guidance_cmd_pitch_v_;
-  pitch_v_cmd += std::clamp(pitch_v_target - pitch_v_cmd,
-                            -guidance_accel_limit_ * dt,
-                             guidance_accel_limit_ * dt);
-  last_guidance_cmd_pitch_v_ = pitch_v_cmd;
-
-  // 转换为 deg/s 输出
-  cmd.yaw_v = yaw_v_cmd * 180.0 / M_PI;
-  cmd.pitch_v = pitch_v_cmd * 180.0 / M_PI;
-
-  // 硬件保护：硬限幅（使用原有 max_yaw_v_ / max_pitch_v_ 作为最终安全边界）
-  if (max_yaw_v_ > 0.0) {
-    cmd.yaw_v = std::clamp(cmd.yaw_v, -max_yaw_v_, max_yaw_v_);
-  }
-  if (max_pitch_v_ > 0.0) {
-    cmd.pitch_v = std::clamp(cmd.pitch_v, -max_pitch_v_, max_pitch_v_);
-  }
+  // 引导速度平滑控制：从实测速度起步，加速度限幅，全程速度限幅
+  applyGuidanceVelocitySmoothing(yaw_diff_rad, pitch_diff_rad, cmd);
 
   cmd.distance = 1.0;  // 补盲相机目标标志
   cmd.fire_advice = false;  // 引导模式不开火
@@ -2428,6 +2468,99 @@ rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildGuidanceCommand(
   }
 
   return cmd;
+}
+
+rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildBlindGuidanceCommand() {
+  rm_interfaces::msg::GimbalCmd cmd;
+
+  if (!latest_blind_msg_ || latest_blind_msg_->number == "-1") {
+    return buildNoTargetCommand();
+  }
+
+  // Convert yaw and pitch from degrees to radians
+  const double target_yaw_rad = latest_blind_msg_->yaw * M_PI / 180.0;
+  const double target_pitch_rad = latest_blind_msg_->pitch * M_PI / 180.0;
+
+  // Compute yaw and pitch differences
+  double yaw_diff_rad = target_yaw_rad - current_yaw_;
+  while (yaw_diff_rad > M_PI) yaw_diff_rad -= 2.0 * M_PI;
+  while (yaw_diff_rad < -M_PI) yaw_diff_rad += 2.0 * M_PI;
+
+  double pitch_diff_rad = target_pitch_rad - current_pitch_;
+  while (pitch_diff_rad > M_PI) pitch_diff_rad -= 2.0 * M_PI;
+  while (pitch_diff_rad < -M_PI) pitch_diff_rad += 2.0 * M_PI;
+
+  // Fill command fields
+  cmd.header.stamp = now();
+  cmd.yaw = target_yaw_rad * 180.0 / M_PI;
+  cmd.yaw_diff = yaw_diff_rad * 180.0 / M_PI;
+  cmd.pitch = target_pitch_rad * 180.0 / M_PI;
+  cmd.pitch_diff = pitch_diff_rad * 180.0 / M_PI;
+  cmd.target_id = latest_blind_msg_->number;
+  cmd.fire_advice = false;
+  cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_BLIND_CAMERA_RESULT;  // -2
+
+  // 引导速度平滑控制：从实测速度起步，加速度限幅，全程速度限幅
+  applyGuidanceVelocitySmoothing(yaw_diff_rad, pitch_diff_rad, cmd);
+
+  return cmd;
+}
+
+void GimbalPipelineNode::applyGuidanceVelocitySmoothing(
+    double yaw_diff_rad, double pitch_diff_rad,
+    rm_interfaces::msg::GimbalCmd &cmd) {
+  const double dt = 1.0 / control_rate_;
+
+  // 首次进入引导时，从实测角速度开始，避免速度跳变
+  if (!guidance_vel_initialized_) {
+    last_guidance_cmd_yaw_v_ = current_yaw_v_measured_;
+    last_guidance_cmd_pitch_v_ = current_pitch_v_measured_;
+    guidance_vel_initialized_ = true;
+  }
+
+  // 计算目标速度：基于匀减速停车约束 v_target = sign(err) * min(sqrt(2*a*|err|), v_max)
+  // 当 |err| 较小时 sqrt(2*a*|err|) < v_max，自然减速；|err| 较大时受 v_max 限幅
+  double yaw_v_limit = std::sqrt(2.0 * guidance_accel_limit_ * std::abs(yaw_diff_rad));
+  double yaw_v_target = std::copysign(std::min(yaw_v_limit, guidance_max_vel_), yaw_diff_rad);
+
+  double pitch_v_limit = std::sqrt(2.0 * guidance_accel_limit_ * std::abs(pitch_diff_rad));
+  double pitch_v_target = std::copysign(std::min(pitch_v_limit, guidance_max_vel_), pitch_diff_rad);
+
+  // 加速度限幅：平滑过渡到目标速度
+  double yaw_v_cmd = last_guidance_cmd_yaw_v_;
+  yaw_v_cmd += std::clamp(yaw_v_target - yaw_v_cmd,
+                          -guidance_accel_limit_ * dt,
+                           guidance_accel_limit_ * dt);
+
+  double pitch_v_cmd = last_guidance_cmd_pitch_v_;
+  pitch_v_cmd += std::clamp(pitch_v_target - pitch_v_cmd,
+                            -guidance_accel_limit_ * dt,
+                             guidance_accel_limit_ * dt);
+
+  last_guidance_cmd_yaw_v_ = yaw_v_cmd;
+  last_guidance_cmd_pitch_v_ = pitch_v_cmd;
+
+  // 硬件保护：硬限幅（使用原有 max_yaw_v_ / max_pitch_v_ 作为最终安全边界）
+  double yaw_v_deg = yaw_v_cmd * 180.0 / M_PI;
+  double pitch_v_deg = pitch_v_cmd * 180.0 / M_PI;
+  if (max_yaw_v_ > 0.0) {
+    yaw_v_deg = std::clamp(yaw_v_deg, -max_yaw_v_, max_yaw_v_);
+  }
+  if (max_pitch_v_ > 0.0) {
+    pitch_v_deg = std::clamp(pitch_v_deg, -max_pitch_v_, max_pitch_v_);
+  }
+
+  cmd.yaw_v = yaw_v_deg;
+  cmd.pitch_v = pitch_v_deg;
+  cmd.yaw_a = 0.0;
+  cmd.pitch_a = 0.0;
+}
+
+void GimbalPipelineNode::blindCallback(
+    const rm_interfaces::msg::Blind::SharedPtr msg,
+    const std::string &topic) {
+  std::lock_guard<std::mutex> lock(blind_buffer_mutex_);
+  blind_latest_per_topic_[topic] = msg;
 }
 
 void GimbalPipelineNode::publishGuidanceDebugMarker(

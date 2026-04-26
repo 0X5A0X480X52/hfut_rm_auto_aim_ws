@@ -50,6 +50,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SetMode.srv"
   "srv/SolveBallistic.srv"
   "srv/SetTargetRobot.srv"
+  "srv/GetCameraInfo.srv"
   "action/TrajectoryPlan.action"
   DEPENDENCIES
     std_msgs

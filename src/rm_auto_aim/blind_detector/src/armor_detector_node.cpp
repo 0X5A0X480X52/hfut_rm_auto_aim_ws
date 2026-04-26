@@ -35,7 +35,20 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
 
   // 动态获取摄像头名称前缀 (e.g., "left" or "right")
   camera_name_ = this->declare_parameter<std::string>("camera_name", "left");
-  camera_yaw_ = this->declare_parameter("camera_yaw",0.0);
+  camera_yaw_ = this->declare_parameter("camera_yaw", 0.0);
+  camera_pitch_ = this->declare_parameter("camera_pitch", 0.0);
+
+  // FOV parameters for angle estimation (still from config)
+  h_fov_ = this->declare_parameter("h_fov", 60.0);
+  v_fov_ = this->declare_parameter("v_fov", 45.0);
+
+  // Image dimensions - declare with defaults, will be overwritten by service call
+  image_width_ = this->declare_parameter("image_width", 640);
+  image_height_ = this->declare_parameter("image_height", 480);
+
+  // Create service client (actual call deferred to first image callback)
+  std::string service_name = "/" + camera_name_ + "/get_camera_info";
+  camera_info_client_ = this->create_client<rm_interfaces::srv::GetCameraInfo>(service_name);
 
   // 初始化 Detector
   detector_ = initDetector();
@@ -80,22 +93,40 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
 void ArmorDetectorNode::imageCallback(
     const sensor_msgs::msg::Image::ConstSharedPtr img_msg) {
 
+  // Lazy fetch camera info on first frame
+  if (!camera_info_fetched_) {
+    camera_info_fetched_ = fetchCameraInfoFromDriver();
+    if (!camera_info_fetched_) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                           "Camera info not available, using default %dx%d",
+                           image_width_, image_height_);
+    }
+  }
+
   // Detect armors
   auto armors = detectArmors(img_msg);
 
   // Init message
   std::string best_number = "-1";
   float best_yaw = 0.0;
+  float best_pitch = 0.0;
   float best_confi = 0.0;
 
   for (auto &armor : armors) {
     // 1. 计算目标在机器人坐标系中的yaw角
     // 公式：yaw = 相机中心yaw + (归一化位置 - 0.5) * 水平视场角
-    float normalized_x = static_cast<double>(armor.center.x) / 1600.0;
-    float yaw = camera_yaw_ - (normalized_x - 0.5) * 96.0; 
+    float normalized_x = static_cast<double>(armor.center.x) / static_cast<double>(image_width_);
+    float yaw = camera_yaw_ - (normalized_x - 0.5) * h_fov_;
+
+    // 2. 计算目标在机器人坐标系中的pitch角
+    // 公式：pitch = 相机中心pitch + (归一化位置 - 0.5) * 垂直视场角
+    // 注意：图像y轴向下，所以pitch向上为正
+    float normalized_y = static_cast<double>(armor.center.y) / static_cast<double>(image_height_);
+    float pitch = camera_pitch_ - (normalized_y - 0.5) * v_fov_;
+
     float abs_yaw = std::abs(yaw);
 
-    // 2. 优先级比较
+    // 3. 优先级比较
     bool is_better = false;
     if (best_number == "-1") { // 首次有效目标
       is_better = true;
@@ -117,17 +148,19 @@ void ArmorDetectorNode::imageCallback(
       }
     }
 
-    // 3. 更新最佳目标
+    // 4. 更新最佳目标
     if (is_better) {
       best_number = armor.classfication_result;
       best_yaw = yaw;
+      best_pitch = pitch;
       best_confi = armor.confidence; // 假设存在confidence字段
     }
   }
   blind_msg_.header = img_msg->header;
-  blind_msg_.is_left = (camera_name_ == "left")?true:false;
+  blind_msg_.is_left = (camera_name_ == "left") ? true : false;
   blind_msg_.number = best_number;
   blind_msg_.yaw = best_yaw;
+  blind_msg_.pitch = best_pitch;
   blind_msg_.confi = best_confi;
   blind_pub_->publish(blind_msg_);
 }
@@ -343,6 +376,36 @@ void ArmorDetectorNode::setModeCallback(
   }
 
   FYT_WARN("blind_detector", "Set mode to {}", mode_name);
+}
+
+bool ArmorDetectorNode::fetchCameraInfoFromDriver() {
+  if (!camera_info_client_ || !camera_info_client_->service_is_ready()) {
+    return false;
+  }
+
+  auto request = std::make_shared<rm_interfaces::srv::GetCameraInfo::Request>();
+
+  // Use async call with callback to avoid blocking in multi-threaded executor
+  std::promise<bool> promise;
+  auto future = promise.get_future();
+
+  camera_info_client_->async_send_request(request,
+    [this, &promise](rclcpp::Client<rm_interfaces::srv::GetCameraInfo>::SharedFuture future) {
+      auto response = future.get();
+      image_width_ = response->width;
+      image_height_ = response->height;
+      FYT_INFO("blind_detector", "Fetched camera info: {}x{}", image_width_, image_height_);
+      promise.set_value(true);
+    });
+
+  // Wait with timeout
+  auto status = future.wait_for(std::chrono::seconds(2));
+  if (status != std::future_status::ready) {
+    FYT_ERROR("blind_detector", "Camera info service call timeout");
+    return false;
+  }
+
+  return future.get();
 }
 
 } // namespace fyt::auto_aim
