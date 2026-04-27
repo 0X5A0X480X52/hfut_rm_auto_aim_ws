@@ -9,6 +9,7 @@
 #include "gimbal_pipeline/gimbal_pipeline_node.hpp"
 
 #include <cmath>
+#include <initializer_list>
 #include <limits>
 #include <rm_utils/heartbeat.hpp>
 #include <sstream>
@@ -166,6 +167,103 @@ bool readCompatBoolParameter(
   return canonical_value;
 }
 
+double readUnifiedDoubleParameter(
+  rclcpp::Node & node,
+  const std::string & canonical_key,
+  const std::initializer_list<std::string> & fallback_keys,
+  double conflict_eps = 1e-9)
+{
+  const double canonical_value = node.get_parameter(canonical_key).as_double();
+  const bool canonical_overridden = hasParameterOverride(node, canonical_key);
+
+  if (canonical_overridden) {
+    for (const auto & fallback_key : fallback_keys) {
+      if (!hasParameterOverride(node, fallback_key)) {
+        continue;
+      }
+      const double fallback_value = node.get_parameter(fallback_key).as_double();
+      if (std::abs(canonical_value - fallback_value) > conflict_eps &&
+        shouldWarnDeprecatedOnce(fallback_key))
+      {
+        RCLCPP_WARN(
+          node.get_logger(),
+          "Both '%s' and compatibility key '%s' are set with different values "
+          "(canonical=%.6f, compatibility=%.6f). Canonical value will be used.",
+          canonical_key.c_str(),
+          fallback_key.c_str(),
+          canonical_value,
+          fallback_value);
+      }
+    }
+    return canonical_value;
+  }
+
+  for (const auto & fallback_key : fallback_keys) {
+    if (!hasParameterOverride(node, fallback_key)) {
+      continue;
+    }
+    const double fallback_value = node.get_parameter(fallback_key).as_double();
+    if (shouldWarnDeprecatedOnce(fallback_key)) {
+      RCLCPP_WARN(
+        node.get_logger(),
+        "Parameter '%s' is preferred; applying compatibility key '%s' value: %.6f",
+        canonical_key.c_str(),
+        fallback_key.c_str(),
+        fallback_value);
+    }
+    return fallback_value;
+  }
+
+  return canonical_value;
+}
+
+int readUnifiedIntParameter(
+  rclcpp::Node & node,
+  const std::string & canonical_key,
+  const std::initializer_list<std::string> & fallback_keys)
+{
+  const int canonical_value = node.get_parameter(canonical_key).as_int();
+  const bool canonical_overridden = hasParameterOverride(node, canonical_key);
+
+  if (canonical_overridden) {
+    for (const auto & fallback_key : fallback_keys) {
+      if (!hasParameterOverride(node, fallback_key)) {
+        continue;
+      }
+      const int fallback_value = node.get_parameter(fallback_key).as_int();
+      if (canonical_value != fallback_value && shouldWarnDeprecatedOnce(fallback_key)) {
+        RCLCPP_WARN(
+          node.get_logger(),
+          "Both '%s' and compatibility key '%s' are set with different values "
+          "(canonical=%d, compatibility=%d). Canonical value will be used.",
+          canonical_key.c_str(),
+          fallback_key.c_str(),
+          canonical_value,
+          fallback_value);
+      }
+    }
+    return canonical_value;
+  }
+
+  for (const auto & fallback_key : fallback_keys) {
+    if (!hasParameterOverride(node, fallback_key)) {
+      continue;
+    }
+    const int fallback_value = node.get_parameter(fallback_key).as_int();
+    if (shouldWarnDeprecatedOnce(fallback_key)) {
+      RCLCPP_WARN(
+        node.get_logger(),
+        "Parameter '%s' is preferred; applying compatibility key '%s' value: %d",
+        canonical_key.c_str(),
+        fallback_key.c_str(),
+        fallback_value);
+    }
+    return fallback_value;
+  }
+
+  return canonical_value;
+}
+
 }  // namespace
 
 namespace fyt::auto_aim {
@@ -288,8 +386,17 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   double shooting_range_h = get_parameter("controller.solver.shooting_range_height").as_double();
   double side_angle = get_parameter("controller.solver.side_angle").as_double();
   double min_switching_v_yaw = get_parameter("controller.solver.min_switching_v_yaw").as_double();
-  double prediction_delay = readCompatDoubleParameter(
-    *this, "controller.solver.prediction_delay", "solver.prediction_delay");
+  double prediction_delay = readUnifiedDoubleParameter(
+    *this,
+    "controller.delay.prediction_extra_s",
+    {
+      "controller.solver.prediction_delay",
+      "solver.prediction_delay",
+      "controller.state_machine.prediction_delay",
+      "state_machine.prediction_delay",
+      "controller.mpc.prediction_delay_s",
+      "mpc.prediction_delay_s"
+    });
   double max_prediction_time = readCompatDoubleParameter(
     *this, "controller.solver.max_prediction_time", "solver.max_prediction_time");
   double max_tracking_v_yaw = get_parameter("controller.solver.max_tracking_v_yaw").as_double();
@@ -317,22 +424,62 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   int virtual_auto_switch_fixed_id =
     get_parameter("controller.solver.virtual_pose.auto_switch.fixed_id").as_int();
   int virtual_fixed_id = get_parameter("controller.solver.virtual_pose.fixed_id").as_int();
-  double controller_delay = readCompatDoubleParameter(
-    *this, "controller.solver.controller_delay", "solver.controller_delay");
-  double trigger_to_muzzle_s = readCompatDoubleParameter(
-    *this, "controller.solver.trigger_to_muzzle_s", "solver.trigger_to_muzzle_s");
-  if (hasParameterOverride(*this, "controller.fire.trigger_to_muzzle_s")) {
-    trigger_to_muzzle_s = get_parameter("controller.fire.trigger_to_muzzle_s").as_double();
-  }
-  double max_processing_delay_s = readCompatDoubleParameter(
-    *this, "controller.mpc.max_processing_delay_s", "mpc.max_processing_delay_s");
+  double controller_delay = readUnifiedDoubleParameter(
+    *this,
+    "controller.delay.control_latency_s",
+    {
+      "controller.solver.controller_delay",
+      "solver.controller_delay",
+      "controller.mpc.control_delay_s",
+      "mpc.control_delay_s"
+    });
+  double trigger_to_muzzle_s = readUnifiedDoubleParameter(
+    *this,
+    "controller.delay.trigger_to_muzzle_s",
+    {
+      "controller.fire.trigger_to_muzzle_s",
+      "controller.solver.trigger_to_muzzle_s",
+      "solver.trigger_to_muzzle_s"
+    });
+  double max_processing_delay_s = readUnifiedDoubleParameter(
+    *this,
+    "controller.delay.max_processing_delay_s",
+    {
+      "controller.mpc.max_processing_delay_s",
+      "mpc.max_processing_delay_s"
+    });
   std::string selection_method_str = get_parameter("controller.solver.selection_method").as_string();
   std::string fire_policy = get_parameter("controller.fire.decision_policy").as_string();
-  int fire_flight_time_iters = get_parameter("controller.fire.flight_time_iters").as_int();
+  int fire_flight_time_iters = readUnifiedIntParameter(
+    *this,
+    "controller.delay.flight_time_iters",
+    {
+      "controller.fire.flight_time_iters",
+      "controller.mpc.flight_time_iters",
+      "mpc.flight_time_iters"
+    });
   double fire_facing_filter_opening_angle_deg =
     get_parameter("controller.fire.facing_filter_opening_angle_deg").as_double();
   bool fire_use_gimbal_kinematics =
     get_parameter("controller.fire.use_gimbal_kinematics").as_bool();
+  const std::string fire_target_visibility_policy =
+    get_parameter("controller.fire.target_visibility_policy").as_string();
+
+  if (fire_target_visibility_policy == "facing_only") {
+    const bool opening_overridden =
+      hasParameterOverride(*this, "controller.fire.facing_filter_opening_angle_deg");
+    if (!opening_overridden || fire_facing_filter_opening_angle_deg >= 180.0 - 1e-9) {
+      fire_facing_filter_opening_angle_deg = std::clamp(2.0 * facing_exit_angle, 0.0, 180.0);
+    }
+  } else if (fire_target_visibility_policy == "legacy_all") {
+    fire_facing_filter_opening_angle_deg = 180.0;
+  } else {
+    RCLCPP_WARN(
+      get_logger(),
+      "Unknown controller.fire.target_visibility_policy='%s', fallback to facing_only.",
+      fire_target_visibility_policy.c_str());
+    fire_facing_filter_opening_angle_deg = std::clamp(2.0 * facing_exit_angle, 0.0, 180.0);
+  }
 
   facing_enter_angle_deg_ = facing_enter_angle;
   facing_exit_angle_deg_ = facing_exit_angle;
@@ -385,6 +532,20 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   radial_selection_enabled_ =
     (sel_method == gimbal_controller::ArmorSelector::SelectionMethod::MIN_MOVEMENT_WITH_RADIAL);
   RCLCPP_INFO(get_logger(), "[GimbalController] selection_method: %s", selection_method_str.c_str());
+  RCLCPP_INFO(
+    get_logger(),
+    "[DelayUnified] pred_extra=%.4fs ctrl_latency=%.4fs trig2muzzle=%.4fs max_proc=%.4fs iters=%d",
+    prediction_delay,
+    controller_delay,
+    trigger_to_muzzle_s,
+    max_processing_delay_s,
+    fire_flight_time_iters);
+  RCLCPP_INFO(
+    get_logger(),
+    "[FireVisibility] policy=%s opening=%.2fdeg use_kinematics=%s",
+    fire_target_visibility_policy.c_str(),
+    fire_facing_filter_opening_angle_deg,
+    fire_use_gimbal_kinematics ? "true" : "false");
 
   fire_advisor_->setParameters(shooting_range_w, shooting_range_h);
   if (fire_policy == "ellipse") {
@@ -474,10 +635,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   int sm_spin_enter = get_parameter("controller.state_machine.spin_enter_count").as_int();
   int sm_spin_exit = get_parameter("controller.state_machine.spin_exit_count").as_int();
   double sm_side_angle = get_parameter("controller.state_machine.side_angle").as_double();
-  double sm_prediction_delay = readCompatDoubleParameter(
-    *this,
-    "controller.state_machine.prediction_delay",
-    "state_machine.prediction_delay");
+  double sm_prediction_delay = prediction_delay;
   double sm_max_prediction = readCompatDoubleParameter(
     *this,
     "controller.state_machine.max_prediction_time",
@@ -878,11 +1036,20 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.solver.controller_delay", 0.0);
   declare_parameter("controller.solver.trigger_to_muzzle_s", 0.0);
   declare_parameter("controller.solver.selection_method", std::string("min_movement_with_facing"));
+
+  // Unified delay parameters (preferred)
+  declare_parameter("controller.delay.prediction_extra_s", 0.0);
+  declare_parameter("controller.delay.control_latency_s", 0.0);
+  declare_parameter("controller.delay.trigger_to_muzzle_s", 0.0);
+  declare_parameter("controller.delay.max_processing_delay_s", 0.5);
+  declare_parameter("controller.delay.flight_time_iters", 2);
+
   declare_parameter("controller.fire.trigger_to_muzzle_s", 0.0);
   declare_parameter("controller.fire.decision_policy", std::string("axis_threshold"));
   declare_parameter("controller.fire.flight_time_iters", 2);
   declare_parameter("controller.fire.facing_filter_opening_angle_deg", 180.0);
   declare_parameter("controller.fire.use_gimbal_kinematics", false);
+  declare_parameter("controller.fire.target_visibility_policy", std::string("facing_only"));
 
   // Deprecated aliases (for migration from legacy gimbal_controller keys)
   declare_parameter("solver.prediction_delay", 0.0);
@@ -1873,21 +2040,49 @@ void GimbalPipelineNode::initGimbalStrategies() {
   mpc_s->setBallisticMode(ballistic_mode_);
   mpc_s->initReferenceGenerator();
 
-  const double mpc_control_delay_s = readCompatDoubleParameter(
-    *this, "controller.mpc.control_delay_s", "mpc.control_delay_s");
+  const double mpc_control_delay_s = readUnifiedDoubleParameter(
+    *this,
+    "controller.delay.control_latency_s",
+    {
+      "controller.mpc.control_delay_s",
+      "mpc.control_delay_s",
+      "controller.solver.controller_delay",
+      "solver.controller_delay"
+    });
   const bool mpc_enable_delay_compensation = readCompatBoolParameter(
     *this, "controller.mpc.enable_delay_compensation", "mpc.enable_delay_compensation");
-  const double mpc_prediction_delay_s = readCompatDoubleParameter(
-    *this, "controller.mpc.prediction_delay_s", "mpc.prediction_delay_s");
-  double mpc_trigger_to_muzzle_s = readCompatDoubleParameter(
-    *this, "controller.solver.trigger_to_muzzle_s", "solver.trigger_to_muzzle_s");
-  if (hasParameterOverride(*this, "controller.fire.trigger_to_muzzle_s")) {
-    mpc_trigger_to_muzzle_s = get_parameter("controller.fire.trigger_to_muzzle_s").as_double();
-  }
-  const int mpc_flight_time_iters = readCompatIntParameter(
-    *this, "controller.mpc.flight_time_iters", "mpc.flight_time_iters");
-  const double mpc_max_processing_delay_s = readCompatDoubleParameter(
-    *this, "controller.mpc.max_processing_delay_s", "mpc.max_processing_delay_s");
+  const double mpc_prediction_delay_s = readUnifiedDoubleParameter(
+    *this,
+    "controller.delay.prediction_extra_s",
+    {
+      "controller.mpc.prediction_delay_s",
+      "mpc.prediction_delay_s",
+      "controller.solver.prediction_delay",
+      "solver.prediction_delay"
+    });
+  const double mpc_trigger_to_muzzle_s = readUnifiedDoubleParameter(
+    *this,
+    "controller.delay.trigger_to_muzzle_s",
+    {
+      "controller.fire.trigger_to_muzzle_s",
+      "controller.solver.trigger_to_muzzle_s",
+      "solver.trigger_to_muzzle_s"
+    });
+  const int mpc_flight_time_iters = readUnifiedIntParameter(
+    *this,
+    "controller.delay.flight_time_iters",
+    {
+      "controller.mpc.flight_time_iters",
+      "mpc.flight_time_iters",
+      "controller.fire.flight_time_iters"
+    });
+  const double mpc_max_processing_delay_s = readUnifiedDoubleParameter(
+    *this,
+    "controller.delay.max_processing_delay_s",
+    {
+      "controller.mpc.max_processing_delay_s",
+      "mpc.max_processing_delay_s"
+    });
 
   mpc_s->setMpcParameters(
     get_parameter("controller.mpc.N").as_int(),

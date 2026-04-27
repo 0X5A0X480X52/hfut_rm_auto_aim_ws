@@ -213,6 +213,14 @@ gimbal_pipeline:
     controller.strategy: "mpc"    # "current" | "predicted" | "mpc" | "state_machine"
     controller.ballistic_mode: "local"  # "service" | "local"
 
+    # Unified delay parameters (preferred)
+    # 说明：优先使用 controller.delay.*，其余 solver/mpc/fire 下的同语义参数仅保留兼容。
+    controller.delay.prediction_extra_s: 0.100
+    controller.delay.control_latency_s: 0.00
+    controller.delay.trigger_to_muzzle_s: 0.160
+    controller.delay.max_processing_delay_s: 0.5
+    controller.delay.flight_time_iters: 2
+
     controller.solver.shooting_range_width: 0.1
     controller.solver.shooting_range_height: 0.1
     controller.solver.side_angle: 15.0
@@ -256,6 +264,10 @@ gimbal_pipeline:
     controller.fire.decision_policy: "axis_threshold" # 开火决策策略
     controller.fire.flight_time_iters: 2               # 飞行时间迭代次数
     controller.fire.use_gimbal_kinematics: false      # 使用云台运动学补偿
+    # 目标可打性策略：
+    #   facing_only: 仅允许朝向可打候选触发 fire=true（推荐）
+    #   legacy_all : 兼容旧行为，所有候选都可触发 fire=true
+    controller.fire.target_visibility_policy: "facing_only"
     # FireAdvice 装甲板朝向过滤开角（度）
     # 定义：装甲板法向与“装甲板 -> 枪口(坐标原点)”夹角的允许全开角。
     #   180.0: 不过滤（兼容旧行为）

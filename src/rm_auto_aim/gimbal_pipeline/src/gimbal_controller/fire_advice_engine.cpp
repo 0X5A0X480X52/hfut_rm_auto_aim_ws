@@ -36,6 +36,20 @@ constexpr double kMinDistance = 1e-3;
 constexpr double kMinBulletSpeed = 1e-3;
 constexpr double kDeg2Rad = M_PI / 180.0;
 
+double computeFacingCos(
+  const Eigen::Vector3d & center_position,
+  const Eigen::Vector3d & armor_position)
+{
+  const Eigen::Vector3d armor_normal = armor_position - center_position;
+  const Eigen::Vector3d armor_to_muzzle = -armor_position;
+  const double normal_norm = armor_normal.norm();
+  const double to_muzzle_norm = armor_to_muzzle.norm();
+  if (normal_norm <= kMinDistance || to_muzzle_norm <= kMinDistance) {
+    return 1.0;
+  }
+  return armor_normal.dot(armor_to_muzzle) / (normal_norm * to_muzzle_norm);
+}
+
 }  // namespace
 
 void CandidateImpactSolver::setFacingFilterOpeningAngleDeg(double opening_angle_deg)
@@ -248,21 +262,13 @@ std::vector<CandidateImpactSolution> CandidateImpactSolver::solve(
 
   results.reserve(base_positions.size());
   for (int i = 0; i < static_cast<int>(base_positions.size()); ++i) {
-    if (facing_filter_enabled_) {
-      const Eigen::Vector3d armor_normal = base_positions[i] - center_position;
-      const Eigen::Vector3d armor_to_muzzle = -base_positions[i];
-      const double normal_norm = armor_normal.norm();
-      const double to_muzzle_norm = armor_to_muzzle.norm();
-      if (normal_norm > kMinDistance && to_muzzle_norm > kMinDistance) {
-        const double facing_cos = armor_normal.dot(armor_to_muzzle) / (normal_norm * to_muzzle_norm);
-        if (facing_cos < facing_filter_cos_threshold_) {
-          continue;
-        }
-      }
-    }
+    const double facing_cos = computeFacingCos(center_position, base_positions[i]);
+    const bool facing_ok = !facing_filter_enabled_ || (facing_cos >= facing_filter_cos_threshold_);
 
     auto solution = solveSingleCandidate(robot, i, request, timeline, flight_time_iters);
     if (solution.valid) {
+      solution.facing_cos = facing_cos;
+      solution.facing_ok = facing_ok;
       results.push_back(solution);
     }
   }
@@ -317,8 +323,17 @@ FireAdviceEngineResult FireAdviceEngine::evaluate(const FireAdviceEngineRequest 
     candidate.yaw_error = eval.yaw_diff;
     candidate.pitch_error = eval.pitch_diff;
     candidate.confidence = eval.confidence;
-    candidate.fire = eval.fire;
+    candidate.facing_cos = impact.facing_cos;
+    candidate.facing_ok = impact.facing_ok;
+    candidate.fire = eval.fire && impact.facing_ok;
     result.candidates.push_back(candidate);
+
+    ++result.candidate_count_total;
+    if (impact.facing_ok) {
+      ++result.candidate_count_facing_eligible;
+    } else {
+      ++result.candidate_count_facing_rejected;
+    }
 
     if (!has_best) {
       has_best = true;

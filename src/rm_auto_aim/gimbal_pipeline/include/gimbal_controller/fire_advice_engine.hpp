@@ -75,6 +75,8 @@ struct FireAdviceCandidateResult
   double yaw_error{0.0};
   double pitch_error{0.0};
   double confidence{0.0};
+  double facing_cos{1.0};
+  bool facing_ok{true};
   bool fire{false};
 };
 
@@ -87,6 +89,9 @@ struct FireAdviceEngineResult
   double pitch_error{0.0};
   double distance{0.0};
   double confidence{0.0};
+  int candidate_count_total{0};
+  int candidate_count_facing_eligible{0};
+  int candidate_count_facing_rejected{0};
   delay_management::FireTimelineResult timeline;
   std::vector<FireAdviceCandidateResult> candidates;
 };
@@ -123,6 +128,8 @@ struct CandidateImpactSolution
   double flight_time_s{0.0};
   double target_yaw{0.0};
   double target_pitch{0.0};
+  double facing_cos{1.0};
+  bool facing_ok{true};
 };
 
 class CandidateImpactSolver
