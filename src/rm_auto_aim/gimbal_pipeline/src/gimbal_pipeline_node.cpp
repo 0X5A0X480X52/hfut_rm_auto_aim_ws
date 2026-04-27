@@ -288,7 +288,6 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   max_yaw_v_ = get_parameter("controller.max_yaw_v").as_double();
   max_pitch_v_ = get_parameter("controller.max_pitch_v").as_double();
   guidance_accel_limit_ = get_parameter("controller.guidance_accel_limit").as_double();
-  guidance_max_vel_ = get_parameter("controller.guidance_max_vel").as_double();
 
   // TF2 buffer was already created above (shared with TFHandler & MessageFilter).
 
@@ -853,7 +852,6 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.max_yaw_v", 90.0);
   declare_parameter("controller.max_pitch_v", 30.0);
   declare_parameter("controller.guidance_accel_limit", 10.0);  // 引导模式角加速度限幅 (rad/s²)
-  declare_parameter("controller.guidance_max_vel", 3.0);       // 引导模式最大角速度 (rad/s)
 
   // Solver
   declare_parameter("controller.solver.shooting_range_width", 0.135);
@@ -1832,18 +1830,27 @@ SelectionResult GimbalPipelineNode::selectTargetInternal(
       }
     }
 
-    // 检查引导是否结束
+    // 检查引导是否结束（含超时检测）
     if (checkGuidanceComplete(guidance_target)) {
       guidance_state_ = GuidanceState::IDLE;
+      guidance_target_locked_ = false;
       // Fall through 继续后续逻辑
-    } else if (!blind_camera_targets.empty()) {
-      // 继续引导：选择最近的补盲相机目标
-      const auto* nearest = selectNearestTarget(blind_camera_targets);
-      if (nearest) {
-        auto result = buildGuidanceResult(*nearest);
-        current_target_id_ = result.robot_id;
-        return result;
-      }
+    } else if (guidance_target_locked_) {
+      // 继续引导：使用锁定的 yaw/pitch，即使补盲目标暂时丢失也不中断
+      SelectionResult result;
+      result.robot_id = current_target_id_;
+      result.control_mode = SelectionResult::MODE_GUIDANCE;
+      result.source_frame = selection_config_.blind_camera_frame;
+      double locked_yaw_rad = guidance_locked_yaw_deg_ * M_PI / 180.0;
+      double yaw_err = locked_yaw_rad - current_yaw_;
+      while (yaw_err > M_PI) yaw_err -= 2.0 * M_PI;
+      while (yaw_err < -M_PI) yaw_err += 2.0 * M_PI;
+      result.yaw_deviation = std::abs(yaw_err);
+      result.distance =
+          guidance_target ? robot_description::TrackedRobotUsage::centerDistance(*guidance_target) : 1.0;
+      result.confidence =
+          guidance_target ? guidance_target->confidence : 0.5;
+      return result;
     } else {
       guidance_state_ = GuidanceState::IDLE;
     }
@@ -1880,8 +1887,22 @@ SelectionResult GimbalPipelineNode::selectTargetInternal(
       guidance_state_ = GuidanceState::ROTATING;
       guidance_start_time_ = this->now();
       guidance_vel_initialized_ = false;  // 下个周期从实测速度重新初始化引导速度指令
-      RCLCPP_INFO(get_logger(), "Guidance started: target %s from blind camera (dist=%.2f)",
-                  result.robot_id.c_str(), result.distance);
+
+      // 锁定第一帧的 yaw/pitch，后续引导过程保持不变
+      const auto & center =
+          robot_description::TrackedRobotUsage::centerPosition(*nearest);
+      guidance_locked_yaw_deg_ =
+          std::atan2(center.y(), center.x()) * 180.0 / M_PI;
+      guidance_locked_pitch_deg_ =
+          std::atan2(center.z(),
+                     std::sqrt(center.x() * center.x() + center.y() * center.y())) *
+          180.0 / M_PI;
+      guidance_target_locked_ = true;
+
+      RCLCPP_INFO(get_logger(),
+                  "Guidance started: target %s (locked yaw=%.1f, pitch=%.1f, dist=%.2f)",
+                  result.robot_id.c_str(), guidance_locked_yaw_deg_.load(),
+                  guidance_locked_pitch_deg_.load(), result.distance);
       current_target_id_ = result.robot_id;
       return result;
     }
@@ -1890,6 +1911,7 @@ SelectionResult GimbalPipelineNode::selectTargetInternal(
   // Step 5: 无目标
   current_target_id_ = "";
   guidance_state_ = GuidanceState::IDLE;
+  guidance_target_locked_ = false;
   return SelectionResult();
 }
 
@@ -1946,7 +1968,12 @@ bool GimbalPipelineNode::checkGuidanceComplete(const rm_interfaces::msg::Tracked
   bool timeout = enable_guidance_timeout_ && (elapsed > GUIDANCE_TIMEOUT);
 
   double yaw_deviation = M_PI;
-  if (robot) {
+  if (guidance_target_locked_) {
+    // 基于锁定值计算偏差，不受目标短暂丢失或移动影响
+    double locked_yaw_rad = guidance_locked_yaw_deg_ * M_PI / 180.0;
+    yaw_deviation = std::abs(locked_yaw_rad - current_yaw_);
+    while (yaw_deviation > M_PI) yaw_deviation = 2.0 * M_PI - yaw_deviation;
+  } else if (robot) {
     yaw_deviation = calculateYawDeviation(*robot);
   }
 
@@ -2337,25 +2364,34 @@ void GimbalPipelineNode::timerCallback() {
 
   switch (control_mode) {
     case SelectionResult::MODE_GUIDANCE:
+      blind_guidance_active_ = false;
       cmd = buildGuidanceCommand(context);
       break;
     case SelectionResult::MODE_NO_TARGET:
       {
-        auto best_blind = collectBlindCandidates();
-        if (best_blind) {
-          if (!blind_guidance_active_) {
-            blind_guidance_active_ = true;
-            guidance_vel_initialized_ = false;
-          }
-          latest_blind_msg_ = best_blind;
+        // 已锁定引导目标 → 跳过候选收集，直接用锁定值，避免覆盖 latest_blind_msg_
+        if (guidance_target_locked_) {
           cmd = buildBlindGuidanceCommand();
         } else {
-          blind_guidance_active_ = false;
-          cmd = buildNoTargetCommand();
+          auto best_blind = collectBlindCandidates();
+          if (best_blind) {
+            if (!blind_guidance_active_) {
+              blind_guidance_active_ = true;
+              guidance_vel_initialized_ = false;
+              guidance_start_time_ = this->now();  // Path 2 引导开始时间
+            }
+            latest_blind_msg_ = best_blind;
+            cmd = buildBlindGuidanceCommand();
+          } else {
+            blind_guidance_active_ = false;
+            cmd = buildNoTargetCommand();
+          }
         }
       }
       break;
     default:
+      blind_guidance_active_ = false;
+      guidance_target_locked_ = false;
       cmd = buildNormalCommand(context, selected_id);
       break;
   }
@@ -2430,26 +2466,37 @@ rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildGuidanceCommand(
     const gimbal_controller::GimbalControlContext &context) {
   rm_interfaces::msg::GimbalCmd cmd;
 
-  const auto& robot = context.target_robot;
-  const auto center = robot_description::TrackedRobotUsage::centerPosition(robot);
+  double target_yaw_deg, target_pitch_deg;
 
-  // 计算目标相对于云台的 yaw 角和 pitch 角
-  const double target_yaw = std::atan2(center.y(), center.x());
-  double yaw_diff_rad = target_yaw - current_yaw_;
+  if (guidance_target_locked_) {
+    // 使用锁定的 yaw/pitch，避免引导过程中目标角度跳变
+    target_yaw_deg = guidance_locked_yaw_deg_;
+    target_pitch_deg = guidance_locked_pitch_deg_;
+  } else {
+    const auto& robot = context.target_robot;
+    const auto center = robot_description::TrackedRobotUsage::centerPosition(robot);
+    target_yaw_deg = std::atan2(center.y(), center.x()) * 180.0 / M_PI;
+    target_pitch_deg = std::atan2(
+        center.z(), std::sqrt(center.x() * center.x() + center.y() * center.y())) * 180.0 / M_PI;
+  }
+
+  // 计算相对于当前云台的 yaw/pitch 偏差（每帧实时更新）
+  const double target_yaw_rad = target_yaw_deg * M_PI / 180.0;
+  const double target_pitch_rad = target_pitch_deg * M_PI / 180.0;
+
+  double yaw_diff_rad = target_yaw_rad - current_yaw_;
   while (yaw_diff_rad > M_PI) yaw_diff_rad -= 2.0 * M_PI;
   while (yaw_diff_rad < -M_PI) yaw_diff_rad += 2.0 * M_PI;
 
-  const double target_pitch = std::atan2(
-    center.z(), std::sqrt(center.x() * center.x() + center.y() * center.y()));
-  double pitch_diff_rad = target_pitch - current_pitch_;
+  double pitch_diff_rad = target_pitch_rad - current_pitch_;
   while (pitch_diff_rad > M_PI) pitch_diff_rad -= 2.0 * M_PI;
   while (pitch_diff_rad < -M_PI) pitch_diff_rad += 2.0 * M_PI;
 
   // 填充命令字段（角度制，与精确自瞄模式一致）
   cmd.header.stamp = now();
-  cmd.yaw = target_yaw * 180.0 / M_PI;
+  cmd.yaw = target_yaw_deg;
   cmd.yaw_diff = yaw_diff_rad * 180.0 / M_PI;
-  cmd.pitch = target_pitch * 180.0 / M_PI;
+  cmd.pitch = target_pitch_deg;
   cmd.pitch_diff = pitch_diff_rad * 180.0 / M_PI;
 
   // 引导速度平滑控制：从实测速度起步，加速度限幅，全程速度限幅
@@ -2457,14 +2504,17 @@ rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildGuidanceCommand(
 
   cmd.distance = 1.0;  // 补盲相机目标标志
   cmd.fire_advice = false;  // 引导模式不开火
-  cmd.target_id = robot.robot_id;
+  cmd.target_id = context.target_robot.robot_id.empty() ? current_target_id_ : context.target_robot.robot_id;
   cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_BLIND_CAMERA_RESULT;  // -2
 
   if (debug_mode_) {
     RCLCPP_DEBUG(get_logger(),
       "Guidance mode: target_yaw=%.2f deg, current_yaw=%.2f deg, diff=%.2f deg",
       cmd.yaw, current_yaw_ * 180.0 / M_PI, cmd.yaw_diff);
-    publishGuidanceDebugMarker(robot, center);
+    if (!context.target_robot.robot_id.empty()) {
+      publishGuidanceDebugMarker(context.target_robot,
+        robot_description::TrackedRobotUsage::centerPosition(context.target_robot));
+    }
   }
 
   return cmd;
@@ -2473,15 +2523,52 @@ rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildGuidanceCommand(
 rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildBlindGuidanceCommand() {
   rm_interfaces::msg::GimbalCmd cmd;
 
-  if (!latest_blind_msg_ || latest_blind_msg_->number == "-1") {
+  // 检查引导是否完成（基于锁定 yaw 偏差 + 超时）
+  if (guidance_target_locked_) {
+    double elapsed = (this->now() - guidance_start_time_).seconds();
+    bool timeout = enable_guidance_timeout_ && (elapsed > GUIDANCE_TIMEOUT);
+
+    double locked_yaw_rad = guidance_locked_yaw_deg_ * M_PI / 180.0;
+    double yaw_dev = std::abs(locked_yaw_rad - current_yaw_);
+    while (yaw_dev > M_PI) yaw_dev = 2.0 * M_PI - yaw_dev;
+    double threshold_rad = guidance_end_yaw_threshold_deg_ * M_PI / 180.0;
+    bool complete = (yaw_dev < threshold_rad);
+
+    if (timeout || complete) {
+      blind_guidance_active_ = false;
+      guidance_target_locked_ = false;
+      if (timeout) {
+        RCLCPP_WARN(get_logger(), "Blind guidance timeout (%.1fs)", elapsed);
+      } else {
+        RCLCPP_INFO(get_logger(), "Blind guidance complete (yaw_dev=%.2f deg)",
+                    yaw_dev * 180.0 / M_PI);
+      }
+      return buildNoTargetCommand();
+    }
+  }
+
+  // 第一帧锁定 yaw/pitch，后续保持锁定值不变
+  if (!guidance_target_locked_ && latest_blind_msg_ && latest_blind_msg_->number != "-1") {
+    guidance_locked_yaw_deg_ = latest_blind_msg_->yaw;
+    guidance_locked_pitch_deg_ = latest_blind_msg_->pitch;
+    guidance_target_locked_ = true;
+    current_target_id_ = latest_blind_msg_->number;
+    RCLCPP_INFO(get_logger(),
+                "Blind guidance started: target %s (locked yaw=%.1f, pitch=%.1f)",
+                current_target_id_.c_str(), guidance_locked_yaw_deg_.load(),
+                guidance_locked_pitch_deg_.load());
+  }
+
+  // 无有效消息且未锁定 → 无法引导
+  if (!guidance_target_locked_) {
     return buildNoTargetCommand();
   }
 
-  // Convert yaw and pitch from degrees to radians
-  const double target_yaw_rad = latest_blind_msg_->yaw * M_PI / 180.0;
-  const double target_pitch_rad = latest_blind_msg_->pitch * M_PI / 180.0;
+  // 使用锁定的目标角度（即使最新 blind msg 暂时无效也不中断引导）
+  const double target_yaw_rad = guidance_locked_yaw_deg_ * M_PI / 180.0;
+  const double target_pitch_rad = guidance_locked_pitch_deg_ * M_PI / 180.0;
 
-  // Compute yaw and pitch differences
+  // 计算相对于当前云台的 yaw/pitch 偏差（每帧实时更新）
   double yaw_diff_rad = target_yaw_rad - current_yaw_;
   while (yaw_diff_rad > M_PI) yaw_diff_rad -= 2.0 * M_PI;
   while (yaw_diff_rad < -M_PI) yaw_diff_rad += 2.0 * M_PI;
@@ -2496,7 +2583,7 @@ rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildBlindGuidanceCommand() {
   cmd.yaw_diff = yaw_diff_rad * 180.0 / M_PI;
   cmd.pitch = target_pitch_rad * 180.0 / M_PI;
   cmd.pitch_diff = pitch_diff_rad * 180.0 / M_PI;
-  cmd.target_id = latest_blind_msg_->number;
+  cmd.target_id = latest_blind_msg_ ? latest_blind_msg_->number : current_target_id_;
   cmd.fire_advice = false;
   cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_BLIND_CAMERA_RESULT;  // -2
 
@@ -2518,13 +2605,13 @@ void GimbalPipelineNode::applyGuidanceVelocitySmoothing(
     guidance_vel_initialized_ = true;
   }
 
-  // 计算目标速度：基于匀减速停车约束 v_target = sign(err) * min(sqrt(2*a*|err|), v_max)
-  // 当 |err| 较小时 sqrt(2*a*|err|) < v_max，自然减速；|err| 较大时受 v_max 限幅
-  double yaw_v_limit = std::sqrt(2.0 * guidance_accel_limit_ * std::abs(yaw_diff_rad));
-  double yaw_v_target = std::copysign(std::min(yaw_v_limit, guidance_max_vel_), yaw_diff_rad);
+  // 计算目标速度：基于匀减速停车约束 v_target = sign(err) * sqrt(2*a*|err|)
+  // 当 |err| 减小时 sqrt(2*a*|err|) 自然减小，实现平滑减速停车
+  double yaw_v_target = std::copysign(
+      std::sqrt(2.0 * guidance_accel_limit_ * std::abs(yaw_diff_rad)), yaw_diff_rad);
 
-  double pitch_v_limit = std::sqrt(2.0 * guidance_accel_limit_ * std::abs(pitch_diff_rad));
-  double pitch_v_target = std::copysign(std::min(pitch_v_limit, guidance_max_vel_), pitch_diff_rad);
+  double pitch_v_target = std::copysign(
+      std::sqrt(2.0 * guidance_accel_limit_ * std::abs(pitch_diff_rad)), pitch_diff_rad);
 
   // 加速度限幅：平滑过渡到目标速度
   double yaw_v_cmd = last_guidance_cmd_yaw_v_;

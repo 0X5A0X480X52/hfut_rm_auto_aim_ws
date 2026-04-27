@@ -385,17 +385,17 @@ bool ArmorDetectorNode::fetchCameraInfoFromDriver() {
 
   auto request = std::make_shared<rm_interfaces::srv::GetCameraInfo::Request>();
 
-  // Use async call with callback to avoid blocking in multi-threaded executor
-  std::promise<bool> promise;
-  auto future = promise.get_future();
+  // Use shared_ptr to avoid dangling reference to stack-local promise
+  auto promise = std::make_shared<std::promise<bool>>();
+  auto future = promise->get_future();
 
   camera_info_client_->async_send_request(request,
-    [this, &promise](rclcpp::Client<rm_interfaces::srv::GetCameraInfo>::SharedFuture future) {
+    [this, promise](rclcpp::Client<rm_interfaces::srv::GetCameraInfo>::SharedFuture future) {
       auto response = future.get();
       image_width_ = response->width;
       image_height_ = response->height;
       FYT_INFO("blind_detector", "Fetched camera info: {}x{}", image_width_, image_height_);
-      promise.set_value(true);
+      promise->set_value(true);
     });
 
   // Wait with timeout

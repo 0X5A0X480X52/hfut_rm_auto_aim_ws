@@ -7,6 +7,7 @@
 #ifndef GIMBAL_PIPELINE__GIMBAL_PIPELINE_NODE_HPP_
 #define GIMBAL_PIPELINE__GIMBAL_PIPELINE_NODE_HPP_
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -227,7 +228,12 @@ class GimbalPipelineNode : public rclcpp::Node {
   bool guidance_vel_initialized_{false};          // 是否已从实测速度初始化引导速度指令
   bool blind_guidance_active_{false};             // blind guidance 是否激活（用于状态切换）
   double guidance_accel_limit_{10.0};             // 引导模式角加速度限幅 (rad/s²)
-  double guidance_max_vel_{3.0};                  // 引导模式最大角速度 (rad/s)
+
+  // 引导模式目标角度锁定（防止 cmd.yaw/pitch 频繁跳变）
+  // 原子类型：由 TF 回调线程和 timer 线程并发访问
+  std::atomic<double> guidance_locked_yaw_deg_{0.0};   // 锁定的目标 yaw (度，绝对坐标系)
+  std::atomic<double> guidance_locked_pitch_deg_{0.0}; // 锁定的目标 pitch (度，绝对坐标系)
+  std::atomic<bool> guidance_target_locked_{false};    // 是否已锁定引导目标角度
 
   /* ================================================================ */
   /*  Gimbal controller state (from GimbalControllerNode)             */

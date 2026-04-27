@@ -210,8 +210,7 @@ gimbal_pipeline:
     controller.ballistic_mode: "local"  # "service" | "local"
     controller.max_yaw_v: 90.0        # yaw_v 限幅 (deg/s)，防异常值损坏机械结构
     controller.max_pitch_v: 60.0      # pitch_v 限幅 (deg/s)
-    controller.guidance_accel_limit: 10.0  # 引导模式角加速度限幅 (rad/s²)，限制速度变化率
-    controller.guidance_max_vel: 3.0      # 引导模式最大角速度 (rad/s)，约172 deg/s
+    controller.guidance_accel_limit: 10.0  # 引导模式角加速度限幅 (rad/s²)，速度由 max_yaw_v/max_pitch_v 限幅
 
     controller.solver.shooting_range_width: 0.1
     controller.solver.shooting_range_height: 0.1

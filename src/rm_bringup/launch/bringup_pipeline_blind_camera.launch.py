@@ -249,7 +249,7 @@ def generate_launch_description():
                 get_bringup_params('armor_detector'),
                 {
                     'camera_name': 'blind_camera_1',
-                    'camera_yaw': 0.0,
+                    'camera_yaw': 180.0,  # blind camera faces backward (pi rad offset from main)
                     'camera_pitch': 0.0,
                     # image_width/image_height fetched from usb_camera via service
                     'h_fov': 60.0,

@@ -14,7 +14,7 @@
 
   <!-- Blind camera pose (from usb_camera_driver config) -->
   <xacro:arg name="blind_camera_1_xyz" default="0.05 0.1 0.05" />
-  <xacro:arg name="blind_camera_1_rpy" default="0.0 0.0 0.0" />
+  <xacro:arg name="blind_camera_1_rpy" default="0.0 0.0 ${pi}" />
 
   <link name="odom" />
 
