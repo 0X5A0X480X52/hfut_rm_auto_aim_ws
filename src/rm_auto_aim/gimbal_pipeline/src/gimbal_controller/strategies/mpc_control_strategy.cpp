@@ -604,6 +604,8 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     std::cout << "Target not in tracking/temp_lost state, skipping MPC control.  " << std::endl;
     markDelayAuditInvalid(getName(), false);
     has_prev_state_ = false;
+    prev_state_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+    warned_state_dt_mismatch_ = false;
     U_prev_.resize(0);
     // 机动自适应状态重置：防止旧跟踪历史污染新跟踪
     alpha_ema_ = 0.0;
@@ -617,12 +619,28 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   // 1) 差分估计角速度
   double yaw_dot = 0.0;
   double pitch_dot = 0.0;
+  double state_dt = dt_;
   if (has_prev_state_) {
-    yaw_dot = angles::normalize_angle(context.current_yaw - prev_yaw_) / dt_;
-    pitch_dot = (context.current_pitch - prev_pitch_) / dt_;
+    const double measured_dt = (context.current_time - prev_state_time_).seconds();
+    if (measured_dt > 1e-4 && measured_dt < 0.5) {
+      state_dt = measured_dt;
+      const double dt_error_ratio = std::abs(measured_dt - dt_) / std::max(dt_, 1e-4);
+      if (dt_error_ratio > 0.5 && !warned_state_dt_mismatch_) {
+        RCLCPP_WARN(
+          rclcpp::get_logger("MpcControlStrategy"),
+          "Control loop period (%.6f s) differs from controller.mpc.dt (%.6f s). "
+          "Using measured period for yaw/pitch velocity estimation.",
+          measured_dt,
+          dt_);
+        warned_state_dt_mismatch_ = true;
+      }
+    }
+    yaw_dot = angles::normalize_angle(context.current_yaw - prev_yaw_) / state_dt;
+    pitch_dot = (context.current_pitch - prev_pitch_) / state_dt;
   }
   prev_yaw_ = context.current_yaw;
   prev_pitch_ = context.current_pitch;
+  prev_state_time_ = context.current_time;
   has_prev_state_ = true;
 
   // 2) 组装当前状态

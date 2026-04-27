@@ -277,6 +277,19 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   current_gimbal_strategy_name_ =
       get_parameter("controller.strategy").as_string();
   ballistic_mode_ = get_parameter("controller.ballistic_mode").as_string();
+  if (current_gimbal_strategy_name_ == "mpc" && control_rate_ > 1e-6) {
+    const double configured_mpc_dt = get_parameter("controller.mpc.dt").as_double();
+    const double control_period = 1.0 / control_rate_;
+    if (std::abs(configured_mpc_dt - control_period) > control_period * 0.5) {
+      RCLCPP_WARN(
+        get_logger(),
+        "controller.mpc.dt=%.6f s is inconsistent with control_rate=%.2f Hz (period=%.6f s). "
+        "This usually causes oscillation and aim drift.",
+        configured_mpc_dt,
+        control_rate_,
+        control_period);
+    }
+  }
 
   // TF2 buffer was already created above (shared with TFHandler & MessageFilter).
 

@@ -337,19 +337,59 @@ gimbal_pipeline:
     # controller.mpc.r_pitch: 0.001
     # controller.mpc.s_yaw: 0.001
     # controller.mpc.s_pitch: 0.001
-    
+
     controller.mpc.N: 50
-    controller.mpc.dt: 0.05
-    controller.mpc.control_delay_s: 0.00
-    controller.mpc.max_accel: 12.0
-    controller.mpc.q_yaw: 100000.0 #追踪权重
-    controller.mpc.q_pitch: 800.0
-    controller.mpc.q_yaw_vel: 180.0 #角速度跟踪权重
+    controller.mpc.dt: 0.004
+    controller.mpc.control_delay_s: 0.00  
+    controller.mpc.max_accel: 30.0    
+    controller.mpc.q_yaw: 100.0    
+    controller.mpc.q_pitch: 100.0    
+    controller.mpc.q_yaw_vel: 1.0    
     controller.mpc.q_pitch_vel: 1.0
-    controller.mpc.r_yaw: 0.005 #控制惩罚越大越柔和
-    controller.mpc.r_pitch: 0.001
-    controller.mpc.s_yaw: 0.0001  #末端轨迹
+    controller.mpc.r_yaw: 0.001    
+    controller.mpc.r_pitch: 0.0001    
+    controller.mpc.s_yaw: 0.001    
     controller.mpc.s_pitch: 0.0001
+
+    # MPC 数值稳健性: 统一 Q/R/S 量纲归一化
+    # mode:
+    #   - "rms": 在线滑窗 RMS 归一化（原实现）
+    #   - "typical": 基于典型值的静态归一化（更稳健，适合避免 RMS 抖动放大）
+    # enable=false 时保持原行为
+    controller.mpc.normalization.enable: true
+    controller.mpc.normalization.mode: "rms"
+    controller.mpc.normalization.window_size: 80
+    controller.mpc.normalization.min_samples: 10
+    controller.mpc.normalization.rms_epsilon: 1e-6
+    # typical 模式参数（单位: yaw/pitch=rad, yaw_vel/pitch_vel=rad/s, acc=rad/s^2）
+    # scale 统一公式: w_norm = w / (typical^2 + eps)
+    controller.mpc.normalization.typical_state.yaw: 1.0
+    controller.mpc.normalization.typical_state.pitch: 1.0
+    controller.mpc.normalization.typical_state.yaw_vel: 1.0
+    controller.mpc.normalization.typical_state.pitch_vel: 1.0
+    controller.mpc.normalization.typical_control.yaw_acc: 1.0
+    controller.mpc.normalization.typical_control.pitch_acc: 1.0
+    controller.mpc.normalization.typical_delta_control.yaw_acc: 1.0
+    controller.mpc.normalization.typical_delta_control.pitch_acc: 1.0
+
+    # MPC 数值稳健性: Hessian 自适应对角正则
+    # H <- H + eps*I, eps=max(epsilon_abs, epsilon_rel*mean(diag(H)))
+    controller.mpc.regularization.enable: true
+    controller.mpc.regularization.epsilon_abs: 1e-8
+    controller.mpc.regularization.epsilon_rel: 1e-6
+    controller.mpc.regularization.epsilon_max: 1e-2
+    controller.mpc.regularization.retry_on_fail: true
+    controller.mpc.regularization.retry_scale: 10.0
+
+    # MPC 分层诊断: 低成本常开，高成本抽样
+    controller.mpc.diagnostics.enable: true
+    controller.mpc.diagnostics.low_cost_always: true
+    controller.mpc.diagnostics.high_cost_enable: false
+    controller.mpc.diagnostics.high_cost_sample_every: 20
+    controller.mpc.diagnostics.log_every: 50
+    controller.mpc.diagnostics.log_on_failure: true
+    controller.mpc.diagnostics.active_tol: 1e-4
+    controller.mpc.diagnostics.rank_tol_rel: 1e-9
 
     # MPC 命中概率权重加权（仅缩放 Q，默认关闭）
     controller.mpc.weighting.enable: false
@@ -624,4 +664,3 @@ gimbal_pipeline:
     # logging.flush_every_n
 
     # 注意：要修改参数请在此文件中对应键下修改数值（或取消注释并覆盖）。
-

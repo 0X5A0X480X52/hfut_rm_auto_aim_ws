@@ -260,7 +260,7 @@ gimbal_pipeline:
     # controller.mpc.s_pitch: 0.001
     
     controller.mpc.N: 50
-    controller.mpc.dt: 0.05
+    controller.mpc.dt: 0.004
     controller.mpc.control_delay_s: 0.00
     controller.mpc.max_accel: 12.0
     controller.mpc.q_yaw: 100000.0 #追踪权重
@@ -539,4 +539,3 @@ gimbal_pipeline:
     # logging.flush_every_n
 
     # 注意：要修改参数请在此文件中对应键下修改数值（或取消注释并覆盖）。
-

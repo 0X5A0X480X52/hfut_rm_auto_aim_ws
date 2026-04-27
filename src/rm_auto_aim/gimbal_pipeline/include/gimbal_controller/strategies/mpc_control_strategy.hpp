@@ -338,6 +338,10 @@ private:
   double prev_pitch_{0.0};
   bool has_prev_state_{false};
 
+  // Control-loop timing used for state derivative estimation.
+  rclcpp::Time prev_state_time_{0, 0, RCL_ROS_TIME};
+  bool warned_state_dt_mismatch_{false};
+
   // 延时补偿参数
   bool enable_delay_compensation_{false};
   double prediction_delay_s_{0.0};

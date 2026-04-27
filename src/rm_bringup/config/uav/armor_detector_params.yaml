@@ -21,3 +21,8 @@
 
     classifier_threshold: 0.6
     ignore_classes: ["negative"]
+
+    armor_detector.binary_img.enable_pub_plugins: ["image_transport/raw", "image_transport/compressed"]
+    armor_detector.number_img.enable_pub_plugins: ["image_transport/raw", "image_transport/compressed"]
+    armor_detector.result_img.enable_pub_plugins: ["image_transport/raw", "image_transport/compressed"]
+
