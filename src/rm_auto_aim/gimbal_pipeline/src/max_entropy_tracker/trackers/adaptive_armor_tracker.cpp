@@ -1,9 +1,11 @@
 // Copyright (C) Max Entropy Tracker. Licensed under the MIT License.
 #include "max_entropy_tracker/trackers/adaptive_armor_tracker.hpp"
 
+#include <algorithm>
 #include <cmath>
-#include <stdexcept>
 #include <iostream>
+#include <limits>
+#include <stdexcept>
 
 #include "max_entropy_tracker/utils/angle_utils.hpp"
 
@@ -59,10 +61,16 @@ void AdaptiveArmorTracker::initialize(const std::vector<ObservationData> &obs,
   default_dza_ = dza;
 
   ukf_.initialize(obs, r1, r2, dza, panel_id);
+  ukf_.set_structural_noise_scales(1.0, 1.0);
 
   // Reset detectors on every (re-)initialization
   mismatch_detector_.reset();
   height_identifier_.reset();
+
+  single_obs_streak_ = 0;
+  degraded_single_obs_mode_ = false;
+  reset_jump_binding(panel_id, default_label_from_panel(panel_id),
+                     o.z, o.timestamp);
 
   if (o.timestamp.has_value()) {
     current_time_ = o.timestamp.value();
@@ -135,8 +143,12 @@ bool AdaptiveArmorTracker::update(const std::vector<ObservationData> &obs) {
     }
 
   if (obs_time.has_value() && current_time_.has_value()) {
+    update_degraded_single_obs_mode(obs.size() == 1);
+
     double d = obs_time.value() - current_time_.value();
     if (d > min_dt_) predict(obs_time.value());
+  } else {
+    update_degraded_single_obs_mode(obs.size() == 1);
   }
 
   handle_observation_received(config_.tracker.tracking_thres);
@@ -156,42 +168,71 @@ bool AdaptiveArmorTracker::update(const std::vector<ObservationData> &obs) {
 
 bool AdaptiveArmorTracker::update_single(const ObservationData &obs,
                                          double override_pos_confidence) {
-  // std::cout << "Updating with single observation: x=" << obs.x << " y=" << obs.y
-  //           << " z=" << obs.z << " yaw=" << obs.yaw << std::endl;
   auto idx = ukf_.state_idx();
   const double yaw_rate_hint = ukf_.x()(idx.DELTA_RATE());
   const double dz_unit_hint = std::abs(ukf_.x()(idx.DZA()));
 
-  auto [panel_id, center_yaw, matching_error] =
+  PanelAssociator::AssociationDiagnostics assoc_diag;
+  auto [candidate_panel, center_yaw, matching_error] =
       panel_associator_.associate_panel(
           obs.yaw, reference_center_yaw_, obs.z, ukf_.x()(idx.Z()),
           obs.x, obs.y, ukf_.x()(idx.X()), ukf_.x()(idx.Y()),
           ukf_.x()(idx.R1()), ukf_.x()(idx.R2()), yaw_rate_hint,
-          dz_unit_hint);
-
-  current_panel_id_ = panel_id;
-  std::string r_type = PanelAssociator::get_r_type(panel_id);
+          dz_unit_hint, &assoc_diag);
 
   auto [h_label, h_conf] = height_identifier_.identify_single(
-      obs.z, panel_id, ukf_.x()(idx.Z()), ukf_.x()(idx.DZA()),
+      obs.z, candidate_panel, ukf_.x()(idx.Z()), ukf_.x()(idx.DZA()),
       ukf_.is_dza_converged());
-  height_label_ = h_label;
-  height_confidence_ = h_conf;
+
+  HeightLabel candidate_label =
+      (h_label == HeightLabel::UNKNOWN)
+          ? default_label_from_panel(candidate_panel)
+          : h_label;
+  int panel_id = candidate_panel;
+  HeightLabel resolved_label = candidate_label;
+  double resolved_h_conf = h_conf;
+
+  if (config_.tracker.jump_binding_enable) {
+    update_jump_binding(obs, candidate_panel, assoc_diag, candidate_label,
+                        h_conf, &panel_id, &resolved_label, &resolved_h_conf);
+  } else {
+    bound_panel_id_ = panel_id;
+    bound_height_label_ = resolved_label;
+    bound_confidence_ = std::clamp(resolved_h_conf, 0.0, 1.0);
+    binding_transition_state_ = BindingTransitionState::LOCKED;
+    transition_candidate_panel_ = -1;
+    transition_confirm_count_ = 0;
+    last_obs_z_ = obs.z;
+    last_obs_time_ = obs.timestamp;
+    last_panel_id_ = panel_id;
+  }
+
+  current_panel_id_ = panel_id;
+  height_label_ = resolved_label;
+  height_confidence_ = resolved_h_conf;
+
+  std::string r_type = PanelAssociator::get_r_type(panel_id);
 
   std::string armor_layer;
-  if (h_label == HeightLabel::UPPER)
+  if (resolved_label == HeightLabel::UPPER)
     armor_layer = "upper";
-  else if (h_label == HeightLabel::LOWER)
+  else if (resolved_label == HeightLabel::LOWER)
     armor_layer = "lower";
-  // else stays empty → UKF will infer
+  else
+    armor_layer = PanelAssociator::get_default_layer(panel_id);
 
   double pos_conf = (override_pos_confidence >= 0.0)
                         ? override_pos_confidence
-                        : compute_position_confidence(armor_layer, h_conf, r_type);
+                        : compute_position_confidence(
+                              armor_layer,
+                              std::max(resolved_h_conf, bound_confidence_),
+                              r_type);
 
   double panel_angle = panel_id * (M_PI / 2.0);
 
-  bool ok = ukf_.update({obs}, {r_type}, {armor_layer}, h_conf, pos_conf,
+  bool ok = ukf_.update({obs}, {r_type}, {armor_layer},
+                        std::max(resolved_h_conf, bound_confidence_),
+                        pos_conf,
                         panel_angle);
   if (!ok) {
     std::cerr << "[adaptive_tracker::update_single] ukf_.update failed "
@@ -212,17 +253,27 @@ bool AdaptiveArmorTracker::update_single(const ObservationData &obs,
         armor_layer, ukf_.is_dza_converged(),
         z_innov);
 
-    if (result.action == PanelMismatchDetector::Action::REINIT) {
-      std::cerr << "[AdaptiveArmorTracker] mismatch REINIT triggered "
-                << "panel_id=" << panel_id
-                << " -> " << result.new_panel_id << "\n";
-      reinitialize_tracker(obs);
-      // Return true: update itself succeeded; caller sees a valid (reinit) state
-    } else if (result.action == PanelMismatchDetector::Action::PATCH) {
-      std::cerr << "[AdaptiveArmorTracker] mismatch PATCH triggered "
-                << "panel_id=" << panel_id
-                << " -> " << result.new_panel_id << "\n";
-      correct_panel_id(result.new_panel_id, obs.yaw);
+    if (result.action != PanelMismatchDetector::Action::NONE) {
+      if (result.action == PanelMismatchDetector::Action::REINIT) {
+        std::cerr << "[AdaptiveArmorTracker] mismatch REINIT detected "
+                  << "panel_id=" << panel_id
+                  << " -> " << result.new_panel_id << "\n";
+      } else {
+        std::cerr << "[AdaptiveArmorTracker] mismatch PATCH detected "
+                  << "panel_id=" << panel_id
+                  << " -> " << result.new_panel_id << "\n";
+      }
+
+      if (config_.panel_mismatch.apply_correction) {
+        if (result.action == PanelMismatchDetector::Action::REINIT) {
+          reinitialize_tracker(obs);
+        } else if (result.action == PanelMismatchDetector::Action::PATCH) {
+          correct_panel_id(result.new_panel_id, obs.yaw);
+        }
+      } else {
+        std::cerr << "[AdaptiveArmorTracker] mismatch correction suppressed by "
+                     "panel_mismatch.apply_correction=false\n";
+      }
     }
   }
 
@@ -277,6 +328,232 @@ bool AdaptiveArmorTracker::update_dual(const ObservationData &obs1,
       "rt1=" << rt1 << " rt2=" << rt2 << " l1=" << l1 << " l2=" << l2 << " h_conf=" << h_conf << std::endl;
   }
   return dual_ok;
+}
+
+HeightLabel AdaptiveArmorTracker::default_label_from_panel(int panel_id) {
+  return (panel_id % 2 == 0) ? HeightLabel::LOWER : HeightLabel::UPPER;
+}
+
+std::string AdaptiveArmorTracker::label_to_layer(HeightLabel label) {
+  if (label == HeightLabel::UPPER) return "upper";
+  if (label == HeightLabel::LOWER) return "lower";
+  return "";
+}
+
+void AdaptiveArmorTracker::reset_jump_binding(int panel_id, HeightLabel label,
+                                              std::optional<double> obs_z,
+                                              std::optional<double> obs_time) {
+  bound_panel_id_ = panel_id;
+  bound_height_label_ = (label == HeightLabel::UNKNOWN)
+                            ? default_label_from_panel(panel_id)
+                            : label;
+  bound_confidence_ = 0.5;
+  binding_transition_state_ = BindingTransitionState::LOCKED;
+  transition_candidate_panel_ = -1;
+  transition_confirm_count_ = 0;
+  switch_cooldown_frames_ = 0;
+  last_panel_id_ = panel_id;
+  last_obs_z_ = obs_z;
+  last_obs_time_ = obs_time;
+  z_jump_history_.clear();
+  dz_jump_est_ = std::numeric_limits<double>::quiet_NaN();
+}
+
+void AdaptiveArmorTracker::update_degraded_single_obs_mode(bool is_single_obs) {
+  if (!config_.tracker.degraded_single_obs_enable) {
+    single_obs_streak_ = 0;
+    degraded_single_obs_mode_ = false;
+    ukf_.set_structural_noise_scales(1.0, 1.0);
+    return;
+  }
+
+  if (is_single_obs)
+    ++single_obs_streak_;
+  else
+    single_obs_streak_ = 0;
+
+  const bool dza_not_converged = !ukf_.is_dza_converged();
+  const int streak_thres = std::max(1, config_.tracker.degraded_single_obs_streak);
+  degraded_single_obs_mode_ =
+      is_single_obs && dza_not_converged && single_obs_streak_ >= streak_thres;
+
+  if (degraded_single_obs_mode_) {
+    ukf_.set_structural_noise_scales(config_.tracker.degraded_q_scale_r,
+                                     config_.tracker.degraded_q_scale_dza);
+  } else {
+    ukf_.set_structural_noise_scales(1.0, 1.0);
+  }
+}
+
+HeightLabel AdaptiveArmorTracker::resolve_layer_from_jump(
+    HeightLabel fallback_label, double z_jump, bool has_z_jump) const {
+  if (!has_z_jump) return fallback_label;
+
+  const double dz_gate = std::max(0.0, config_.tracker.jump_binding_dz_gate);
+  if (z_jump > dz_gate) return HeightLabel::UPPER;
+  if (z_jump < -dz_gate) return HeightLabel::LOWER;
+  return fallback_label;
+}
+
+void AdaptiveArmorTracker::update_jump_statistics(double z_jump,
+                                                  bool switch_confirmed) {
+  if (!switch_confirmed) return;
+
+  const double abs_jump = std::abs(z_jump);
+  if (abs_jump < std::max(0.0, config_.tracker.jump_binding_z_jump_min)) return;
+
+  z_jump_history_.push_back(abs_jump);
+  while (z_jump_history_.size() > 20) {
+    z_jump_history_.pop_front();
+  }
+
+  const double alpha = std::clamp(config_.tracker.jump_binding_dz_ema_alpha,
+                                  0.01, 1.0);
+  if (!std::isfinite(dz_jump_est_)) {
+    dz_jump_est_ = abs_jump;
+  } else {
+    dz_jump_est_ = (1.0 - alpha) * dz_jump_est_ + alpha * abs_jump;
+  }
+}
+
+double AdaptiveArmorTracker::compute_jump_binding_confidence(
+    const PanelAssociator::AssociationDiagnostics &diag,
+    bool jump_gate_passed) const {
+  const double margin_base = std::max(1e-3, config_.tracker.jump_binding_cost_margin_min);
+  const double yaw_gate = std::max(1e-3, config_.tracker.jump_binding_yaw_err_gate);
+
+  const double margin = std::isfinite(diag.cost_margin) ? diag.cost_margin : 0.0;
+  const double margin_score = std::clamp(margin / (2.0 * margin_base), 0.0, 1.0);
+
+  const double yaw_err = std::isfinite(diag.selected_yaw_err)
+                             ? diag.selected_yaw_err
+                             : yaw_gate;
+  const double yaw_score =
+      std::clamp(1.0 - yaw_err / yaw_gate, 0.0, 1.0);
+
+  const double jump_score = jump_gate_passed ? 1.0 : 0.0;
+  const double base = std::clamp(0.50 * margin_score + 0.30 * yaw_score +
+                                     0.20 * jump_score,
+                                 0.0, 1.0);
+
+  const double floor = std::clamp(config_.tracker.jump_binding_confidence_floor,
+                                  0.0, 0.95);
+  return floor + (1.0 - floor) * base;
+}
+
+bool AdaptiveArmorTracker::update_jump_binding(
+    const ObservationData &obs, int candidate_panel,
+    const PanelAssociator::AssociationDiagnostics &diag,
+    HeightLabel candidate_label, double candidate_height_conf,
+    int *selected_panel, HeightLabel *selected_label,
+    double *selected_height_conf) {
+  if (selected_panel == nullptr || selected_label == nullptr ||
+      selected_height_conf == nullptr) {
+    return false;
+  }
+
+  if (bound_panel_id_ < 0) {
+    reset_jump_binding(candidate_panel, candidate_label, obs.z, obs.timestamp);
+  }
+
+  const bool has_z_jump = last_obs_z_.has_value();
+  const double z_jump = has_z_jump ? (obs.z - last_obs_z_.value()) : 0.0;
+
+  const int raw_diff = std::abs(candidate_panel - bound_panel_id_);
+  const bool adjacent_panel = (raw_diff == 1 || raw_diff == 3);
+  const bool jump_mag_ok =
+      has_z_jump &&
+      (std::abs(z_jump) >= std::max(0.0, config_.tracker.jump_binding_z_jump_min));
+
+  bool dz_match_ok = true;
+  if (jump_mag_ok && std::isfinite(dz_jump_est_)) {
+    dz_match_ok = std::abs(std::abs(z_jump) - dz_jump_est_) <=
+                  std::max(0.0, config_.tracker.jump_binding_dz_match_tolerance);
+  }
+
+  const double yaw_err =
+      std::isfinite(diag.selected_yaw_err) ? diag.selected_yaw_err : 1e9;
+  const bool yaw_ok =
+      yaw_err <= std::max(1e-3, config_.tracker.jump_binding_yaw_err_gate);
+
+  const double margin = std::isfinite(diag.cost_margin) ? diag.cost_margin : 0.0;
+  const bool margin_ok =
+      margin >= std::max(0.0, config_.tracker.jump_binding_cost_margin_min);
+
+  const bool jump_gate_passed =
+      adjacent_panel && jump_mag_ok && dz_match_ok && yaw_ok && margin_ok;
+
+  bool switch_confirmed = false;
+  const int confirm_required =
+      std::max(1, config_.tracker.jump_binding_confirm_frames);
+
+  if (switch_cooldown_frames_ > 0) {
+    --switch_cooldown_frames_;
+  }
+
+  if (candidate_panel == bound_panel_id_) {
+    binding_transition_state_ = BindingTransitionState::LOCKED;
+    transition_candidate_panel_ = -1;
+    transition_confirm_count_ = 0;
+  } else if (switch_cooldown_frames_ == 0 && jump_gate_passed) {
+    if (binding_transition_state_ == BindingTransitionState::LOCKED) {
+      if (confirm_required <= 1) {
+        switch_confirmed = true;
+      } else {
+        binding_transition_state_ = BindingTransitionState::TRANSITION_CANDIDATE;
+        transition_candidate_panel_ = candidate_panel;
+        transition_confirm_count_ = 1;
+      }
+    } else if (candidate_panel == transition_candidate_panel_) {
+      ++transition_confirm_count_;
+      if (transition_confirm_count_ >= confirm_required) {
+        switch_confirmed = true;
+      }
+    } else {
+      transition_candidate_panel_ = candidate_panel;
+      transition_confirm_count_ = 1;
+    }
+  } else {
+    binding_transition_state_ = BindingTransitionState::LOCKED;
+    transition_candidate_panel_ = -1;
+    transition_confirm_count_ = 0;
+  }
+
+  if (switch_confirmed) {
+    bound_panel_id_ = candidate_panel;
+    const HeightLabel fallback_label = default_label_from_panel(bound_panel_id_);
+    bound_height_label_ = resolve_layer_from_jump(fallback_label, z_jump, has_z_jump);
+    if (bound_height_label_ == HeightLabel::UNKNOWN) {
+      bound_height_label_ = (candidate_label == HeightLabel::UNKNOWN)
+                                ? fallback_label
+                                : candidate_label;
+    }
+
+    update_jump_statistics(z_jump, true);
+    binding_transition_state_ = BindingTransitionState::LOCKED;
+    transition_candidate_panel_ = -1;
+    transition_confirm_count_ = 0;
+    switch_cooldown_frames_ =
+        std::max(0, config_.tracker.jump_binding_switch_cooldown);
+  }
+
+  if (bound_height_label_ == HeightLabel::UNKNOWN) {
+    bound_height_label_ = (candidate_label == HeightLabel::UNKNOWN)
+                              ? default_label_from_panel(bound_panel_id_)
+                              : candidate_label;
+  }
+
+  bound_confidence_ = compute_jump_binding_confidence(diag, jump_gate_passed);
+
+  *selected_panel = bound_panel_id_;
+  *selected_label = bound_height_label_;
+  *selected_height_conf = std::clamp(
+      std::max(candidate_height_conf, bound_confidence_), 0.0, 1.0);
+
+  last_obs_z_ = obs.z;
+  last_obs_time_ = obs.timestamp;
+  last_panel_id_ = candidate_panel;
+  return switch_confirmed;
 }
 
 /* ================================================================ */
@@ -339,6 +616,7 @@ void AdaptiveArmorTracker::correct_panel_id(int new_panel_id,
   // 5. Reset the mismatch detector's sliding window to avoid re-triggering on
   //    stale data accumulated under the wrong panel assumption
   mismatch_detector_.reset();
+  reset_jump_binding(new_panel_id, correct_label, std::nullopt, std::nullopt);
 }
 
 void AdaptiveArmorTracker::reinitialize_tracker(const ObservationData &obs) {
@@ -358,6 +636,26 @@ Eigen::Vector3d AdaptiveArmorTracker::get_center_position() const {
 double AdaptiveArmorTracker::get_yaw() const { return ukf_.get_yaw(); }
 std::pair<double, double> AdaptiveArmorTracker::get_radii() const {
   return ukf_.get_radii();
+}
+
+AdaptiveArmorTracker::DebugSnapshot AdaptiveArmorTracker::debug_snapshot() const {
+  DebugSnapshot snapshot;
+  snapshot.valid = is_initialized();
+  snapshot.current_panel_id = current_panel_id_;
+  snapshot.bound_panel_id = bound_panel_id_;
+  snapshot.current_height_label = static_cast<int>(height_label_);
+  snapshot.bound_height_label = static_cast<int>(bound_height_label_);
+  snapshot.binding_transition_state =
+      static_cast<int>(binding_transition_state_);
+  snapshot.transition_candidate_panel = transition_candidate_panel_;
+  snapshot.transition_confirm_count = transition_confirm_count_;
+  snapshot.switch_cooldown_frames = switch_cooldown_frames_;
+  snapshot.bound_confidence = bound_confidence_;
+  snapshot.height_confidence = height_confidence_;
+  snapshot.degraded_single_obs_mode = degraded_single_obs_mode_;
+  snapshot.single_obs_streak = single_obs_streak_;
+  snapshot.dz_jump_est = dz_jump_est_;
+  return snapshot;
 }
 
 }  // namespace fyt::auto_aim

@@ -60,7 +60,9 @@ public:
    *  - MIN_MOVEMENT             : 最小运动量，无朝向过滤
    *  - DECISION_ANGLE           : 传统决策角算法 (与 armor_solver 原版一致)
    *  - VIRTUAL_POSE             : 虚拟姿态选板（最小旋转 + 中心连线朝向）
-  *  - VIRTUAL_FIXED_ID         : 固定 ID 虚拟装甲板（仅生成指定 ID 的虚拟板）
+   *  - VIRTUAL_FIXED_ID         : 固定 ID 虚拟装甲板（仅生成指定 ID 的虚拟板）
+   *  - FACING_OR_VIRTUAL_POSE   : 可打真实板优先，否则退回虚拟姿态
+   *  - FACING_OR_VIRTUAL_FIXED_ID : 指定 ID 可打优先，否则退回该 ID 的虚拟姿态
    */
   enum class SelectionMethod
   {
@@ -70,6 +72,8 @@ public:
     MIN_MOVEMENT_WITH_RADIAL = 3,
     VIRTUAL_POSE             = 4,
     VIRTUAL_FIXED_ID         = 5,
+    FACING_OR_VIRTUAL_POSE   = 6,
+    FACING_OR_VIRTUAL_FIXED_ID = 7,
   };
 
   ArmorSelector() = default;
@@ -253,6 +257,33 @@ public:
     double current_pitch) const;
 
   /**
+   * @brief 真实可打板优先，否则生成虚拟姿态目标
+   *
+   * 该策略先使用与 FireAdviceEngine facing_only 等价的几何语义过滤真实板：
+   * (中心->装甲板) 与 (中心->云台原点) 越同向，装甲板越正对我方。存在可打
+   * 真实板时按最小云台运动量选板；全部不可打时退回 virtual_pose 稳定控云台。
+   */
+  ArmorSelectionResult selectByFacingOrVirtualPose(
+    const std::vector<Eigen::Vector3d> & armor_positions,
+    const Eigen::Vector3d & target_center,
+    double target_yaw,
+    int num_armors,
+    double target_v_yaw,
+    double current_yaw,
+    double current_pitch);
+
+  /**
+   * @brief 指定 ID 真实板可打优先，否则生成该 ID 的虚拟姿态目标
+   */
+  ArmorSelectionResult selectByFacingOrVirtualFixedId(
+    const std::vector<Eigen::Vector3d> & armor_positions,
+    const Eigen::Vector3d & target_center,
+    int num_armors,
+    int fixed_id,
+    double current_yaw,
+    double current_pitch);
+
+  /**
    * @brief 选择最佳装甲板 (基于传统决策角)
    * @param armor_positions 各装甲板的世界坐标位置
    * @param target_center 目标中心位置
@@ -300,6 +331,20 @@ public:
     int num_armors);
 
   /**
+   * @brief FireAdviceEngine facing_only 等价的正面朝向余弦
+   *
+   * 对比 (机器人中心->装甲板) 与 (机器人中心->云台原点) 的水平夹角。
+   * 返回值越接近 1 表示装甲板越正对云台，越接近 -1 表示背向。
+   */
+  static double computeImpactFacingCos(
+    const Eigen::Vector3d & target_center,
+    const Eigen::Vector3d & armor_position);
+
+  static std::vector<double> computeImpactFacingAngles(
+    const std::vector<Eigen::Vector3d> & armor_positions,
+    const Eigen::Vector3d & target_center);
+
+  /**
    * @brief 计算每个装甲板的径向夹角
    * @param armor_positions 各装甲板位置
    * @param target_center 目标机器人中心位置
@@ -309,6 +354,13 @@ public:
     const std::vector<Eigen::Vector3d> & armor_positions,
     const Eigen::Vector3d & target_center,
     double centerline_bias_rad = 0.0);
+
+  ArmorSelectionResult selectMinMovementFromIndices(
+    const std::vector<Eigen::Vector3d> & armor_positions,
+    const std::vector<int> & candidate_indices,
+    const std::vector<double> * facing_angles,
+    double current_yaw,
+    double current_pitch) const;
 
 private:
   double side_angle_{15.0};           // 侧向角度阈值 (度)

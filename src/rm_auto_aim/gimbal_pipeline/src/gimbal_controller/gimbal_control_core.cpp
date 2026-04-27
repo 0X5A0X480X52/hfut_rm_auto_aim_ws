@@ -65,6 +65,7 @@ GimbalControlCoreOutput GimbalControlCore::compute(
     if (output.cmd.mode == rm_interfaces::msg::GimbalCmd::MODE_UNKNOWN) {
       output.cmd = makeFallbackIdleCmd(context);
     }
+    output.fire_advice_debug = orchestrator_.lastFireAdviceDebug();
     output.delay_audit = DelayAuditSnapshot{};
     output.delay_audit.strategy_name = strategy_name;
     output.delay_audit.tracking = false;
@@ -81,6 +82,7 @@ GimbalControlCoreOutput GimbalControlCore::compute(
     if (output.cmd.mode == rm_interfaces::msg::GimbalCmd::MODE_UNKNOWN) {
       output.cmd = makeFallbackIdleCmd(context);
     }
+    output.fire_advice_debug = orchestrator_.lastFireAdviceDebug();
 
     output.delay_audit = DelayAuditSnapshot{};
     output.delay_audit.strategy_name = strategy_name;
@@ -90,6 +92,7 @@ GimbalControlCoreOutput GimbalControlCore::compute(
 
   auto cmd = strategy->solve(context);
   cmd = orchestrator_.finalize(context, cmd);
+  output.fire_advice_debug = orchestrator_.lastFireAdviceDebug();
 
   const std::string current_target = context.is_tracking ? selected_target_id : std::string();
   if (current_target != prev_tracking_target_id_) {

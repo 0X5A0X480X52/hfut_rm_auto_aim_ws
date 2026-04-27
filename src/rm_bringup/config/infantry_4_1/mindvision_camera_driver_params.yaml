@@ -1,0 +1,23 @@
+/mv_camera:
+  ros__parameters:
+    camera_name: mv_camera
+    camera_sn: ""  # 留空则使用第一个检测到的相机，或者填入序列号指定特定相机
+    camera_info_url: "package://rm_bringup/config/infantry_4_1/camera_info.yaml"
+    
+    # 图像分辨率设置（设置为0则使用相机默认分辨率）
+    image_width: 0   # 图像宽度，0表示使用相机默认值
+    image_height: 0  # 图像高度，0表示使用相机默认值
+
+    exposure_time: 1500
+    gain: 8.0
+    flip_image: false  # 是否翻转图像（水平翻转）
+    # Frame id for published Image and CameraInfo
+    frame_id: camera_optical_frame
+
+    frame_speed: 1    # 帧速度模式(USB相机): 0=Low(推荐双相机), 1=Normal, 2=High, 3=Super
+    
+    # Raw stream dumping
+    raw_stream:
+      enabled: false  # Enable writing yaw-format raw frames
+      path: /tmp/mv_camera.yaw  # Output yaw file
+      interval: 1  # Frame sampling interval: 1=every frame, 2=every second frame

@@ -36,7 +36,10 @@ ArmorSelectionResult ArmorSelector::selectBest(
 {
   bool auto_switch_active = false;
   SelectionMethod effective_method = selection_method_;
-  if (virtual_auto_switch_enable_) {
+  const bool selection_has_virtual_fallback =
+    selection_method_ == SelectionMethod::FACING_OR_VIRTUAL_POSE ||
+    selection_method_ == SelectionMethod::FACING_OR_VIRTUAL_FIXED_ID;
+  if (virtual_auto_switch_enable_ && !selection_has_virtual_fallback) {
     const double abs_v_yaw = std::abs(target_v_yaw);
     if (virtual_mode_active_) {
       if (abs_v_yaw < virtual_auto_switch_exit_vyaw_) {
@@ -66,6 +69,27 @@ ArmorSelectionResult ArmorSelector::selectBest(
     case SelectionMethod::VIRTUAL_FIXED_ID: {
       const int fixed_id = auto_switch_active ? virtual_auto_switch_fixed_id_ : virtual_fixed_id_;
       return selectByVirtualFixedId(
+        armor_positions,
+        target_center,
+        num_armors,
+        fixed_id,
+        current_yaw,
+        current_pitch);
+    }
+
+    case SelectionMethod::FACING_OR_VIRTUAL_POSE:
+      return selectByFacingOrVirtualPose(
+        armor_positions,
+        target_center,
+        target_yaw,
+        num_armors,
+        target_v_yaw,
+        current_yaw,
+        current_pitch);
+
+    case SelectionMethod::FACING_OR_VIRTUAL_FIXED_ID: {
+      const int fixed_id = auto_switch_active ? virtual_auto_switch_fixed_id_ : virtual_fixed_id_;
+      return selectByFacingOrVirtualFixedId(
         armor_positions,
         target_center,
         num_armors,
@@ -353,6 +377,46 @@ std::vector<double> ArmorSelector::computeFacingAngles(
   return facing_angles;
 }
 
+double ArmorSelector::computeImpactFacingCos(
+  const Eigen::Vector3d & target_center,
+  const Eigen::Vector3d & armor_position)
+{
+  // Keep this geometry equivalent to FireAdviceEngine::computeFacingCos:
+  // compare the horizontal radial direction center->armor against center->gimbal-origin.
+  // A value near +1 means the armor normal is facing our muzzle; near -1 is back-facing.
+  Eigen::Vector3d center_to_armor = armor_position - target_center;
+  Eigen::Vector3d center_to_gimbal = -target_center;
+
+  Eigen::Vector3d center_to_armor_xy(center_to_armor.x(), center_to_armor.y(), 0.0);
+  Eigen::Vector3d center_to_gimbal_xy(center_to_gimbal.x(), center_to_gimbal.y(), 0.0);
+
+  const double armor_norm = center_to_armor_xy.norm();
+  const double gimbal_norm = center_to_gimbal_xy.norm();
+
+  constexpr double kMinDistance = 1e-3;
+  if (armor_norm <= kMinDistance || gimbal_norm <= kMinDistance) {
+    return 1.0;
+  }
+
+  const double cos_value =
+    center_to_armor_xy.dot(center_to_gimbal_xy) / (armor_norm * gimbal_norm);
+  return std::clamp(cos_value, -1.0, 1.0);
+}
+
+std::vector<double> ArmorSelector::computeImpactFacingAngles(
+  const std::vector<Eigen::Vector3d> & armor_positions,
+  const Eigen::Vector3d & target_center)
+{
+  std::vector<double> facing_angles;
+  facing_angles.reserve(armor_positions.size());
+
+  for (const auto & pos : armor_positions) {
+    facing_angles.push_back(std::acos(computeImpactFacingCos(target_center, pos)));
+  }
+
+  return facing_angles;
+}
+
 std::vector<double> ArmorSelector::computeRadialAngles(
   const std::vector<Eigen::Vector3d> & armor_positions,
   const Eigen::Vector3d & target_center,
@@ -395,6 +459,51 @@ std::vector<double> ArmorSelector::computeRadialAngles(
   }
 
   return radial_angles;
+}
+
+ArmorSelectionResult ArmorSelector::selectMinMovementFromIndices(
+  const std::vector<Eigen::Vector3d> & armor_positions,
+  const std::vector<int> & candidate_indices,
+  const std::vector<double> * facing_angles,
+  double current_yaw,
+  double current_pitch) const
+{
+  ArmorSelectionResult result;
+  result.selected_index = -1;
+  result.gimbal_movement = std::numeric_limits<double>::max();
+  result.distance = std::numeric_limits<double>::max();
+
+  for (int idx : candidate_indices) {
+    if (idx < 0 || idx >= static_cast<int>(armor_positions.size())) {
+      continue;
+    }
+
+    const auto & pos = armor_positions[idx];
+
+    double yaw, pitch;
+    calculateYawPitch(pos, current_yaw, yaw, pitch);
+
+    const double yaw_diff = angles::normalize_angle(yaw - current_yaw);
+    const double pitch_diff = pitch - current_pitch;
+    const double movement = yaw_diff * yaw_diff + pitch_diff * pitch_diff;
+    const double distance = pos.norm();
+
+    if (movement < result.gimbal_movement ||
+        (std::abs(movement - result.gimbal_movement) < 0.01 && distance < result.distance))
+    {
+      result.selected_index = idx;
+      result.real_selected_index = idx;
+      result.position = pos;
+      result.real_position = pos;
+      result.gimbal_movement = movement;
+      result.distance = distance;
+      if (facing_angles && idx < static_cast<int>(facing_angles->size())) {
+        result.facing_angle = (*facing_angles)[idx];
+      }
+    }
+  }
+
+  return result;
 }
 
 ArmorSelectionResult ArmorSelector::selectByMinMovementWithFacing(
@@ -604,6 +713,104 @@ ArmorSelectionResult ArmorSelector::selectByMinMovementWithRadial(
   last_selected_index_ = result.selected_index;
 
   return result;
+}
+
+ArmorSelectionResult ArmorSelector::selectByFacingOrVirtualPose(
+  const std::vector<Eigen::Vector3d> & armor_positions,
+  const Eigen::Vector3d & target_center,
+  double target_yaw,
+  int num_armors,
+  double target_v_yaw,
+  double current_yaw,
+  double current_pitch)
+{
+  if (armor_positions.empty()) {
+    last_selected_index_ = -1;
+    return selectByVirtualPose(
+      armor_positions, target_center, target_yaw, num_armors, target_v_yaw,
+      current_yaw, current_pitch);
+  }
+
+  const auto valid_indices = filterByDistance(armor_positions);
+  const auto facing_angles = computeImpactFacingAngles(armor_positions, target_center);
+  const double enter_rad = facing_enter_angle_ * M_PI / 180.0;
+  const double exit_rad = facing_exit_angle_ * M_PI / 180.0;
+
+  std::vector<int> facing_valid_indices;
+  facing_valid_indices.reserve(valid_indices.size());
+
+  for (int idx : valid_indices) {
+    if (idx < 0 || idx >= static_cast<int>(facing_angles.size())) {
+      continue;
+    }
+
+    const double threshold = (idx == last_selected_index_) ? exit_rad : enter_rad;
+    if (facing_angles[idx] <= threshold) {
+      facing_valid_indices.push_back(idx);
+    }
+  }
+
+  if (!facing_valid_indices.empty()) {
+    auto result = selectMinMovementFromIndices(
+      armor_positions, facing_valid_indices, &facing_angles, current_yaw, current_pitch);
+    result.is_center_fallback = false;
+    result.is_virtual_target = false;
+    last_selected_index_ = result.selected_index;
+    return result;
+  }
+
+  // No real armor is currently hittable under the same facing semantics used by fire_advice.
+  // Keep the gimbal stable by aiming at an ideal virtual armor instead of the robot center.
+  last_selected_index_ = -1;
+  return selectByVirtualPose(
+    armor_positions, target_center, target_yaw, num_armors, target_v_yaw,
+    current_yaw, current_pitch);
+}
+
+ArmorSelectionResult ArmorSelector::selectByFacingOrVirtualFixedId(
+  const std::vector<Eigen::Vector3d> & armor_positions,
+  const Eigen::Vector3d & target_center,
+  int num_armors,
+  int fixed_id,
+  double current_yaw,
+  double current_pitch)
+{
+  if (armor_positions.empty()) {
+    last_selected_index_ = -1;
+    return selectByVirtualFixedId(
+      armor_positions, target_center, num_armors, fixed_id, current_yaw, current_pitch);
+  }
+
+  const int armor_count = std::max(1, std::min(num_armors, static_cast<int>(armor_positions.size())));
+  int fixed_idx = fixed_id % armor_count;
+  if (fixed_idx < 0) {
+    fixed_idx += armor_count;
+  }
+
+  if (fixed_idx >= 0 && fixed_idx < static_cast<int>(armor_positions.size())) {
+    const auto facing_angles = computeImpactFacingAngles(armor_positions, target_center);
+    const double threshold =
+      (fixed_idx == last_selected_index_ ? facing_exit_angle_ : facing_enter_angle_) *
+      M_PI / 180.0;
+
+    if (fixed_idx < static_cast<int>(facing_angles.size()) &&
+        facing_angles[fixed_idx] <= threshold)
+    {
+      std::vector<int> fixed_candidate{fixed_idx};
+      auto result = selectMinMovementFromIndices(
+        armor_positions, fixed_candidate, &facing_angles, current_yaw, current_pitch);
+      result.is_center_fallback = false;
+      result.is_virtual_target = false;
+      last_selected_index_ = result.selected_index;
+      return result;
+    }
+  }
+
+  // The requested ID exists but is not facing enough to be fired at. Fall back to the
+  // fixed-ID virtual armor so the controller keeps the same semantic target.
+  last_selected_index_ = -1;
+  return selectByVirtualFixedId(
+    armor_positions, target_center, num_armors, fixed_id, current_yaw, current_pitch);
 }
 
 ArmorSelectionResult ArmorSelector::selectByVirtualPose(

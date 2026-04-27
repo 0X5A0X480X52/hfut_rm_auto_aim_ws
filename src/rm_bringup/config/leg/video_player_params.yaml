@@ -1,0 +1,28 @@
+video_player:
+  ros__parameters:
+    # Path to the video file (required)
+    # Example: "/path/to/your/video.mp4"
+    # video_path: "./src/rm_hardware_driver/video_player/video/output.avi"
+    video_path: "decoded/output.mp4"
+    
+    # Whether to loop the video playback
+    loop_playback: true
+    
+    # Playback frame rate (fps)
+    fps: 250.0
+    
+    # Camera name for camera info manager
+    camera_name: "camera"
+    
+    # Flip image (both horizontal and vertical)
+    flip_image: false
+    
+    # Image topic name (the actual topic will be /video_player/image_topic/...)
+    image_topic: "image_raw"
+    
+    # Use sensor data QoS profile for image topic
+    use_sensor_data_qos: false
+    
+    # Camera info URL (optional)
+    # Example: "package://video_player/config/camera_info.yaml"
+    camera_info_url: "src/rm_hardware_driver/ros2_hik_camera/config/camera_info.yaml"

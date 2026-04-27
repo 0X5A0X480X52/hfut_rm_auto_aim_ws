@@ -32,6 +32,7 @@ struct GimbalControlCoreOutput
 {
   rm_interfaces::msg::GimbalCmd cmd;
   DelayAuditSnapshot delay_audit{};
+  FireAdviceDebugSnapshot fire_advice_debug{};
   bool has_tracking{false};
   bool strategy_found{true};
 };

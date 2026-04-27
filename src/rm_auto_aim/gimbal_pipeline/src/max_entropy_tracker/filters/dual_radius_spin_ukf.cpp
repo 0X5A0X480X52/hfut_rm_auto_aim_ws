@@ -1,6 +1,7 @@
 // Copyright (C) Max Entropy Tracker. Licensed under the MIT License.
 #include "max_entropy_tracker/filters/dual_radius_spin_ukf.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
@@ -150,6 +151,10 @@ void DualRadiusSpinUKF::predict(std::optional<double> dt_opt) {
 
   double dt = dt_opt.value_or(dt_);
   Q_ = motion_model_->build_Q(dt);
+
+  Q_(state_idx_.R1(), state_idx_.R1()) *= structural_noise_scale_r_;
+  Q_(state_idx_.R2(), state_idx_.R2()) *= structural_noise_scale_r_;
+  Q_(state_idx_.DZA(), state_idx_.DZA()) *= structural_noise_scale_dza_;
 
   Eigen::MatrixXd sigma_pts = generate_sigma_points(x_, P_);
   int n_sigma = sigma_pts.rows();
@@ -533,6 +538,12 @@ std::pair<double, double> DualRadiusSpinUKF::get_radii() const {
 
 double DualRadiusSpinUKF::get_dza() const {
   return x_(state_idx_.DZA());
+}
+
+void DualRadiusSpinUKF::set_structural_noise_scales(double radius_scale,
+                                                    double dza_scale) {
+  structural_noise_scale_r_ = std::clamp(radius_scale, 0.1, 100.0);
+  structural_noise_scale_dza_ = std::clamp(dza_scale, 0.1, 100.0);
 }
 
 /* ================================================================ */

@@ -152,6 +152,34 @@ if(BUILD_TESTING)
     Eigen3::Eigen
     ${qpOASES_LIBRARY}
   )
+
+  ament_add_gtest(test_adaptive_jump_binder test/test_adaptive_jump_binder.cpp
+    ${ALL_SRCS}
+  )
+  target_include_directories(test_adaptive_jump_binder PRIVATE
+    include
+    ${EIGEN3_INCLUDE_DIRS}
+    ${qpOASES_INCLUDE_DIR}
+  )
+  ament_target_dependencies(test_adaptive_jump_binder
+    rclcpp
+    rm_interfaces
+    rm_utils
+    geometry_msgs
+    std_msgs
+    sensor_msgs
+    visualization_msgs
+    tf2
+    tf2_ros
+    tf2_geometry_msgs
+    message_filters
+    angles
+    rclcpp_components
+  )
+  target_link_libraries(test_adaptive_jump_binder
+    Eigen3::Eigen
+    ${qpOASES_LIBRARY}
+  )
 endif()
 
 # ─── Export ─────────────────────────────────────────────────────

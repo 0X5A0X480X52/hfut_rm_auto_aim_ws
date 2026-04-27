@@ -69,18 +69,18 @@ gimbal_pipeline:
     constraints.max_dz: 1.0
 
     # Outpost tracker (known 3-armor geometry + max-entropy mode switch)
-    outpost.translation_model: "CV"   # "CV" | "CA" | "Singer"
-    outpost.rotation_model: "CV"      # "CV" | "CA"
+    outpost.translation_model: "CA"   # "CV" | "CA" | "Singer"
+    outpost.rotation_model: "CA"      # "CV" | "CA"
     # Outpost state machine thresholds (independent from tracker.* used by adaptive)
     outpost.tracking_thres: 2
-    outpost.lost_thres: 45
-    outpost.temp_lost_thres: 3
+    outpost.lost_thres: 50
+    outpost.temp_lost_thres: 20
     outpost.max_match_distance: 2.0
     outpost.max_match_yaw_diff: 1.0
-    outpost.singer_alpha: 0.0          # <=0: fallback to motion.singer_alpha
-    outpost.singer_sigma: 0.0          # <=0: fallback to motion.singer_sigma
-    outpost.spin_process_noise_theta_rate: 0.0  # <=0: fallback to spin.spin_process_noise_delta_rate
-    outpost.spin_process_noise_theta_acc: 0.0   # <=0: fallback to spin.spin_process_noise_delta_acc
+    outpost.singer_alpha: 0.01          # <=0: fallback to motion.singer_alpha
+    outpost.singer_sigma: 0.01          # <=0: fallback to motion.singer_sigma
+    outpost.spin_process_noise_theta_rate: 1.0  # <=0: fallback to spin.spin_process_noise_delta_rate
+    outpost.spin_process_noise_theta_acc: 1.0   # <=0: fallback to spin.spin_process_noise_delta_acc
     outpost.radius: 0.275
     # 语义约定:
     #   id0=最高, id1=中间, id2=最低
@@ -153,7 +153,7 @@ gimbal_pipeline:
     # - rm_min_dz / rm_max_dz: 影响步长调整的目标高度差范围，越大范围内调整越明显，但可能过度调整不同高度的目标
     smoother.enable: true
     smoother.enable_position_smooth: true
-    smoother.enable_yaw_smooth: true
+    smoother.enable_yaw_smooth: false
     smoother.enable_velocity_smooth: true
     smoother.enable_structural_convergence: true
     smoother.pos_min_cutoff: 1.0
@@ -208,13 +208,21 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     # Gimbal controller parameters
     # ═══════════════════════════════════════════════════════════════
-    controller.bullet_speed: 11.7
+    controller.bullet_speed: 11.50
     controller.control_rate: 250.0
     controller.strategy: "mpc"    # "current" | "predicted" | "mpc" | "state_machine"
     controller.ballistic_mode: "local"  # "service" | "local"
 
-    controller.solver.shooting_range_width: 0.1
-    controller.solver.shooting_range_height: 0.1
+    # Unified delay parameters (preferred)
+    # 说明：优先使用 controller.delay.*，其余 solver/mpc/fire 下的同语义参数仅保留兼容。
+    controller.delay.prediction_extra_s: 0.00
+    controller.delay.control_latency_s: 0.00
+    controller.delay.trigger_to_muzzle_s: 0.100
+    controller.delay.max_processing_delay_s: 0.5
+    controller.delay.flight_time_iters: 2
+
+    controller.solver.shooting_range_width: 0.135
+    controller.solver.shooting_range_height: 0.135
     controller.solver.side_angle: 15.0
     controller.solver.min_switching_v_yaw: 0.0
     controller.solver.prediction_delay: 0.100        # 预测延迟 (秒)，等效于提前预测时间，补偿系统延迟(仅对 predicted 策略生效)
@@ -252,16 +260,20 @@ gimbal_pipeline:
     controller.solver.adaptive_delay.max_angular_speed: 10.0   # 角速度归一化参考 (rad/s)
 
     # FireAdvice 触发策略参数
-    controller.fire.trigger_to_muzzle_s: 0.160           # 触发到枪口的时延补偿 (s)
+    controller.fire.trigger_to_muzzle_s: 0.0           # 触发到枪口的时延补偿 (s)
     controller.fire.decision_policy: "axis_threshold" # 开火决策策略
     controller.fire.flight_time_iters: 2               # 飞行时间迭代次数
-    controller.fire.use_gimbal_kinematics: false      # 使用云台运动学补偿
+    controller.fire.use_gimbal_kinematics: true      # 使用云台运动学补偿
+    # 目标可打性策略：
+    #   facing_only: 仅允许朝向可打候选触发 fire=true（推荐）
+    #   legacy_all : 兼容旧行为，所有候选都可触发 fire=true
+    controller.fire.target_visibility_policy: "facing_only"
     # FireAdvice 装甲板朝向过滤开角（度）
     # 定义：装甲板法向与“装甲板 -> 枪口(坐标原点)”夹角的允许全开角。
     #   180.0: 不过滤（兼容旧行为）
     #   120.0: 常用，过滤明显背向板
     #   90.0 : 更严格，只保留近正向板
-    controller.fire.facing_filter_opening_angle_deg: 90.0
+    controller.fire.facing_filter_opening_angle_deg: 85.0
 
     # ── 选板算法参数 ──────────────────────────────────
     # selection_method: 选板算法
@@ -271,6 +283,8 @@ gimbal_pipeline:
     #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
     #   virtual_pose              — 虚拟姿态选板，自动生成一个理想控制板（不要求真实存在）来选板
     #   virtual_fixed_id           — 固定 ID 虚拟姿态选板，直接生成一个固定 ID 的理想控制板来选板
+    #   facing_or_virtual_pose     — FireAdvice 同语义朝向过滤，真实可打板优先；无可打板时退回 virtual_pose
+    #   facing_or_virtual_fixed_id — 仅固定 ID 真实可打时输出真实板；否则退回该 ID 的 virtual_fixed_id
     controller.solver.selection_method: "min_movement_with_facing"
     # controller.solver.virtual_pose.fixed_id: 2 # "virtual_fixed_id" 时设置固定的id
 
@@ -712,4 +726,3 @@ gimbal_pipeline:
     # logging.flush_every_n
 
     # 注意：要修改参数请在此文件中对应键下修改数值（或取消注释并覆盖）。
-
