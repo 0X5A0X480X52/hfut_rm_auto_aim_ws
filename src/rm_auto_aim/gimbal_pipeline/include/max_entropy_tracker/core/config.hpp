@@ -85,6 +85,25 @@ struct TrackerParameters {
   bool periodic_binding_enable = false;
   double periodic_binding_weight = 0.35;
   double periodic_binding_spin_rate_gate = 0.8;
+
+  // Jump binder (adaptive tracker): sticky panel/layer in non-jump frames,
+  // and transition-confirmed switching on reliable z-jump evidence.
+  bool jump_binding_enable = true;
+  int jump_binding_confirm_frames = 3;
+  double jump_binding_z_jump_min = 0.015;
+  double jump_binding_dz_match_tolerance = 0.03;
+  double jump_binding_dz_gate = 0.010;
+  double jump_binding_yaw_err_gate = 0.35;
+  double jump_binding_cost_margin_min = 0.08;
+  int jump_binding_switch_cooldown = 2;
+  double jump_binding_dz_ema_alpha = 0.20;
+  double jump_binding_confidence_floor = 0.15;
+
+  // Long single-observation degraded mode.
+  bool degraded_single_obs_enable = true;
+  int degraded_single_obs_streak = 8;
+  double degraded_q_scale_r = 4.0;
+  double degraded_q_scale_dza = 4.0;
 };
 
 struct ConstraintParameters {
@@ -100,6 +119,7 @@ struct PanelMismatchParameters {
   double threshold_t1  = 0.0009;  ///< dz² mean threshold below which z is OK (3cm²)
   int    confirm_count = 3;       ///< consecutive suspect frames to trigger PATCH
   int    reinit_count  = 5;       ///< consecutive suspect frames to trigger REINIT
+  bool   apply_correction = false;  ///< false=log only, true=allow PATCH/REINIT
 };
 
 struct OutpostParameters {

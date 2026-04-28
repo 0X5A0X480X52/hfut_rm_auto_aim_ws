@@ -872,6 +872,20 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("tracker.periodic_binding_enable", false);
   declare_parameter("tracker.periodic_binding_weight", 0.35);
   declare_parameter("tracker.periodic_binding_spin_rate_gate", 0.8);
+  declare_parameter("tracker.jump_binding_enable", true);
+  declare_parameter("tracker.jump_binding_confirm_frames", 3);
+  declare_parameter("tracker.jump_binding_z_jump_min", 0.015);
+  declare_parameter("tracker.jump_binding_dz_match_tolerance", 0.03);
+  declare_parameter("tracker.jump_binding_dz_gate", 0.010);
+  declare_parameter("tracker.jump_binding_yaw_err_gate", 0.35);
+  declare_parameter("tracker.jump_binding_cost_margin_min", 0.08);
+  declare_parameter("tracker.jump_binding_switch_cooldown", 2);
+  declare_parameter("tracker.jump_binding_dz_ema_alpha", 0.20);
+  declare_parameter("tracker.jump_binding_confidence_floor", 0.15);
+  declare_parameter("tracker.degraded_single_obs_enable", true);
+  declare_parameter("tracker.degraded_single_obs_streak", 8);
+  declare_parameter("tracker.degraded_q_scale_r", 4.0);
+  declare_parameter("tracker.degraded_q_scale_dza", 4.0);
 
   // Constraints
   declare_parameter("constraints.min_radius", 0.12);
@@ -949,6 +963,7 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("panel_mismatch.threshold_t1", 0.0009);
   declare_parameter("panel_mismatch.confirm_count", 3);
   declare_parameter("panel_mismatch.reinit_count", 5);
+  declare_parameter("panel_mismatch.apply_correction", false);
 
   // Output smoother
   declare_parameter("smoother.enable", true);
@@ -1280,11 +1295,63 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("tracker.periodic_binding_weight").as_double();
     c.tracker.periodic_binding_spin_rate_gate =
       get_parameter("tracker.periodic_binding_spin_rate_gate").as_double();
+    c.tracker.jump_binding_enable =
+      get_parameter("tracker.jump_binding_enable").as_bool();
+    c.tracker.jump_binding_confirm_frames =
+      get_parameter("tracker.jump_binding_confirm_frames").as_int();
+    c.tracker.jump_binding_z_jump_min =
+      get_parameter("tracker.jump_binding_z_jump_min").as_double();
+    c.tracker.jump_binding_dz_match_tolerance =
+      get_parameter("tracker.jump_binding_dz_match_tolerance").as_double();
+    c.tracker.jump_binding_dz_gate =
+      get_parameter("tracker.jump_binding_dz_gate").as_double();
+    c.tracker.jump_binding_yaw_err_gate =
+      get_parameter("tracker.jump_binding_yaw_err_gate").as_double();
+    c.tracker.jump_binding_cost_margin_min =
+      get_parameter("tracker.jump_binding_cost_margin_min").as_double();
+    c.tracker.jump_binding_switch_cooldown =
+      get_parameter("tracker.jump_binding_switch_cooldown").as_int();
+    c.tracker.jump_binding_dz_ema_alpha =
+      get_parameter("tracker.jump_binding_dz_ema_alpha").as_double();
+    c.tracker.jump_binding_confidence_floor =
+      get_parameter("tracker.jump_binding_confidence_floor").as_double();
+    c.tracker.degraded_single_obs_enable =
+      get_parameter("tracker.degraded_single_obs_enable").as_bool();
+    c.tracker.degraded_single_obs_streak =
+      get_parameter("tracker.degraded_single_obs_streak").as_int();
+    c.tracker.degraded_q_scale_r =
+      get_parameter("tracker.degraded_q_scale_r").as_double();
+    c.tracker.degraded_q_scale_dza =
+      get_parameter("tracker.degraded_q_scale_dza").as_double();
 
     c.tracker.periodic_binding_weight =
       std::max(0.0, c.tracker.periodic_binding_weight);
     c.tracker.periodic_binding_spin_rate_gate =
       std::max(0.0, c.tracker.periodic_binding_spin_rate_gate);
+    c.tracker.jump_binding_confirm_frames =
+      std::max(1, c.tracker.jump_binding_confirm_frames);
+    c.tracker.jump_binding_z_jump_min =
+      std::max(0.0, c.tracker.jump_binding_z_jump_min);
+    c.tracker.jump_binding_dz_match_tolerance =
+      std::max(0.0, c.tracker.jump_binding_dz_match_tolerance);
+    c.tracker.jump_binding_dz_gate =
+      std::max(0.0, c.tracker.jump_binding_dz_gate);
+    c.tracker.jump_binding_yaw_err_gate =
+      std::max(1e-3, c.tracker.jump_binding_yaw_err_gate);
+    c.tracker.jump_binding_cost_margin_min =
+      std::max(0.0, c.tracker.jump_binding_cost_margin_min);
+    c.tracker.jump_binding_switch_cooldown =
+      std::max(0, c.tracker.jump_binding_switch_cooldown);
+    c.tracker.jump_binding_dz_ema_alpha =
+      std::clamp(c.tracker.jump_binding_dz_ema_alpha, 0.01, 1.0);
+    c.tracker.jump_binding_confidence_floor =
+      std::clamp(c.tracker.jump_binding_confidence_floor, 0.0, 0.95);
+    c.tracker.degraded_single_obs_streak =
+      std::max(1, c.tracker.degraded_single_obs_streak);
+    c.tracker.degraded_q_scale_r =
+      std::max(0.1, c.tracker.degraded_q_scale_r);
+    c.tracker.degraded_q_scale_dza =
+      std::max(0.1, c.tracker.degraded_q_scale_dza);
 
   c.constraints.min_radius =
       get_parameter("constraints.min_radius").as_double();
@@ -1313,6 +1380,8 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("panel_mismatch.confirm_count").as_int();
   c.panel_mismatch.reinit_count =
       get_parameter("panel_mismatch.reinit_count").as_int();
+    c.panel_mismatch.apply_correction =
+      get_parameter("panel_mismatch.apply_correction").as_bool();
 
     c.outpost.translation_model = translation_model_from_string(
       get_parameter("outpost.translation_model").as_string());

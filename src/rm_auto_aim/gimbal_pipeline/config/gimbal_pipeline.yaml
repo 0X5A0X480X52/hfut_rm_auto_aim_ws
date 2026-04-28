@@ -61,6 +61,20 @@ gimbal_pipeline:
     tracker.periodic_binding_enable: false
     tracker.periodic_binding_weight: 0.35
     tracker.periodic_binding_spin_rate_gate: 0.8
+    tracker.jump_binding_enable: true
+    tracker.jump_binding_confirm_frames: 3
+    tracker.jump_binding_z_jump_min: 0.015
+    tracker.jump_binding_dz_match_tolerance: 0.03
+    tracker.jump_binding_dz_gate: 0.010
+    tracker.jump_binding_yaw_err_gate: 0.35
+    tracker.jump_binding_cost_margin_min: 0.08
+    tracker.jump_binding_switch_cooldown: 2
+    tracker.jump_binding_dz_ema_alpha: 0.20
+    tracker.jump_binding_confidence_floor: 0.15
+    tracker.degraded_single_obs_enable: true
+    tracker.degraded_single_obs_streak: 8
+    tracker.degraded_q_scale_r: 4.0
+    tracker.degraded_q_scale_dza: 4.0
 
     # Constraints
     constraints.min_radius: 0.12
@@ -135,9 +149,10 @@ gimbal_pipeline:
     # Panel mismatch detection
     panel_mismatch.enable: true
     panel_mismatch.window_size: 8
-    panel_mismatch.threshold_t1: 0.0000009
+    panel_mismatch.threshold_t1: 0.0009
     panel_mismatch.confirm_count: 3
     panel_mismatch.reinit_count: 5
+    panel_mismatch.apply_correction: false
   #$
 
     # Output smoother (1-Euro filter + Robbins-Monro)

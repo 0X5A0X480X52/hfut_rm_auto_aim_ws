@@ -56,6 +56,9 @@ class DualRadiusSpinUKF : public BaseUKF, public SpinFilterInterface {
   bool is_dza_converged(double var_threshold = 0.01,
                         double min_value = 0.005) const;
 
+    // Scale structural random-walk process noise (R1/R2 and DZA).
+    void set_structural_noise_scales(double radius_scale, double dza_scale);
+
   const CompositeProcessModel &process_model() const { return *motion_model_; }
     const DynamicStateIndex &state_idx() const override { return state_idx_; }
 
@@ -136,6 +139,9 @@ class DualRadiusSpinUKF : public BaseUKF, public SpinFilterInterface {
   double last_innov_yaw_   = 0.0;   ///< yaw innovation (single-obs only)
   double last_nis_         = -1.0;  ///< NIS; -1 = no update this cycle
   int    last_update_type_ = 0;     ///< 0=none, 1=single, 2=dual
+
+  double structural_noise_scale_r_ = 1.0;
+  double structural_noise_scale_dza_ = 1.0;
 };
 
 }  // namespace fyt::auto_aim

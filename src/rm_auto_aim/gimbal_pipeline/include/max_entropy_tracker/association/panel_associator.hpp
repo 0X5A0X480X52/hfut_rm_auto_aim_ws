@@ -2,6 +2,7 @@
 #ifndef MAX_ENTROPY_TRACKER_ASSOCIATION_PANEL_ASSOCIATOR_HPP_
 #define MAX_ENTROPY_TRACKER_ASSOCIATION_PANEL_ASSOCIATOR_HPP_
 
+#include <array>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -28,6 +29,20 @@ namespace fyt::auto_aim {
  */
 class PanelAssociator {
  public:
+  struct AssociationDiagnostics {
+    int selected_id = -1;
+    int best_id = -1;
+    int second_id = -1;
+    double selected_yaw_err = std::numeric_limits<double>::quiet_NaN();
+    double best_yaw_err = std::numeric_limits<double>::quiet_NaN();
+    double second_yaw_err = std::numeric_limits<double>::quiet_NaN();
+    double best_cost = std::numeric_limits<double>::quiet_NaN();
+    double second_cost = std::numeric_limits<double>::quiet_NaN();
+    double cost_margin = std::numeric_limits<double>::quiet_NaN();
+    bool is_ambiguous = false;
+    bool used_z_assist = false;
+  };
+
   static constexpr int N_PANELS = 4;
   static constexpr double PANEL_ANGLE_STEP = M_PI / 2.0;
   /// Position weight in combined cost (rad per meter).
@@ -79,7 +94,12 @@ class PanelAssociator {
       std::optional<double> r1 = std::nullopt,
       std::optional<double> r2 = std::nullopt,
       std::optional<double> yaw_rate_hint = std::nullopt,
-      std::optional<double> dz_unit_hint = std::nullopt) const {
+      std::optional<double> dz_unit_hint = std::nullopt,
+      AssociationDiagnostics *diagnostics = nullptr) const {
+    if (diagnostics != nullptr) {
+      *diagnostics = AssociationDiagnostics{};
+    }
+
     const int spin_direction =
         (yaw_rate_hint.has_value() &&
          std::abs(yaw_rate_hint.value()) >= periodic_spin_rate_gate_)
@@ -97,6 +117,17 @@ class PanelAssociator {
       double ay_pos = std::fmod(ay + 2.0 * M_PI, 2.0 * M_PI);
       int panel_id = static_cast<int>(std::round(ay_pos / PANEL_ANGLE_STEP)) % 4;
       double cw = normalize_angle(ay - panel_id * PANEL_ANGLE_STEP);
+      if (diagnostics != nullptr) {
+        diagnostics->selected_id = panel_id;
+        diagnostics->best_id = panel_id;
+        diagnostics->second_id = panel_id;
+        diagnostics->selected_yaw_err = 0.0;
+        diagnostics->best_yaw_err = 0.0;
+        diagnostics->second_yaw_err = 0.0;
+        diagnostics->best_cost = 0.0;
+        diagnostics->second_cost = 0.0;
+        diagnostics->cost_margin = 0.0;
+      }
       if (z_obs.has_value()) prev_z_obs_ = z_obs.value();
       return {panel_id, cw, 0.0};
     }
@@ -109,6 +140,8 @@ class PanelAssociator {
     int best_id = 0, second_id = 0;
     double best_cost = 1e9, second_cost = 1e9;
     double best_yaw_err = 1e9;
+    double second_yaw_err = 1e9;
+    bool ambiguous = false;
 
     for (int pid = 0; pid < 4; ++pid) {
       double expected = cyp + pid * PANEL_ANGLE_STEP;
@@ -147,12 +180,14 @@ class PanelAssociator {
       if (cost < best_cost) {
         second_cost = best_cost;
         second_id = best_id;
+        second_yaw_err = best_yaw_err;
         best_cost = cost;
         best_id = pid;
         best_yaw_err = yaw_err;
       } else if (cost < second_cost) {
         second_cost = cost;
         second_id = pid;
+        second_yaw_err = yaw_err;
       }
     }
 
@@ -162,9 +197,12 @@ class PanelAssociator {
     if (z_obs.has_value() && center_z.has_value()) {
       panel_id = z_assisted_association(armor_yaw, cyp, z_obs.value(),
                                         center_z.value(), best_id, best_yaw_err);
+      if (diagnostics != nullptr) {
+        diagnostics->used_z_assist = true;
+      }
     } else {
       // Ambiguity detection
-      bool ambiguous =
+      ambiguous =
           (best_yaw_err > 20.0 * M_PI / 180.0) &&
           (std::abs(best_cost - second_cost) < 0.1);
 
@@ -190,8 +228,26 @@ class PanelAssociator {
 
     if (z_obs.has_value()) prev_z_obs_ = z_obs.value();
 
+    const double selected_expected = cyp + panel_id * PANEL_ANGLE_STEP;
+    const double selected_yaw_err =
+        std::abs(normalize_angle(armor_yaw - selected_expected));
+    const double cost_margin = std::max(0.0, second_cost - best_cost);
+
+    if (diagnostics != nullptr) {
+      diagnostics->selected_id = panel_id;
+      diagnostics->best_id = best_id;
+      diagnostics->second_id = second_id;
+      diagnostics->selected_yaw_err = selected_yaw_err;
+      diagnostics->best_yaw_err = best_yaw_err;
+      diagnostics->second_yaw_err = second_yaw_err;
+      diagnostics->best_cost = best_cost;
+      diagnostics->second_cost = second_cost;
+      diagnostics->cost_margin = cost_margin;
+      diagnostics->is_ambiguous = ambiguous;
+    }
+
     double cw = normalize_angle(armor_yaw - panel_id * PANEL_ANGLE_STEP);
-    return {panel_id, cw, best_yaw_err};
+    return {panel_id, cw, selected_yaw_err};
   }
 
   static std::string get_r_type(int panel_id) {
