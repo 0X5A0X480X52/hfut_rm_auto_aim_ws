@@ -197,7 +197,6 @@ gimbal_pipeline:
     # 补盲目标选择策略: "min_yaw" — 选择 yaw 偏差绝对值最小的目标
     blind.selector.strategy: "min_yaw"
     selector.main_camera_frame: "camera_optical_frame"
-    selector.blind_camera_frame: "blind_camera_1_optical_frame"
     selector.guidance_end_yaw_threshold: 5.0  # 引导结束的 yaw deviation 阈值（度），目标进入主相机视野中心时结束引导
     selector.enable_guidance_timeout: false   # 是否启用引导超时检测，默认关闭
 
@@ -211,6 +210,8 @@ gimbal_pipeline:
     controller.max_yaw_v: 90.0        # yaw_v 限幅 (deg/s)，防异常值损坏机械结构
     controller.max_pitch_v: 60.0      # pitch_v 限幅 (deg/s)
     controller.guidance_accel_limit: 10.0  # 引导模式角加速度限幅 (rad/s²)，速度由 max_yaw_v/max_pitch_v 限幅
+    controller.enable_guidance_velocity_smoothing: false  # 是否启用引导速度平滑，默认开启。关闭时使用恒定角速度 guidance_constant_yaw_v
+    controller.guidance_constant_yaw_v: 3.1416  # 速度平滑关闭时的恒定 yaw 角速度 (rad/s)，默认 π ≈ 180°/s（1s 内旋转 180°）
 
     controller.solver.shooting_range_width: 0.1
     controller.solver.shooting_range_height: 0.1

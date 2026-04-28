@@ -107,17 +107,6 @@ class GimbalPipelineNode : public rclcpp::Node {
   SelectionResult selectTargetInternal(
       const rm_interfaces::msg::TrackedRobots &robots);
 
-  // ── selectTargetInternal helper functions ───────────────────────────────
-  void separateTargetsByCamera(
-      const rm_interfaces::msg::TrackedRobots &robots,
-      std::vector<const rm_interfaces::msg::TrackedRobot*> &main_targets,
-      std::vector<const rm_interfaces::msg::TrackedRobot*> &blind_targets);
-  const rm_interfaces::msg::TrackedRobot* selectNearestTarget(
-      const std::vector<const rm_interfaces::msg::TrackedRobot*> &targets);
-  double calculateYawDeviation(const rm_interfaces::msg::TrackedRobot &robot);
-  SelectionResult buildGuidanceResult(const rm_interfaces::msg::TrackedRobot &robot);
-  bool checkGuidanceComplete(const rm_interfaces::msg::TrackedRobot *robot);
-
   /* ================================================================ */
   /*  Gimbal controller logic (from GimbalControllerNode)             */
   /* ================================================================ */
@@ -146,8 +135,6 @@ class GimbalPipelineNode : public rclcpp::Node {
   // ── timerCallback helper functions ─────────────────────────────────────
   void publishIdleCommand();
   rm_interfaces::msg::Blind::SharedPtr collectBlindCandidates();
-  rm_interfaces::msg::GimbalCmd buildGuidanceCommand(
-      const gimbal_controller::GimbalControlContext &context);
   rm_interfaces::msg::GimbalCmd buildBlindGuidanceCommand();
   void applyGuidanceVelocitySmoothing(
       double yaw_diff_rad, double pitch_diff_rad,
@@ -156,10 +143,6 @@ class GimbalPipelineNode : public rclcpp::Node {
   rm_interfaces::msg::GimbalCmd buildNormalCommand(
       const gimbal_controller::GimbalControlContext &context,
       const std::string &selected_id);
-  void publishGuidanceDebugMarker(
-      const rm_interfaces::msg::TrackedRobot &robot,
-      const Eigen::Vector3d &center);
-
   void timerCallback();
   void applyPendingRuntimeUpdates();
   void setModeCallback(
@@ -207,14 +190,6 @@ class GimbalPipelineNode : public rclcpp::Node {
   std::string selector_strategy_name_;
   std::string current_target_id_;
 
-  /* ================================================================ */
-  /*  Guidance state machine (for blind camera)                       */
-  /* ================================================================ */
-  enum class GuidanceState {
-    IDLE,       // 空闲，正常自瞄
-    ROTATING    // 正在旋转引导
-  };
-  GuidanceState guidance_state_{GuidanceState::IDLE};
   rclcpp::Time guidance_start_time_;
   static constexpr double GUIDANCE_TIMEOUT{3.0};  // 引导超时（秒），超时后重置计时器
   double guidance_end_yaw_threshold_deg_{5.0};    // 引导结束的 yaw deviation 阈值（度），目标进入主相机视野中心时结束引导
@@ -228,6 +203,8 @@ class GimbalPipelineNode : public rclcpp::Node {
   bool guidance_vel_initialized_{false};          // 是否已从实测速度初始化引导速度指令
   bool blind_guidance_active_{false};             // blind guidance 是否激活（用于状态切换）
   double guidance_accel_limit_{10.0};             // 引导模式角加速度限幅 (rad/s²)
+  bool enable_guidance_velocity_smoothing_{true}; // 是否启用引导速度平滑，默认开启
+  double guidance_constant_yaw_v_{M_PI};          // 速度平滑关闭时的恒定 yaw 角速度 (rad/s)，默认 π rad/s = 180°/s
 
   // 引导模式目标角度锁定（防止 cmd.yaw/pitch 频繁跳变）
   // 原子类型：由 TF 回调线程和 timer 线程并发访问
