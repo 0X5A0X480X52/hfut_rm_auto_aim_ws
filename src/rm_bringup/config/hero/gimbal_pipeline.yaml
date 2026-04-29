@@ -69,18 +69,18 @@ gimbal_pipeline:
     constraints.max_dz: 1.0
 
     # Outpost tracker (known 3-armor geometry + max-entropy mode switch)
-    outpost.translation_model: "CV"   # "CV" | "CA" | "Singer"
-    outpost.rotation_model: "CV"      # "CV" | "CA"
+    outpost.translation_model: "CA"   # "CV" | "CA" | "Singer"
+    outpost.rotation_model: "CA"      # "CV" | "CA"
     # Outpost state machine thresholds (independent from tracker.* used by adaptive)
     outpost.tracking_thres: 2
-    outpost.lost_thres: 80
-    outpost.temp_lost_thres: 5
+    outpost.lost_thres: 50
+    outpost.temp_lost_thres: 20
     outpost.max_match_distance: 2.0
     outpost.max_match_yaw_diff: 1.0
-    outpost.singer_alpha: 0.0          # <=0: fallback to motion.singer_alpha
-    outpost.singer_sigma: 0.0          # <=0: fallback to motion.singer_sigma
-    outpost.spin_process_noise_theta_rate: 0.0  # <=0: fallback to spin.spin_process_noise_delta_rate
-    outpost.spin_process_noise_theta_acc: 0.0   # <=0: fallback to spin.spin_process_noise_delta_acc
+    outpost.singer_alpha: 0.01          # <=0: fallback to motion.singer_alpha
+    outpost.singer_sigma: 0.01          # <=0: fallback to motion.singer_sigma
+    outpost.spin_process_noise_theta_rate: 1.0  # <=0: fallback to spin.spin_process_noise_delta_rate
+    outpost.spin_process_noise_theta_acc: 1.0   # <=0: fallback to spin.spin_process_noise_delta_acc
     outpost.radius: 0.275
     # 语义约定:
     #   id0=最高, id1=中间, id2=最低
@@ -153,7 +153,7 @@ gimbal_pipeline:
     # - rm_min_dz / rm_max_dz: 影响步长调整的目标高度差范围，越大范围内调整越明显，但可能过度调整不同高度的目标
     smoother.enable: true
     smoother.enable_position_smooth: true
-    smoother.enable_yaw_smooth: true
+    smoother.enable_yaw_smooth: false
     smoother.enable_velocity_smooth: true
     smoother.enable_structural_convergence: true
     smoother.pos_min_cutoff: 1.0
@@ -208,21 +208,21 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     # Gimbal controller parameters
     # ═══════════════════════════════════════════════════════════════
-    controller.bullet_speed: 11.7
+    controller.bullet_speed: 11.50
     controller.control_rate: 250.0
     controller.strategy: "mpc"    # "current" | "predicted" | "mpc" | "state_machine"
     controller.ballistic_mode: "local"  # "service" | "local"
 
     # Unified delay parameters (preferred)
     # 说明：优先使用 controller.delay.*，其余 solver/mpc/fire 下的同语义参数仅保留兼容。
-    controller.delay.prediction_extra_s: 0.100
+    controller.delay.prediction_extra_s: 0.00
     controller.delay.control_latency_s: 0.00
-    controller.delay.trigger_to_muzzle_s: 0.160
+    controller.delay.trigger_to_muzzle_s: 0.100
     controller.delay.max_processing_delay_s: 0.5
     controller.delay.flight_time_iters: 2
 
-    controller.solver.shooting_range_width: 0.1
-    controller.solver.shooting_range_height: 0.1
+    controller.solver.shooting_range_width: 0.135
+    controller.solver.shooting_range_height: 0.135
     controller.solver.side_angle: 15.0
     controller.solver.min_switching_v_yaw: 0.0
     controller.solver.prediction_delay: 0.100        # 预测延迟 (秒)，等效于提前预测时间，补偿系统延迟(仅对 predicted 策略生效)
@@ -263,7 +263,7 @@ gimbal_pipeline:
     controller.fire.trigger_to_muzzle_s: 0.0           # 触发到枪口的时延补偿 (s)
     controller.fire.decision_policy: "axis_threshold" # 开火决策策略
     controller.fire.flight_time_iters: 2               # 飞行时间迭代次数
-    controller.fire.use_gimbal_kinematics: false      # 使用云台运动学补偿
+    controller.fire.use_gimbal_kinematics: true      # 使用云台运动学补偿
     # 目标可打性策略：
     #   facing_only: 仅允许朝向可打候选触发 fire=true（推荐）
     #   legacy_all : 兼容旧行为，所有候选都可触发 fire=true
@@ -273,7 +273,7 @@ gimbal_pipeline:
     #   180.0: 不过滤（兼容旧行为）
     #   120.0: 常用，过滤明显背向板
     #   90.0 : 更严格，只保留近正向板
-    controller.fire.facing_filter_opening_angle_deg: 30.0
+    controller.fire.facing_filter_opening_angle_deg: 85.0
 
     # ── 选板算法参数 ──────────────────────────────────
     # selection_method: 选板算法

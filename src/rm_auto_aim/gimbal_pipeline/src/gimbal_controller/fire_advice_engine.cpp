@@ -40,14 +40,20 @@ double computeFacingCos(
   const Eigen::Vector3d & center_position,
   const Eigen::Vector3d & armor_position)
 {
-  const Eigen::Vector3d armor_normal = armor_position - center_position;
-  const Eigen::Vector3d armor_to_muzzle = -armor_position;
-  const double normal_norm = armor_normal.norm();
-  const double to_muzzle_norm = armor_to_muzzle.norm();
-  if (normal_norm <= kMinDistance || to_muzzle_norm <= kMinDistance) {
+  Eigen::Vector3d a = armor_position - center_position;
+  Eigen::Vector3d b = -center_position;
+
+  Eigen::Vector3d a_xy(a.x(), a.y(), 0.0);
+  Eigen::Vector3d b_xy(b.x(), b.y(), 0.0);
+
+  double a_norm = a_xy.norm();
+  double b_norm = b_xy.norm();
+
+  if (a_norm <= kMinDistance || b_norm <= kMinDistance) {
     return 1.0;
   }
-  return armor_normal.dot(armor_to_muzzle) / (normal_norm * to_muzzle_norm);
+
+  return a_xy.dot(b_xy) / (a_norm * b_norm);
 }
 
 }  // namespace
