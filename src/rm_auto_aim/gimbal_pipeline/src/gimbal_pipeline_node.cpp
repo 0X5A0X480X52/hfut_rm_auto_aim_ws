@@ -2290,13 +2290,28 @@ rm_interfaces::msg::Blind::SharedPtr GimbalPipelineNode::collectBlindCandidates(
   std::vector<rm_interfaces::msg::Blind::SharedPtr> fresh_blinds;
   {
     std::lock_guard<std::mutex> lock(blind_buffer_mutex_);
-    const rclcpp::Time now = this->now();
     for (const auto &[topic, msg] : blind_latest_per_topic_) {
       if (!msg || msg->number == "-1") continue;
-      const double age = (now - rclcpp::Time(msg->header.stamp)).seconds();
-      if (age > blind_sync_timeout_) continue;
       fresh_blinds.push_back(msg);
     }
+  }
+
+  // 多相机同步过滤：仅当配置了多个补盲相机时，才用 blind_sync_timeout_ 过滤时间戳不一致的目标
+  if (blind_topics_.size() > 1 && fresh_blinds.size() > 1) {
+    // 以最新时间戳为基准，舍弃时间差超过阈值的消息
+    auto newest = std::max_element(fresh_blinds.begin(), fresh_blinds.end(),
+      [](const rm_interfaces::msg::Blind::SharedPtr &a,
+         const rm_interfaces::msg::Blind::SharedPtr &b) {
+        return rclcpp::Time(a->header.stamp) < rclcpp::Time(b->header.stamp);
+      });
+    const auto newest_stamp = rclcpp::Time((*newest)->header.stamp);
+    fresh_blinds.erase(
+      std::remove_if(fresh_blinds.begin(), fresh_blinds.end(),
+        [&](const rm_interfaces::msg::Blind::SharedPtr &msg) {
+          return std::abs((newest_stamp - rclcpp::Time(msg->header.stamp)).seconds()) >
+                 blind_sync_timeout_;
+        }),
+      fresh_blinds.end());
   }
 
   if (fresh_blinds.empty()) return nullptr;
@@ -2317,7 +2332,9 @@ void GimbalPipelineNode::publishIdleCommand() {
   context.current_time = now();
   const auto idle_result = gimbal_control_core_->compute(
     context, current_gimbal_strategy_name_, std::string(), false);
-  gimbal_cmd_pub_->publish(idle_result.cmd);
+  auto cmd = idle_result.cmd;
+  cmd.is_guiding = false;
+  gimbal_cmd_pub_->publish(cmd);
 }
 
 rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildBlindGuidanceCommand() {
@@ -2402,6 +2419,7 @@ rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildBlindGuidanceCommand() {
   cmd.target_id = latest_blind_msg_ ? latest_blind_msg_->number : current_target_id_;
   cmd.distance = 1.0;  // 补盲引导模式哨兵值，告知下位机响应引导指令
   cmd.fire_advice = false;
+  cmd.is_guiding = true;
   cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_BLIND_CAMERA_RESULT;  // -2
 
   // 引导速度平滑控制：从实测速度起步，加速度限幅，全程速度限幅
@@ -2494,6 +2512,7 @@ rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildNoTargetCommand() {
   cmd.pitch_a = 0.0;
   cmd.distance = -1.0;
   cmd.fire_advice = false;
+  cmd.is_guiding = false;
   cmd.target_id = "";
   cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_NO_VALID_MEASUREMENT;  // -1
   return cmd;
@@ -2514,6 +2533,7 @@ rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildNormalCommand(
 
   rm_interfaces::msg::GimbalCmd cmd = control_result.cmd;
   cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_NORMAL_MEASUREMENT;  // 1
+  cmd.is_guiding = false;
 
   // 发布调试信息
   if (debug_mode_ && debug_delay_audit_pub_) {
