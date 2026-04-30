@@ -283,6 +283,8 @@ gimbal_pipeline:
     #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
     #   virtual_pose              — 虚拟姿态选板，自动生成一个理想控制板（不要求真实存在）来选板
     #   virtual_fixed_id           — 固定 ID 虚拟姿态选板，直接生成一个固定 ID 的理想控制板来选板
+    #   facing_or_virtual_pose     — FireAdvice 同语义朝向过滤，真实可打板优先；无可打板时退回 virtual_pose
+    #   facing_or_virtual_fixed_id — 仅固定 ID 真实可打时输出真实板；否则退回该 ID 的 virtual_fixed_id
     controller.solver.selection_method: "min_movement_with_facing"
     # controller.solver.virtual_pose.fixed_id: 2 # "virtual_fixed_id" 时设置固定的id
 
@@ -724,4 +726,3 @@ gimbal_pipeline:
     # logging.flush_every_n
 
     # 注意：要修改参数请在此文件中对应键下修改数值（或取消注释并覆盖）。
-

@@ -527,6 +527,10 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     sel_method = gimbal_controller::ArmorSelector::SelectionMethod::VIRTUAL_POSE;
   } else if (selection_method_str == "virtual_fixed_id") {
     sel_method = gimbal_controller::ArmorSelector::SelectionMethod::VIRTUAL_FIXED_ID;
+  } else if (selection_method_str == "facing_or_virtual_pose") {
+    sel_method = gimbal_controller::ArmorSelector::SelectionMethod::FACING_OR_VIRTUAL_POSE;
+  } else if (selection_method_str == "facing_or_virtual_fixed_id") {
+    sel_method = gimbal_controller::ArmorSelector::SelectionMethod::FACING_OR_VIRTUAL_FIXED_ID;
   }
   armor_selector_->setSelectionMethod(sel_method);
   radial_selection_enabled_ =
