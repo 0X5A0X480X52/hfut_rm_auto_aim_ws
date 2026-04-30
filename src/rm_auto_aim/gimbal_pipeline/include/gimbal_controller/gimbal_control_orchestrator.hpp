@@ -15,14 +15,16 @@
 #ifndef GIMBAL_CONTROLLER__GIMBAL_CONTROL_ORCHESTRATOR_HPP_
 #define GIMBAL_CONTROLLER__GIMBAL_CONTROL_ORCHESTRATOR_HPP_
 
+#include <cstdint>
 #include <memory>
+#include <string>
 
+#include "gimbal_controller/fire_advice_engine.hpp"
 #include "gimbal_controller/gimbal_control_strategy.hpp"
 
 namespace gimbal_controller
 {
 
-class FireAdviceEngine;
 class FireAdvisor;
 
 struct FireDecisionConfig
@@ -33,6 +35,23 @@ struct FireDecisionConfig
   double max_processing_delay_s{0.5};
   bool include_processing_delay{true};
   bool include_control_latency_in_target_prediction{false};
+};
+
+struct FireAdviceDebugSnapshot
+{
+  bool evaluated{false};
+  bool valid{false};
+  bool fire_advice{false};
+  int32_t best_candidate_index{-1};
+  double yaw_error{0.0};
+  double pitch_error{0.0};
+  bool best_candidate_facing_ok{false};
+  int32_t candidate_count_total{0};
+  int32_t candidate_count_facing_eligible{0};
+  int32_t candidate_count_facing_rejected{0};
+  int8_t mode{rm_interfaces::msg::GimbalCmd::MODE_UNKNOWN};
+  uint8_t track_state{rm_interfaces::msg::TrackedRobot::DETECTING};
+  std::string target_id;
 };
 
 class GimbalControlOrchestrator
@@ -53,6 +72,11 @@ public:
     const GimbalControlContext & context,
     const rm_interfaces::msg::GimbalCmd & control_cmd) const;
 
+  const FireAdviceDebugSnapshot & lastFireAdviceDebug() const
+  {
+    return last_fire_debug_;
+  }
+
 private:
   int8_t decideMode(const GimbalControlContext & context) const;
 
@@ -64,6 +88,7 @@ private:
   std::shared_ptr<FireAdviceEngine> fire_advice_engine_;
   std::shared_ptr<FireAdvisor> fire_advisor_;
   FireDecisionConfig fire_cfg_;
+  mutable FireAdviceDebugSnapshot last_fire_debug_;
 };
 
 }  // namespace gimbal_controller

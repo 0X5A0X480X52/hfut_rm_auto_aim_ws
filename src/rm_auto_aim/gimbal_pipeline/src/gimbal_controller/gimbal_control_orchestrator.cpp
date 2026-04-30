@@ -60,6 +60,10 @@ rm_interfaces::msg::GimbalCmd GimbalControlOrchestrator::buildIdleCmd(
   if (!context.target_robot.robot_id.empty()) {
     cmd.target_id = context.target_robot.robot_id;
   }
+  last_fire_debug_ = FireAdviceDebugSnapshot{};
+  last_fire_debug_.target_id = cmd.target_id;
+  last_fire_debug_.mode = cmd.mode;
+  last_fire_debug_.track_state = context.target_robot.track_state;
   return cmd;
 }
 
@@ -80,6 +84,12 @@ rm_interfaces::msg::GimbalCmd GimbalControlOrchestrator::finalize(
   cmd.mode =
     (control_cmd.mode != rm_interfaces::msg::GimbalCmd::MODE_UNKNOWN) ?
     control_cmd.mode : decideMode(context);
+
+  last_fire_debug_ = FireAdviceDebugSnapshot{};
+  last_fire_debug_.target_id = cmd.target_id;
+  last_fire_debug_.mode = cmd.mode;
+  last_fire_debug_.track_state = context.target_robot.track_state;
+  last_fire_debug_.fire_advice = false;
 
   if (cmd.mode != rm_interfaces::msg::GimbalCmd::MODE_NORMAL_MEASUREMENT) {
     cmd.distance = 0.0;
@@ -141,6 +151,22 @@ bool GimbalControlOrchestrator::evaluateFireAdvice(
       fire_cfg_.include_control_latency_in_target_prediction;
 
     const auto result = fire_advice_engine_->evaluate(request);
+    last_fire_debug_.evaluated = true;
+    last_fire_debug_.valid = result.valid;
+    last_fire_debug_.fire_advice = result.fire_advice;
+    last_fire_debug_.best_candidate_index = result.best_candidate_index;
+    last_fire_debug_.yaw_error = result.yaw_error;
+    last_fire_debug_.pitch_error = result.pitch_error;
+    last_fire_debug_.candidate_count_total = result.candidate_count_total;
+    last_fire_debug_.candidate_count_facing_eligible = result.candidate_count_facing_eligible;
+    last_fire_debug_.candidate_count_facing_rejected = result.candidate_count_facing_rejected;
+    last_fire_debug_.best_candidate_facing_ok = false;
+    for (const auto & candidate : result.candidates) {
+      if (candidate.candidate_index == result.best_candidate_index) {
+        last_fire_debug_.best_candidate_facing_ok = candidate.facing_ok;
+        break;
+      }
+    }
     if (result.valid) {
       return result.fire_advice;
     }

@@ -754,6 +754,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
         "~/target", sensor_qos);
     debug_delay_audit_pub_ = create_publisher<rm_interfaces::msg::DelayAudit>(
       "~/delay_audit", rclcpp::SensorDataQoS());
+    debug_fire_advice_pub_ = create_publisher<rm_interfaces::msg::FireAdviceDebug>(
+      "~/fire_advice_debug", rclcpp::SensorDataQoS());
     debug_armor_selection_pub_ = create_publisher<std_msgs::msg::String>(
       "~/armor_selection_debug", rclcpp::SensorDataQoS());
     debug_tracker_marker_pub_ =
@@ -2399,6 +2401,52 @@ void GimbalPipelineNode::publishDelayAuditDebug(
   debug_delay_audit_pub_->publish(msg);
 }
 
+void GimbalPipelineNode::publishFireAdviceDebug(
+    const gimbal_controller::GimbalControlContext & context,
+    const rm_interfaces::msg::GimbalCmd & cmd,
+    const gimbal_controller::FireAdviceDebugSnapshot & snapshot) {
+  if (!debug_fire_advice_pub_) {
+    return;
+  }
+
+  rm_interfaces::msg::FireAdviceDebug msg;
+  msg.header.stamp = context.current_time;
+  msg.header.frame_id = target_frame_;
+  msg.target_id = snapshot.target_id.empty() ? cmd.target_id : snapshot.target_id;
+  msg.mode = snapshot.mode;
+  msg.track_state = snapshot.track_state;
+  msg.evaluated = snapshot.evaluated;
+  msg.valid = snapshot.valid;
+  msg.fire_advice = snapshot.fire_advice;
+  msg.best_candidate_index = snapshot.best_candidate_index;
+  msg.yaw_error = snapshot.yaw_error;
+  msg.pitch_error = snapshot.pitch_error;
+  msg.best_candidate_facing_ok = snapshot.best_candidate_facing_ok;
+  msg.candidate_count_total = snapshot.candidate_count_total;
+  msg.candidate_count_facing_eligible = snapshot.candidate_count_facing_eligible;
+  msg.candidate_count_facing_rejected = snapshot.candidate_count_facing_rejected;
+
+  debug_fire_advice_pub_->publish(msg);
+
+  RCLCPP_INFO_THROTTLE(
+    get_logger(), *get_clock(), 500,
+    "[FireAdvice] target=%s mode=%d track_state=%u evaluated=%d valid=%d fire=%d "
+    "best=%d yaw_err=%.4fdeg pitch_err=%.4fdeg facing_ok=%d rejected=%d/%d eligible=%d",
+    msg.target_id.empty() ? "none" : msg.target_id.c_str(),
+    static_cast<int>(msg.mode),
+    static_cast<unsigned>(msg.track_state),
+    msg.evaluated ? 1 : 0,
+    msg.valid ? 1 : 0,
+    msg.fire_advice ? 1 : 0,
+    msg.best_candidate_index,
+    msg.yaw_error * 180.0 / M_PI,
+    msg.pitch_error * 180.0 / M_PI,
+    msg.best_candidate_facing_ok ? 1 : 0,
+    msg.candidate_count_facing_rejected,
+    msg.candidate_count_total,
+    msg.candidate_count_facing_eligible);
+}
+
 /* ================================================================ */
 /*  Timer callback — 250 Hz control loop                             */
 /* ================================================================ */
@@ -2452,6 +2500,13 @@ void GimbalPipelineNode::timerCallback() {
       context,
       control_result.delay_audit,
       current_gimbal_strategy_name_);
+  }
+
+  if (debug_mode_ && debug_fire_advice_pub_) {
+    publishFireAdviceDebug(
+      context,
+      control_result.cmd,
+      control_result.fire_advice_debug);
   }
 
   if (debug_mode_ && debug_armor_selection_pub_ && control_result.has_tracking) {

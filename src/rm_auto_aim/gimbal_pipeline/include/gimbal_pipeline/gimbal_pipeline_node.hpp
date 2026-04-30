@@ -29,6 +29,7 @@
 #include <rm_interfaces/msg/armor.hpp>
 #include <rm_interfaces/msg/armors.hpp>
 #include <rm_interfaces/msg/delay_audit.hpp>
+#include <rm_interfaces/msg/fire_advice_debug.hpp>
 #include <rm_interfaces/msg/gimbal_cmd.hpp>
 #include <rm_interfaces/msg/maneuver_state.hpp>
 #include <rm_interfaces/msg/maneuver_states.hpp>
@@ -121,6 +122,10 @@ class GimbalPipelineNode : public rclcpp::Node {
       const gimbal_controller::GimbalControlContext &context,
       const gimbal_controller::DelayAuditSnapshot &audit,
       const std::string &strategy_name);
+  void publishFireAdviceDebug(
+      const gimbal_controller::GimbalControlContext &context,
+      const rm_interfaces::msg::GimbalCmd &cmd,
+      const gimbal_controller::FireAdviceDebugSnapshot &snapshot);
   void publishArmorSelectionDebug(
       const gimbal_controller::GimbalControlContext &context,
       const std::string &strategy_name);
@@ -239,6 +244,8 @@ class GimbalPipelineNode : public rclcpp::Node {
   rclcpp::Publisher<rm_interfaces::msg::Target>::SharedPtr debug_target_pub_;
   rclcpp::Publisher<rm_interfaces::msg::DelayAudit>::SharedPtr
       debug_delay_audit_pub_;
+  rclcpp::Publisher<rm_interfaces::msg::FireAdviceDebug>::SharedPtr
+      debug_fire_advice_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr
       debug_armor_selection_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
