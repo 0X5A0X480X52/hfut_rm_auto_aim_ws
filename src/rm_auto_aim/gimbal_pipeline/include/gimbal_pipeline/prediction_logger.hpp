@@ -120,8 +120,13 @@ struct LogTrackerState {
   // ── Binding/period evidence diagnostics ──
   double binding_confidence = std::numeric_limits<double>::quiet_NaN();
   int switch_event = 0;      // 0=no switch, 1=switch confirmed
-  int switch_reason = 0;     // 0=none,1=confirmed,2=reject_prob,3=reject_margin,4=transition_abort
+  int switch_reason = 0;     // 0=none,1=confirmed,2=reject_prob,3=reject_margin,4=transition_abort,5=z_audit_rebind
   int transition_state = 0;  // 0=LOCKED, 1=TRANSITION_CANDIDATE
+  int z_audit_conflict_count = 0;
+  double z_audit_confidence = std::numeric_limits<double>::quiet_NaN();
+  double publish_x = std::numeric_limits<double>::quiet_NaN();
+  double publish_y = std::numeric_limits<double>::quiet_NaN();
+  double publish_z = std::numeric_limits<double>::quiet_NaN();
   double period_confidence = std::numeric_limits<double>::quiet_NaN();
   int period_update_applied = 0;
   int period_phase_index = -1;

@@ -59,6 +59,11 @@ class OutpostArmorTracker : public BaseTracker {
     int switch_event = 0;      // 0=no switch, 1=switch confirmed
     int switch_reason = 0;     // 0=none,1=confirmed,2=reject_prob,3=reject_margin,4=transition_abort
     int transition_state = 0;  // 0=LOCKED, 1=TRANSITION_CANDIDATE
+    int z_audit_conflict_count = 0;
+    double z_audit_confidence = std::numeric_limits<double>::quiet_NaN();
+    double publish_x = std::numeric_limits<double>::quiet_NaN();
+    double publish_y = std::numeric_limits<double>::quiet_NaN();
+    double publish_z = std::numeric_limits<double>::quiet_NaN();
     double period_confidence = std::numeric_limits<double>::quiet_NaN();
     int period_update_applied = 0;
     int period_phase_index = -1;
@@ -82,7 +87,7 @@ class OutpostArmorTracker : public BaseTracker {
   const SpinFilterInterface &spin_filter() const override { return outpost_ukf_; }
   ManeuverResult assess_maneuver() const override;
 
-  Eigen::Vector3d get_publish_velocity() const override { return publish_velocity_; }
+  Eigen::Vector3d get_publish_velocity() const override { return center_velocity_est_; }
   bool is_ambiguous_single_mode() const override;
   int effective_num_armors() const override;
   int selected_panel_id() const;
@@ -221,6 +226,9 @@ class OutpostArmorTracker : public BaseTracker {
   int transition_confirm_count_ = 0;
   int switch_event_ = 0;
   int switch_reason_ = 0;
+  int z_audit_conflict_count_ = 0;
+  double z_audit_confidence_ = std::numeric_limits<double>::quiet_NaN();
+  bool binding_conflict_for_update_ = false;
   double binding_confidence_ = std::numeric_limits<double>::quiet_NaN();
   int bound_height_label_ = static_cast<int>(HeightSemantic::UNKNOWN);
 

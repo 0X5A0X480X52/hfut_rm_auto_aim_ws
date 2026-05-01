@@ -946,6 +946,11 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("outpost.binding_period_update_min_jump", 0.015);
   declare_parameter("outpost.binding_dz_ema_alpha", 0.20);
   declare_parameter("outpost.binding_confidence_floor", 0.15);
+  declare_parameter("outpost.z_audit_rebind_enable", true);
+  declare_parameter("outpost.z_audit_rebind_confirm_frames", 3);
+  declare_parameter("outpost.z_audit_rebind_min_confidence", 0.60);
+  declare_parameter("outpost.z_audit_rebind_min_jump", 0.015);
+  declare_parameter("outpost.binding_conflict_position_scale", 0.10);
   declare_parameter("outpost.alpha_pos", 0.65);
   declare_parameter("outpost.beta_vel", 0.30);
   declare_parameter("outpost.alpha_yaw", 0.60);
@@ -1468,6 +1473,16 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("outpost.binding_dz_ema_alpha").as_double();
     c.outpost.binding_confidence_floor =
       get_parameter("outpost.binding_confidence_floor").as_double();
+    c.outpost.z_audit_rebind_enable =
+      get_parameter("outpost.z_audit_rebind_enable").as_bool();
+    c.outpost.z_audit_rebind_confirm_frames =
+      get_parameter("outpost.z_audit_rebind_confirm_frames").as_int();
+    c.outpost.z_audit_rebind_min_confidence =
+      get_parameter("outpost.z_audit_rebind_min_confidence").as_double();
+    c.outpost.z_audit_rebind_min_jump =
+      get_parameter("outpost.z_audit_rebind_min_jump").as_double();
+    c.outpost.binding_conflict_position_scale =
+      get_parameter("outpost.binding_conflict_position_scale").as_double();
     c.outpost.alpha_pos = get_parameter("outpost.alpha_pos").as_double();
     c.outpost.beta_vel = get_parameter("outpost.beta_vel").as_double();
     c.outpost.alpha_yaw = get_parameter("outpost.alpha_yaw").as_double();
@@ -1517,6 +1532,14 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       std::clamp(c.outpost.binding_dz_ema_alpha, 0.01, 1.0);
     c.outpost.binding_confidence_floor =
       std::clamp(c.outpost.binding_confidence_floor, 0.0, 0.95);
+    c.outpost.z_audit_rebind_confirm_frames =
+      std::max(1, c.outpost.z_audit_rebind_confirm_frames);
+    c.outpost.z_audit_rebind_min_confidence =
+      std::clamp(c.outpost.z_audit_rebind_min_confidence, 0.0, 1.0);
+    c.outpost.z_audit_rebind_min_jump =
+      std::max(0.0, c.outpost.z_audit_rebind_min_jump);
+    c.outpost.binding_conflict_position_scale =
+      std::clamp(c.outpost.binding_conflict_position_scale, 0.0, 1.0);
     c.outpost.weight_xy_residual = std::max(0.0, c.outpost.weight_xy_residual);
     c.outpost.weight_switch_penalty = std::max(0.0, c.outpost.weight_switch_penalty);
 
@@ -1811,6 +1834,11 @@ void GimbalPipelineNode::armorsCallback(
               st.switch_event = snap.switch_event;
               st.switch_reason = snap.switch_reason;
               st.transition_state = snap.transition_state;
+              st.z_audit_conflict_count = snap.z_audit_conflict_count;
+              st.z_audit_confidence = snap.z_audit_confidence;
+              st.publish_x = snap.publish_x;
+              st.publish_y = snap.publish_y;
+              st.publish_z = snap.publish_z;
               st.period_confidence = snap.period_confidence;
               st.period_update_applied = snap.period_update_applied;
               st.period_phase_index = snap.period_phase_index;

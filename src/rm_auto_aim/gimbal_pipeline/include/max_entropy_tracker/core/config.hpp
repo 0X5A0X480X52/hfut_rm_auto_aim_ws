@@ -189,6 +189,11 @@ struct OutpostParameters {
   double binding_period_update_min_jump = 0.015;
   double binding_dz_ema_alpha = 0.20;
   double binding_confidence_floor = 0.15;
+  bool z_audit_rebind_enable = true;
+  int z_audit_rebind_confirm_frames = 3;
+  double z_audit_rebind_min_confidence = 0.60;
+  double z_audit_rebind_min_jump = 0.015;
+  double binding_conflict_position_scale = 0.10;
 
   // Kinematic smoothing gains
   double alpha_pos = 0.65;

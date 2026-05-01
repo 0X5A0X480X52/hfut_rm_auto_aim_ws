@@ -78,6 +78,8 @@ PredictionLogger::PredictionLogger(const std::string &output_dir,
                  "obs_z_jump,obs_dz_from_audit_center,"
                  "obs_z_audit_cost_0,obs_z_audit_cost_1,obs_z_audit_cost_2,"
                  "binding_confidence,switch_event,switch_reason,transition_state,"
+                 "z_audit_conflict_count,z_audit_confidence,"
+                 "publish_x,publish_y,publish_z,"
                  "period_confidence,period_update_applied,period_phase_index,spin_direction,"
                  "dz_small_est,dz_large_est\n";
 }
@@ -195,6 +197,11 @@ void PredictionLogger::logTrackerState(int64_t timestamp_ns,
               << s.switch_event << ','
               << s.switch_reason << ','
               << s.transition_state << ','
+              << s.z_audit_conflict_count << ','
+              << s.z_audit_confidence << ','
+              << s.publish_x << ','
+              << s.publish_y << ','
+              << s.publish_z << ','
               << s.period_confidence << ','
               << s.period_update_applied << ','
               << s.period_phase_index << ','
