@@ -24,3 +24,4 @@ MvSdkLog/**
 docs/
 .claude/
 CLAUDE.md
+.worktrees/
