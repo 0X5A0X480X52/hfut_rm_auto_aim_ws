@@ -19,7 +19,7 @@ gimbal_pipeline:
     ukf.alpha: 0.001
     ukf.beta: 2.0
     ukf.kappa: 0.0
-    ukf.obs_noise_pos: 0.03
+    ukf.obs_noise_pos: 0.003
     ukf.obs_noise_yaw: 0.03
     ukf.dual_obs_noise_pos: 0.01
     ukf.dual_obs_noise_yaw: 0.03
@@ -32,15 +32,15 @@ gimbal_pipeline:
     motion.translation_model: "Singer"  # "CV" | "Singer"
     motion.cv_process_noise_vel: 1.20
     motion.ca_process_noise_acc: 0.1
-    motion.singer_alpha: 0.8
-    motion.singer_sigma: 0.5
+    motion.singer_alpha: 1.8
+    motion.singer_sigma: 0.8
     motion.process_noise_r: 0.002
     motion.process_noise_dz: 0.00005
 
     # Spin model
-    spin.spin_process_noise_yaw_rate: 4.5
-    spin.spin_process_noise_yaw_acc: 18.0
-    spin.spin_process_noise_delta_rate: 3.50
+    spin.spin_process_noise_yaw_rate: 4.25
+    spin.spin_process_noise_yaw_acc: 17.0
+    spin.spin_process_noise_delta_rate: 3.25
     spin.spin_process_noise_delta_acc: 45.0
 
   #$
@@ -140,7 +140,7 @@ gimbal_pipeline:
     smoother.enable: false
     smoother.enable_position_smooth: false
     smoother.enable_yaw_smooth: false
-    smoother.enable_velocity_smooth: false
+    smoother.enable_velocity_smooth: true
     smoother.enable_structural_convergence: true
     smoother.pos_min_cutoff: 1.0
     smoother.pos_beta: 0.01
@@ -196,16 +196,16 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     controller.bullet_speed: 22.5
     controller.control_rate: 250.0
-    controller.strategy: "predicted"    # "current" | "predicted" | "mpc" | "state_machine"
+    controller.strategy: "mpc"    # "current" | "predicted" | "mpc" | "state_machine"
     controller.ballistic_mode: "local"  # "service" | "local"
 
     controller.solver.shooting_range_width: 0.1
     controller.solver.shooting_range_height: 0.1
     controller.solver.side_angle: 25.0
     controller.solver.min_switching_v_yaw: 0.0
-    controller.solver.prediction_delay: 0.120
+    controller.solver.prediction_delay: 0.03
     controller.solver.max_prediction_time: 0.500
-    controller.solver.max_tracking_v_yaw: 12.0
+    controller.solver.max_tracking_v_yaw: 15.0
     controller.solver.transfer_thresh: 5
     controller.solver.gravity: 9.8
     controller.solver.resistance: 0.001
@@ -235,8 +235,8 @@ gimbal_pipeline:
     # 固定 ID 模式：只生成指定 ID 的虚拟装甲板（不做最近候选选择）
     # controller.solver.selection_method: "virtual_fixed_id"
     controller.solver.virtual_pose.auto_switch.enable: true
-    controller.solver.virtual_pose.auto_switch.enter_vyaw: 8.0
-    controller.solver.virtual_pose.auto_switch.exit_vyaw: 6.0
+    controller.solver.virtual_pose.auto_switch.enter_vyaw: 6.0
+    controller.solver.virtual_pose.auto_switch.exit_vyaw: 4.0
     # auto_switch 模式可独立配置："virtual_pose" | "virtual_fixed_id"
     controller.solver.virtual_pose.auto_switch.selection_method: "virtual_pose"
     # auto_switch 固定 ID（仅在 selection_method=virtual_fixed_id 时生效）
@@ -246,7 +246,7 @@ gimbal_pipeline:
     # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
     # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
     # 若启用自适应 delay（adaptive_delay.enable=true），本值作为 delay 初始值。
-    controller.solver.controller_delay: 0.01
+    controller.solver.controller_delay: 0.0
 
     # ── 自适应 controller_delay（AIMD 策略）────────────────────────
     # 启用后根据目标线速度/角速度及连续未开火帧数动态调整 controller_delay：
@@ -282,10 +282,10 @@ gimbal_pipeline:
     # controller.output_filter.max_pitch_diff: 10.0    # 度，pitch_diff 绝对上限
 
     # # 1. 外点检测
-    # controller.output_filter.enable_outlier_rejection: true
-    # controller.output_filter.outlier_threshold_yaw: 8.0    # 帧间跳变判定阈值 (度)
-    # controller.output_filter.outlier_threshold_pitch: 5.0  # 帧间跳变判定阈值 (度)
-    # controller.output_filter.max_outlier_count: 3          # 连续外点超此数后强制 accept
+    controller.output_filter.enable_outlier_rejection: true
+    controller.output_filter.outlier_threshold_yaw: 8.0    # 帧间跳变判定阈值 (度)
+    controller.output_filter.outlier_threshold_pitch: 5.0  # 帧间跳变判定阈值 (度)
+    controller.output_filter.max_outlier_count: 3          # 连续外点超此数后强制 accept
 
     # # 2. Rate Limiter
     # controller.output_filter.enable_rate_limiter: true
@@ -297,8 +297,8 @@ gimbal_pipeline:
     # controller.output_filter.moving_average_window_size: 10  # 采样帧数，>=1
 
     # # 4. EMA 平滑（默认关闭；开启会引入 1~2 帧延迟）
-    # controller.output_filter.enable_ema: true
-    # controller.output_filter.ema_alpha: 0.6         # (0,1]，越大越跟随，越小越平滑
+    controller.output_filter.enable_ema: false
+    controller.output_filter.ema_alpha: 0.6         # (0,1]，越大越跟随，越小越平滑
 
     # # 5. 1-Euro 自适应低通滤波（默认关闭；运动快时自动减弱平滑，适合高速目标）
     # controller.output_filter.enable_one_euro: true
@@ -338,18 +338,18 @@ gimbal_pipeline:
     # controller.mpc.s_yaw: 0.001
     # controller.mpc.s_pitch: 0.001
 
-    controller.mpc.N: 50
-    controller.mpc.dt: 0.05    
-    controller.mpc.control_delay_s: 0.00  
+    controller.mpc.N: 30
+    controller.mpc.dt: 0.02    
+    controller.mpc.control_delay_s: 0.01  
     controller.mpc.max_accel: 30.0    
-    controller.mpc.q_yaw: 1000.0    
-    controller.mpc.q_pitch: 100.0    
-    controller.mpc.q_yaw_vel: 1.0    
+    controller.mpc.q_yaw: 100.0    
+    controller.mpc.q_pitch: 70.0    
+    controller.mpc.q_yaw_vel: 6.0    
     controller.mpc.q_pitch_vel: 1.0
     controller.mpc.r_yaw: 0.001    
-    controller.mpc.r_pitch: 0.001    
+    controller.mpc.r_pitch: 0.005 
     controller.mpc.s_yaw: 0.001    
-    controller.mpc.s_pitch: 0.001
+    controller.mpc.s_pitch: 0.02
 
     # MPC 数值稳健性: 统一 Q/R/S 量纲归一化
     # mode:
@@ -412,7 +412,7 @@ gimbal_pipeline:
     #   yaw_velocity:    直接 clamp 到 [-max_v_yaw, +max_v_yaw]
     # enable: false 时不做任何处理，行为与原版完全一致
     controller.mpc.vel_clamp.enable: true
-    controller.mpc.vel_clamp.max_linear_speed: 1.00   # 线速度标量上限 (m/s)
+    controller.mpc.vel_clamp.max_linear_speed: 2.50   # 线速度标量上限 (m/s)
     controller.mpc.vel_clamp.max_v_yaw: 10.0         # yaw 角速度上限 (rad/s)
 
     # MPC 延时补偿: 启用后参考轨迹生成考虑 processing_delay + controller_delay + prediction_delay
@@ -421,7 +421,7 @@ gimbal_pipeline:
     controller.mpc.enable_delay_compensation: true
     controller.mpc.prediction_delay_s: 0.10      # 额外预测延迟 (秒), 叠加在 processing_delay 之上
     controller.mpc.flight_time_iters: 2          # 飞行时间迭代补偿次数
-    controller.mpc.max_processing_delay_s: 0.5   # 最大处理延迟 clamp 上限 (秒)
+    controller.mpc.max_processing_delay_s: 0.05   # 最大处理延迟 clamp 上限 (秒)
     # yaw 速度前馈等效前瞻时间 (秒): yaw_ff ≈ target_yaw_velocity * k_s
     # k_s=0.0 时禁用，推荐从 0.02~0.08 逐步调参
     # controller.mpc.yaw_feedforward_k_s: 0.000

@@ -55,26 +55,26 @@ function bringup() {
     # Source ROS2 and project environment
     source /opt/ros/humble/setup.bash
     source $WORKING_DIR/install/setup.bash
-    source /home/hfut-nuc/next_navigator/env.zsh
-    source /opt/intel/oneapi/setvars.sh
+    # source /home/hfut-nuc/next_navigator/env.zsh
+    # source /opt/intel/oneapi/setvars.sh
     source /opt/MVS/bin/set_env_path.sh
 
     cleanup_shm   # 启动前再清一次 SHM（保险）
 
     # USB 相机权限设置
-    USB_LINE=$(lsusb | grep "Hikrobot MV-CS016-10UC" | head -1)
-    if [ ! -z "$USB_LINE" ]; then
-        echo "找到Hikrobot相机设备: $USB_LINE"
-        BUS_NUM=$(echo "$USB_LINE" | sed -E 's/Bus ([0-9]+) Device ([0-9]+):.*/\1/')
-        DEV_NUM=$(echo "$USB_LINE" | sed -E 's/Bus ([0-9]+) Device ([0-9]+):.*/\2/')
-        BUS_NUM=$(printf "%03d" $BUS_NUM)
-        DEV_NUM=$(printf "%03d" $DEV_NUM)
-        USB_DEVICE="/dev/bus/usb/$BUS_NUM/$DEV_NUM"
-        echo "设置USB设备权限: $USB_DEVICE"
-        chmod 666 "$USB_DEVICE"
-    else
-        echo "警告: 未找到Hikrobot MV-CS016-10UC相机设备"
-    fi
+    # USB_LINE=$(lsusb | grep "Hikrobot MV-CS016-10UC" | head -1)
+    # if [ ! -z "$USB_LINE" ]; then
+    #     echo "找到Hikrobot相机设备: $USB_LINE"
+    #     BUS_NUM=$(echo "$USB_LINE" | sed -E 's/Bus ([0-9]+) Device ([0-9]+):.*/\1/')
+    #     DEV_NUM=$(echo "$USB_LINE" | sed -E 's/Bus ([0-9]+) Device ([0-9]+):.*/\2/')
+    #     BUS_NUM=$(printf "%03d" $BUS_NUM)
+    #     DEV_NUM=$(printf "%03d" $DEV_NUM)
+    #     USB_DEVICE="/dev/bus/usb/$BUS_NUM/$DEV_NUM"
+    #     echo "设置USB设备权限: $USB_DEVICE"
+    #     chmod 666 "$USB_DEVICE"
+    # else
+    #     echo "警告: 未找到Hikrobot MV-CS016-10UC相机设备"
+    # fi
 
     nohup ros2 launch $LAUNCH_FILE > "$OUTPUT_FILE" 2>&1 &
     echo "[WATCHDOG] ROS2 launched, logging to $OUTPUT_FILE"
