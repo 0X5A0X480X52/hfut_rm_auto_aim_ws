@@ -38,6 +38,25 @@ struct UKFParameters {
   // Innovation gating
   bool enable_innovation_gating = false;
   double innovation_gate_chi2_threshold = 9.49;
+
+  // ── 方向一：软降权（结构冻结模式） ──
+  // "BINARY" — 原行为：单观测时几何参数行完全置零
+  // "SOFT"   — 渐进式：根据 delta_angle 连续缩放几何参数行增益
+  std::string freeze_mode = "BINARY";
+
+  // 软降权截止角度（度），|delta_angle| 超过此值时权重降为 0
+  double soft_freeze_threshold_deg = 45.0;
+
+  // ── 方向二：R 矩阵来源 ──
+  // "CONFIG"         — 原行为：使用 YAML 中的静态噪声参数
+  // "PNP_COVARIANCE" — 从 PnP 协方差传播推导 R
+  std::string r_source = "CONFIG";
+
+  // PnP 协方差传播的像素噪声标准差（像素），仅在 r_source=PNP_COVARIANCE 时使用
+  double pnp_cov_pixel_noise = 1.0;
+
+  // R 矩阵中 yaw 分量的额外膨胀系数（应对 PnP 协方差对 yaw 的不确定性低估）
+  double pnp_cov_yaw_inflation = 2.0;
 };
 
 struct MotionModelParameters {
