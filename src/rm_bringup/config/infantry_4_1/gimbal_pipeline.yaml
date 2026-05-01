@@ -212,8 +212,8 @@ gimbal_pipeline:
     controller.solver.iteration_times: 20
     controller.solver.pitch_offset: 0.0
     controller.solver.yaw_offset: 0.0
-    controller.solver.facing_enter_angle: 65.0  # 55.0
-    controller.solver.facing_exit_angle: 85.0  # 85.0
+    controller.solver.facing_enter_angle: 85.0  # 55.0
+    controller.solver.facing_exit_angle: 95.0  # 85.0
     # 径向选板动态阈值（仅对 min_movement_with_radial 生效）
     # 角度单位: 度；角速度单位: rad/s
     # |v_yaw| 越大，径向过滤阈值越小：
@@ -296,7 +296,7 @@ gimbal_pipeline:
     #   min_movement_with_radial  — 过滤后按机器人中心径向夹角最小选板
     #   min_movement              — 纯最小运动量，无朝向过滤
     #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
-    controller.solver.selection_method: "min_movement_with_radial"
+    controller.solver.selection_method: "min_movement_with_facing"
 
     # controller.state_machine.facing_enter_angle: 40.0
     # controller.state_machine.facing_exit_angle: 55.0

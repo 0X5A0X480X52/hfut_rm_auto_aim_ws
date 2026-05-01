@@ -2,12 +2,14 @@
 # watch_dog.sh - ROS2 watchdog for HFUT RM Auto Aim Project
 # Optimized: clean SHM, disable FastDDS SHM, restart on heartbeat loss
 
+echo "[WATCHDOG] START DOMAIN=$ROS_DOMAIN_ID"
+
 # ===========================
 # Configurable parameters
 # ===========================
 TIMEOUT=10                  # 心跳检测间隔（秒）
 NAMESPACE=""                # ROS2 命名空间，例如 "/infantry_3"
-NODE_NAMES=("armor_detector")  # 监控节点列表，用空格分隔
+NODE_NAMES=("armor_detector" "serial_driver" "gimbal_pipeline")  # 监控节点列表，用空格分隔
 USER="$(whoami)"
 HOME_DIR=$(eval echo ~$USER)
 WORKING_DIR="$HOME_DIR/hfut_rm_auto_aim_ws/"  # 代码目录
@@ -20,6 +22,7 @@ OUTPUT_FILE="$WORKING_DIR/screen.output"  # 启动日志
 rmw="rmw_fastrtps_cpp"          # RMW 实现，可改为 rmw_cyclonedds_cpp
 export RMW_IMPLEMENTATION="$rmw"
 export FASTDDS_SHM_DISABLE=1     # 禁用 FastDDS SHM 避免锁死问题
+export ROS_DOMAIN_ID=10
 
 export ROS_HOSTNAME=$(hostname)
 export ROS_HOME=${ROS_HOME:=$HOME_DIR/.ros}
@@ -51,6 +54,7 @@ function cleanup_shm() {
 # ===========================
 function bringup() {
     echo "[WATCHDOG] Bringing up ROS2..."
+    echo "[WATCHDOG] ROS_DOMAIN_ID=$ROS_DOMAIN_ID"
     
     # Source ROS2 and project environment
     source /opt/ros/humble/setup.bash
