@@ -300,10 +300,19 @@ bool DualRadiusSpinUKF::update_single(
   if (!K_opt) return false;
   Eigen::MatrixXd K = K_opt.value();
 
-  // Freeze structural params in single-obs
-  K.row(idx.R1()).setZero();
-  K.row(idx.R2()).setZero();
-  K.row(idx.DZA()).setZero();
+  // 结构参数更新控制（方向一：BINARY vs SOFT）
+  if (config_.ukf.freeze_mode == "SOFT") {
+    double delta = x_(idx.DELTA());
+    double w = weight_from_delta_angle(delta);
+    K.row(idx.R1()) *= w;
+    K.row(idx.R2()) *= w;
+    K.row(idx.DZA()) *= w;
+  } else {
+    // BINARY 模式（原行为）：单观测时几何参数行完全置零
+    K.row(idx.R1()).setZero();
+    K.row(idx.R2()).setZero();
+    K.row(idx.DZA()).setZero();
+  }
 
   // Apply update
   apply_kalman_update(K, innov, Pzz);
@@ -617,6 +626,18 @@ bool DualRadiusSpinUKF::check_innovation_gate(
   bool pos_pass = (chi2_pos <= threshold * 3.0);
 
   return yaw_pass || pos_pass;
+}
+
+double DualRadiusSpinUKF::weight_from_delta_angle(double delta) const {
+  const double threshold_rad = config_.ukf.soft_freeze_threshold_deg * M_PI / 180.0;
+
+  // |delta| 超过阈值 → 完全冻结
+  if (std::abs(delta) >= threshold_rad) return 0.0;
+
+  // w = cos²(π/2 * |delta| / threshold)，在 [0, threshold] 上从 1.0 平滑降至 0.0
+  double ratio = std::abs(delta) / threshold_rad;
+  double cos_val = std::cos(M_PI / 2.0 * ratio);
+  return cos_val * cos_val;
 }
 
 }  // namespace fyt::auto_aim
