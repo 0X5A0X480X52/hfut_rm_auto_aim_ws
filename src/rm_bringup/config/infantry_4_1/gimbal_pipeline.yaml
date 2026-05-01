@@ -19,7 +19,7 @@ gimbal_pipeline:
     ukf.alpha: 0.001
     ukf.beta: 2.0
     ukf.kappa: 0.0
-    ukf.obs_noise_pos: 0.08
+    ukf.obs_noise_pos: 0.8
     ukf.obs_noise_yaw: 0.05
     ukf.dual_obs_noise_pos: 0.01
     ukf.dual_obs_noise_yaw: 0.03
@@ -32,8 +32,8 @@ gimbal_pipeline:
     motion.translation_model: "Singer"  # "CV" | "Singer"
     motion.cv_process_noise_vel: 1.20
     motion.ca_process_noise_acc: 0.1
-    motion.singer_alpha: 1.5
-    motion.singer_sigma: 0.30
+    motion.singer_alpha: 10.5
+    motion.singer_sigma: 15.0
     motion.process_noise_r: 0.002
     motion.process_noise_dz: 0.00005
 
@@ -69,18 +69,18 @@ gimbal_pipeline:
     constraints.max_dz: 1.0
 
     # Outpost tracker (known 3-armor geometry + max-entropy mode switch)
-    outpost.translation_model: "CV"   # "CV" | "CA" | "Singer"
-    outpost.rotation_model: "CV"      # "CV" | "CA"
+    outpost.translation_model: "CA"   # "CV" | "CA" | "Singer"
+    outpost.rotation_model: "CA"      # "CV" | "CA"
     # Outpost state machine thresholds (independent from tracker.* used by adaptive)
     outpost.tracking_thres: 2
-    outpost.lost_thres: 50
-    outpost.temp_lost_thres: 5
-    outpost.max_match_distance: 5.0
-    outpost.max_match_yaw_diff: 3.0
-    outpost.singer_alpha: 0.0          # <=0: fallback to motion.singer_alpha
-    outpost.singer_sigma: 0.0          # <=0: fallback to motion.singer_sigma
-    outpost.spin_process_noise_theta_rate: 0.0  # <=0: fallback to spin.spin_process_noise_delta_rate
-    outpost.spin_process_noise_theta_acc: 0.0   # <=0: fallback to spin.spin_process_noise_delta_acc
+    outpost.lost_thres: 90
+    outpost.temp_lost_thres: 10
+    outpost.max_match_distance: 2.0
+    outpost.max_match_yaw_diff: 0.50
+    outpost.singer_alpha: 0.01          # <=0: fallback to motion.singer_alpha
+    outpost.singer_sigma: 0.01          # <=0: fallback to motion.singer_sigma
+    outpost.spin_process_noise_theta_rate: 5.0  # <=0: fallback to spin.spin_process_noise_delta_rate
+    outpost.spin_process_noise_theta_acc: 1.0   # <=0: fallback to spin.spin_process_noise_delta_acc
     outpost.radius: 0.275
     # 语义约定:
     #   id0=最高, id1=中间, id2=最低
@@ -101,7 +101,7 @@ gimbal_pipeline:
     outpost.max_prob_enter: 0.60
     outpost.max_prob_exit: 0.75
     outpost.stable_frames: 4
-    outpost.z_history_window: 15
+    outpost.z_history_window: 35
     outpost.single_mode_confidence_scale: 0.70
     outpost.binding_enable_multi_obs: false
     outpost.binding_transition_confirm_frames: 3
@@ -111,7 +111,7 @@ gimbal_pipeline:
     outpost.binding_min_candidate_prob: 0.40
     outpost.binding_min_candidate_margin: 0.12
     outpost.binding_switch_strong_score: 0.60
-    outpost.binding_period_window: 12
+    outpost.binding_period_window: 30
     outpost.binding_period_weight: 0.60
     outpost.binding_period_min_spin_rate: 0.8
     outpost.binding_period_update_min_confidence: 0.55
@@ -138,7 +138,7 @@ gimbal_pipeline:
 
     # Output smoother (1-Euro filter + Robbins-Monro)
     smoother.enable: true
-    smoother.enable_position_smooth: false
+    smoother.enable_position_smooth: true
     smoother.enable_yaw_smooth: false
     smoother.enable_velocity_smooth: true
     smoother.enable_structural_convergence: true
@@ -212,8 +212,8 @@ gimbal_pipeline:
     controller.solver.iteration_times: 20
     controller.solver.pitch_offset: 0.0
     controller.solver.yaw_offset: 0.0
-    controller.solver.facing_enter_angle: 85.0  # 55.0
-    controller.solver.facing_exit_angle: 95.0  # 85.0
+    controller.solver.facing_enter_angle: 65.0  # 55.0
+    controller.solver.facing_exit_angle: 75.0  # 85.0
     # 径向选板动态阈值（仅对 min_movement_with_radial 生效）
     # 角度单位: 度；角速度单位: rad/s
     # |v_yaw| 越大，径向过滤阈值越小：
@@ -248,6 +248,22 @@ gimbal_pipeline:
     # controller.solver.adaptive_delay.min_delay: 0.0            # delay 下限 (秒)
     # controller.solver.adaptive_delay.max_linear_speed: 3.0     # 线速度归一化参考 (m/s)
     # controller.solver.adaptive_delay.max_angular_speed: 10.0   # 角速度归一化参考 (rad/s)
+
+    # FireAdvice 触发策略参数
+    controller.fire.trigger_to_muzzle_s: 0.0           # 触发到枪口的时延补偿 (s)
+    controller.fire.decision_policy: "axis_threshold" # 开火决策策略
+    controller.fire.flight_time_iters: 2               # 飞行时间迭代次数
+    controller.fire.use_gimbal_kinematics: true      # 使用云台运动学补偿
+    # 目标可打性策略：
+    #   facing_only: 仅允许朝向可打候选触发 fire=true（推荐）
+    #   legacy_all : 兼容旧行为，所有候选都可触发 fire=true
+    controller.fire.target_visibility_policy: "facing_only"
+    # FireAdvice 装甲板朝向过滤开角（度）
+    # 定义：装甲板法向与“装甲板 -> 枪口(坐标原点)”夹角的允许全开角。
+    #   180.0: 不过滤（兼容旧行为）
+    #   120.0: 常用，过滤明显背向板
+    #   90.0 : 更严格，只保留近正向板
+    controller.fire.facing_filter_opening_angle_deg: 60.0
 
     # ── GimbalCmd 输出端保护滤波器 ──────────────────────────────────
     # 在 gimbal_cmd 发布前对 yaw_diff / pitch_diff 执行多级可配置保护：
@@ -296,7 +312,8 @@ gimbal_pipeline:
     #   min_movement_with_radial  — 过滤后按机器人中心径向夹角最小选板
     #   min_movement              — 纯最小运动量，无朝向过滤
     #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
-    controller.solver.selection_method: "min_movement_with_facing"
+    controller.solver.selection_method: "facing_or_virtual_pose"
+    # controller.solver.virtual_pose.fixed_id: 1
 
     # controller.state_machine.facing_enter_angle: 40.0
     # controller.state_machine.facing_exit_angle: 55.0
