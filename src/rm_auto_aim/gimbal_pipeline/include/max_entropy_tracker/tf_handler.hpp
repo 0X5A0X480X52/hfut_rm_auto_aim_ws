@@ -66,6 +66,23 @@ class TFHandler {
     auto obs = pose_to_observation(transformed->pose, stamp.seconds());
     // 使用 armor.source_frame 如果可用，否则使用传入的 source_frame
     obs.source_frame = armor.source_frame.empty() ? source_frame : armor.source_frame;
+
+    // 传递 PnP 协方差（若 armor 消息中包含有效的协方差数据）
+    Eigen::Matrix3d cov;
+    cov << armor.pos_covariance[0], armor.pos_covariance[1], armor.pos_covariance[2],
+           armor.pos_covariance[3], armor.pos_covariance[4], armor.pos_covariance[5],
+           armor.pos_covariance[6], armor.pos_covariance[7], armor.pos_covariance[8];
+
+    // 检查协方差是否有效（非零、非 NaN、正对角元）
+    bool cov_valid = (cov.determinant() > 1e-12) &&
+                     (cov(0,0) > 0) && (cov(1,1) > 0) && (cov(2,2) > 0) &&
+                     std::isfinite(cov.norm());
+
+    if (cov_valid) {
+      obs.pos_covariance = cov;
+      obs.yaw_variance = armor.yaw_variance;
+    }
+
     return obs;
   }
 
