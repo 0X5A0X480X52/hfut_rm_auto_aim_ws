@@ -15,15 +15,15 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import ComposableNodeContainer
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch_ros.actions import ComposableNodeContainer, Node
 from launch_ros.descriptions import ComposableNode
 
 
 def generate_launch_description():
     # Get package directories
     pkg_dir = get_package_share_directory("usb_camera_driver")
-    armor_detector_pkg = get_package_share_directory("armor_detector")
+    bringup_pkg = get_package_share_directory("rm_bringup")
 
     # Declare launch arguments
     declare_camera_name = DeclareLaunchArgument(
@@ -39,14 +39,11 @@ def generate_launch_description():
     declare_debug = DeclareLaunchArgument(
         "debug",
         default_value="true",
-        description="Enable debug mode for armor_detector",
+        description="Enable debug mode for blind_detector",
     )
 
     def get_camera_config(name):
-        return os.path.join(pkg_dir, "config", f"{name}_params.yaml")
-
-    def get_detector_config():
-        return os.path.join(armor_detector_pkg, "config", "armor_detector.yaml")
+        return PathJoinSubstitution([pkg_dir, "config", [name, "_params.yaml"]])
 
     # Blind camera node
     blind_camera_node = ComposableNode(
@@ -58,30 +55,54 @@ def generate_launch_description():
         extra_arguments=[{"use_intra_process_comms": True}],
     )
 
-    # Armor detector node (shares namespace for automatic topic matching)
-    # Subscribes to: <namespace>/image_raw, <namespace>/camera_info
-    # Publishes to:  <namespace>/armor_detector/armors, <namespace>/armor_detector/marker
-    armor_detector_node = ComposableNode(
-        package="armor_detector",
+    # Blind detector node (light detection, no PnP)
+    # Subscribes to: <namespace>/image_raw
+    # Publishes to:  /blind_detector/blind (after remap)
+    blind_detector_node = ComposableNode(
+        package="blind_detector",
         plugin="fyt::auto_aim::ArmorDetectorNode",
-        name="armor_detector",
+        name="blind_detector",
         namespace=LaunchConfiguration("namespace"),
         parameters=[
-            get_detector_config(),
-            {"debug": LaunchConfiguration("debug")},
+            os.path.join(bringup_pkg, "config", "node_params", "armor_detector_params.yaml"),
+            {
+                "camera_name": LaunchConfiguration("camera_name"),
+                "camera_yaw": 180.0,
+                "camera_pitch": 8.0,
+                "h_fov": 60.0,
+                "v_fov": 45.0,
+                "debug": LaunchConfiguration("debug"),
+            },
+        ],
+        remappings=[
+            ([LaunchConfiguration("camera_name"), "_image_raw"], "image_raw"),
+            (["blind_detector/", LaunchConfiguration("camera_name"), "/blind"], "/blind_detector/blind"),
         ],
         extra_arguments=[{"use_intra_process_comms": True}],
     )
 
-    # Container for blind camera + armor detector
+    # Container for blind camera + blind detector
     blind_camera_container = ComposableNodeContainer(
         name="blind_camera_detector_container",
         namespace="",
         package="rclcpp_components",
         executable="component_container_mt",
-        composable_node_descriptions=[blind_camera_node, armor_detector_node],
+        composable_node_descriptions=[blind_camera_node, blind_detector_node],
         output="both",
         emulate_tty=True,
+    )
+
+    # image_transport republish: adds compressed topic for foxglove visualization
+    republish_node = Node(
+        package="image_transport",
+        executable="republish",
+        name="image_republish",
+        namespace=LaunchConfiguration("namespace"),
+        arguments=["raw", "compressed"],
+        remappings=[
+            ("in/raw", "image_raw"),
+            ("out", "image_raw"),
+        ],
     )
 
     return LaunchDescription(
@@ -90,5 +111,6 @@ def generate_launch_description():
             declare_namespace,
             declare_debug,
             blind_camera_container,
+            republish_node,
         ]
     )

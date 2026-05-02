@@ -25,15 +25,18 @@ gimbal_pipeline subscribes to:
 """
 
 import os
+import sys
 import yaml
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction, TimerAction
-from launch.substitutions import Command, FindExecutable, LaunchConfiguration
+from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import ComposableNodeContainer, Node, PushRosNamespace
 from launch_ros.descriptions import ComposableNode
 from launch_ros.parameter_descriptions import ParameterValue
+
+sys.path.append(os.path.join(get_package_share_directory('rm_bringup'), 'launch'))
 
 
 def generate_launch_description():
@@ -43,13 +46,12 @@ def generate_launch_description():
             get_package_share_directory('rm_bringup'), 'config', 'launch_params_decoupled.yaml')))
     except Exception:
         launch_params = {
-            'image_source': 'hik',
+            'image_source': 'video',
             'virtual_serial': True,
             'namespace': '',
-            'debug': True,
             'odom2camera': {
-                'xyz': '0.174275 0.000 0.086463',
-                'rpy': '0.0 0.1396 -0.00'
+                'xyz': '0 0 0',
+                'rpy': '0 0 0'
             }
         }
 
@@ -66,8 +68,8 @@ def generate_launch_description():
             'rpy': '0.0 0.0 0.0'
         }
 
-    main_camera_xyz = launch_params.get('odom2camera', {}).get('xyz', '0.174275 0.000 0.086463').strip('"')
-    main_camera_rpy = launch_params.get('odom2camera', {}).get('rpy', '0.0 0.1396 -0.00').strip('"')
+    main_camera_xyz = launch_params.get('odom2camera', {}).get('xyz', '0.174275 0.000 0.086463')
+    main_camera_rpy = launch_params.get('odom2camera', {}).get('rpy', '0.0 0.1396 -0.00')
     blind_camera_xyz = blind_camera_params.get('xyz', '0.05 0.1 0.05').strip('"')
     blind_camera_rpy = blind_camera_params.get('rpy', '0.0 0.0 0.0').strip('"')
 
@@ -87,7 +89,7 @@ def generate_launch_description():
     # Declare launch arguments
     declare_image_source = DeclareLaunchArgument(
         'image_source',
-        default_value=str(launch_params.get('image_source', 'hik')),
+        default_value=str(launch_params.get('image_source', 'video')),
         description='Image source: video | mindvision | hik'
     )
     declare_virtual_serial = DeclareLaunchArgument(
@@ -97,37 +99,45 @@ def generate_launch_description():
     )
     declare_debug = DeclareLaunchArgument(
         'debug',
-        default_value=str(launch_params.get('debug', True)).lower(),
-        description='Enable debug mode'
+        default_value='true',
+        description='Enable debug mode for all nodes'
     )
     declare_namespace = DeclareLaunchArgument(
         'namespace',
         default_value=launch_params.get('namespace', ''),
         description='Namespace for all nodes'
     )
-    robot_description = Command([
-        FindExecutable(name='xacro'),
-        ' ',
-        os.path.join(
-            get_package_share_directory('rm_robot_description'),
-            'urdf', 'rm_gimbal_with_blind_camera.urdf.xacro'),
-        ' main_camera_xyz:="', main_camera_xyz, '"',
-        ' main_camera_rpy:="', main_camera_rpy, '"',
+
+    # ── URDF 机器人描述 (含补盲相机) ──
+    # 注意: launch_params_decoupled.yaml 中 main_camera 参数使用了 YAML 转义引号
+    # (如 xyz: "\"0.174 ...\""), 解析后自带 shell 保护引号。
+    # blind_camera_1_params.yaml 是纯字符串, 需要在 Command 中手动加引号。
+    robot_gimbal_description = Command(['xacro ', os.path.join(
+        get_package_share_directory('rm_robot_description'), 'urdf', 'rm_gimbal_with_blind_camera.urdf.xacro'),
+        ' main_camera_xyz:=', main_camera_xyz,
+        ' main_camera_rpy:=', main_camera_rpy,
         ' blind_camera_1_xyz:="', blind_camera_xyz, '"',
-        ' blind_camera_1_rpy:="', blind_camera_rpy, '"',
-    ])
+        ' blind_camera_1_rpy:="', blind_camera_rpy, '"'])
 
     robot_state_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
         parameters=[{
-            'robot_description': ParameterValue(robot_description, value_type=str),
+            'robot_description': ParameterValue(robot_gimbal_description, value_type=str),
             'publish_frequency': 1000.0
-        }],
-        output='screen',
+        }]
     )
 
-    # Ballistic solver
+    # ==================== 装甲板检测节点 (ComposableNode) ====================
+    armor_detector_node = ComposableNode(
+        package='armor_detector',
+        plugin='fyt::auto_aim::ArmorDetectorNode',
+        name='armor_detector',
+        parameters=[get_bringup_params('armor_detector')],
+        extra_arguments=[{'use_intra_process_comms': True}]
+    )
+
+    # ==================== 弹道解算服务 ====================
     ballistic_solver_node = Node(
         package='ballistic_solver',
         executable='ballistic_solver_node_exe',
@@ -137,7 +147,7 @@ def generate_launch_description():
         parameters=[get_pkg_params('ballistic_solver', 'ballistic_solver.yaml')],
     )
 
-    # Gimbal pipeline
+    # ==================== GimbalPipeline 统一节点 ====================
     gimbal_pipeline_node = Node(
         package='gimbal_pipeline',
         executable='gimbal_pipeline_node',
@@ -157,11 +167,10 @@ def generate_launch_description():
         ],
     )
 
-    # Main camera + detector container
-    def create_main_camera_detector_container(context):
+    # ==================== 主相机 + 检测器 容器 ====================
+    def create_camera_detector_container(context):
         image_source = LaunchConfiguration('image_source').perform(context)
-        image_source = image_source.lower() if image_source else 'hik'
-        debug_enabled = LaunchConfiguration('debug').perform(context).lower() == 'true'
+        image_source = image_source.lower() if image_source else 'video'
 
         if image_source == 'video':
             image_node = ComposableNode(
@@ -202,30 +211,18 @@ def generate_launch_description():
                 extra_arguments=[{'use_intra_process_comms': True}]
             )
 
-        # Main camera armor detector (no namespace, default topics)
-        main_armor_detector_node = ComposableNode(
-            package='armor_detector',
-            plugin='fyt::auto_aim::ArmorDetectorNode',
-            name='armor_detector',
-            parameters=[
-                get_bringup_params('armor_detector'),
-                {'debug': debug_enabled},
-            ],
-            extra_arguments=[{'use_intra_process_comms': True}]
-        )
-
         container = ComposableNodeContainer(
-            name='main_camera_detector_container',
+            name='camera_detector_container',
             namespace='',
             package='rclcpp_components',
             executable='component_container_mt',
-            composable_node_descriptions=[image_node, main_armor_detector_node],
+            composable_node_descriptions=[image_node, armor_detector_node],
             output='both',
             emulate_tty=True,
         )
         return [container]
 
-    # Blind camera + blind_detector container
+    # ==================== 补盲相机 + 补盲检测器 容器 ====================
     def create_blind_camera_detector_container(context):
         debug_enabled = LaunchConfiguration('debug').perform(context).lower() == 'true'
 
@@ -249,16 +246,13 @@ def generate_launch_description():
                 get_bringup_params('armor_detector'),
                 {
                     'camera_name': 'blind_camera_1',
-                    'camera_yaw': 180.0,  # blind camera faces backward (pi rad offset from main)
+                    'camera_yaw': 180.0,  # blind camera faces backward
                     'camera_pitch': 0.0,
-                    # image_width/image_height fetched from usb_camera via service
-                    'h_fov': 60.0,
-                    'v_fov': 45.0,
+                    'h_fov': 25.07,
+                    'v_fov': 18.85,
                     'debug': debug_enabled,
                 },
             ],
-            # Remap image subscription to usb_camera's output
-            # and blind output to a clean topic for gimbal_pipeline
             remappings=[
                 ('blind_camera_1_image_raw', 'image_raw'),
                 ('blind_detector/blind_camera_1/blind', '/blind_detector/blind'),
@@ -277,7 +271,7 @@ def generate_launch_description():
         )
         return [container]
 
-    # Serial node
+    # ==================== 串口节点 ====================
     def create_serial_node_action(context):
         virtual_serial = LaunchConfiguration('virtual_serial').perform(context).lower() == 'true'
         if virtual_serial:
@@ -299,7 +293,7 @@ def generate_launch_description():
                 parameters=[get_bringup_params('serial_driver')],
             )]
 
-    # Delayed startup
+    # ==================== 延迟启动配置 ====================
     delay_serial = TimerAction(
         period=1.5,
         actions=[OpaqueFunction(function=create_serial_node_action)],
@@ -308,21 +302,40 @@ def generate_launch_description():
         period=2.0,
         actions=[ballistic_solver_node],
     )
-    delay_main_camera_detector = TimerAction(
+    delay_camera_detector = TimerAction(
         period=2.0,
-        actions=[OpaqueFunction(function=create_main_camera_detector_container)],
+        actions=[OpaqueFunction(function=create_camera_detector_container)],
     )
     delay_blind_camera_detector = TimerAction(
         period=2.0,
         actions=[OpaqueFunction(function=create_blind_camera_detector_container)],
     )
     delay_gimbal_pipeline = TimerAction(
-        period=2.8,
+        period=2.5,
         actions=[gimbal_pipeline_node],
     )
 
+    # ==================== 盲区图像压缩传输 (供 foxglove 订阅) ====================
+    blind_republish_node = Node(
+        package="image_transport",
+        executable="republish",
+        name="blind_image_republish",
+        namespace="blind_camera_1",
+        arguments=["raw", "compressed"],
+        remappings=[
+            ("in/raw", "image_raw"),
+            ("out", "image_raw"),
+        ],
+    )
+    delay_blind_republish = TimerAction(
+        period=2.0,
+        actions=[blind_republish_node],
+    )
+
+    # ==================== 命名空间 ====================
     push_namespace = PushRosNamespace(LaunchConfiguration('namespace'))
 
+    # ==================== 构建启动描述 ====================
     return LaunchDescription([
         declare_image_source,
         declare_virtual_serial,
@@ -334,7 +347,8 @@ def generate_launch_description():
 
         delay_serial,
         delay_ballistic,
-        delay_main_camera_detector,
+        delay_camera_detector,
         delay_blind_camera_detector,
         delay_gimbal_pipeline,
+        delay_blind_republish,
     ])

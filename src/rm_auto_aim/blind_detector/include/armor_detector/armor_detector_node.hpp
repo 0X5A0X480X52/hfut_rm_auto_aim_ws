@@ -20,20 +20,17 @@
 #ifndef ARMOR_DETECTOR_DETECTOR_NODE_HPP_
 #define ARMOR_DETECTOR_DETECTOR_NODE_HPP_
 
+// std
+#include <memory>
+#include <string>
+#include <vector>
 // ros2
-#include <image_transport/image_transport.hpp>
 #include <image_transport/publisher.hpp>
-#include <image_transport/subscriber_filter.hpp>
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <rclcpp/publisher.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
-#include <visualization_msgs/msg/marker_array.hpp>
-// std
-#include <memory>
-#include <string>
-#include <vector>
 // project
 #include "armor_detector/armor_detector.hpp"
 #include "armor_detector/number_classifier.hpp"
@@ -41,7 +38,6 @@
 #include "rm_interfaces/msg/target.hpp"
 #include "rm_interfaces/msg/blind.hpp"
 #include "rm_interfaces/srv/set_mode.hpp"
-#include "rm_interfaces/srv/get_camera_info.hpp"
 #include "rm_utils/heartbeat.hpp"
 #include "rm_utils/logger/log.hpp"
 
@@ -103,11 +99,6 @@ private:
   int image_height_;
   float h_fov_;  // Horizontal field of view in degrees
   float v_fov_;  // Vertical field of view in degrees
-
-  // Camera info service client (lazy fetch on first image)
-  rclcpp::Client<rm_interfaces::srv::GetCameraInfo>::SharedPtr camera_info_client_;
-  bool camera_info_fetched_{false};
-  bool fetchCameraInfoFromDriver();
 
   // Image subscription
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr img_sub_;

@@ -3,9 +3,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <functional>
-#include <map>
 #include <memory>
-#include <numeric>
 #include <string>
 #include <vector>
 // ros2
@@ -42,13 +40,9 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
   h_fov_ = this->declare_parameter("h_fov", 60.0);
   v_fov_ = this->declare_parameter("v_fov", 45.0);
 
-  // Image dimensions - declare with defaults, will be overwritten by service call
+  // Image dimensions (从配置文件中读取)
   image_width_ = this->declare_parameter("image_width", 640);
   image_height_ = this->declare_parameter("image_height", 480);
-
-  // Create service client (actual call deferred to first image callback)
-  std::string service_name = "/" + camera_name_ + "/get_camera_info";
-  camera_info_client_ = this->create_client<rm_interfaces::srv::GetCameraInfo>(service_name);
 
   // 初始化 Detector
   detector_ = initDetector();
@@ -92,16 +86,6 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
 
 void ArmorDetectorNode::imageCallback(
     const sensor_msgs::msg::Image::ConstSharedPtr img_msg) {
-
-  // Lazy fetch camera info on first frame
-  if (!camera_info_fetched_) {
-    camera_info_fetched_ = fetchCameraInfoFromDriver();
-    if (!camera_info_fetched_) {
-      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                           "Camera info not available, using default %dx%d",
-                           image_width_, image_height_);
-    }
-  }
 
   // Detect armors
   auto armors = detectArmors(img_msg);
@@ -225,9 +209,6 @@ std::vector<Armor> ArmorDetectorNode::detectArmors(
 
   auto armors = detector_->detect(img);
 
-  auto final_time = this->now();
-  auto latency = (final_time - img_msg->header.stamp).seconds() * 1000;
-
   // Publish debug info
   if (debug_) {
     /* binary_img_pub_.publish(
@@ -260,12 +241,16 @@ std::vector<Armor> ArmorDetectorNode::detectArmors(
 
     detector_->drawResults(img);
 
-    // Draw latency
-    std::stringstream latency_ss;
-    latency_ss << "Frame rate: " << std::fixed << std::setprecision(2) << 1000/latency + 15
-               << " fps";
-    auto latency_s = latency_ss.str();
-    cv::putText(img, latency_s, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX,
+    // Draw FPS (基于帧间隔而非处理延迟)
+    static rclcpp::Time last_frame_time = this->now();
+    auto now = this->now();
+    double frame_interval = (now - last_frame_time).seconds();
+    last_frame_time = now;
+    double fps = frame_interval > 0.0 ? 1.0 / frame_interval : 0.0;
+    std::stringstream fps_ss;
+    fps_ss << "Frame rate: " << std::fixed << std::setprecision(1) << fps << " fps";
+    auto fps_s = fps_ss.str();
+    cv::putText(img, fps_s, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX,
                 1.0, cv::Scalar(0, 255, 0), 2);
     result_img_pub_.publish(
         cv_bridge::CvImage(img_msg->header, "rgb8", img).toImageMsg());
@@ -376,36 +361,6 @@ void ArmorDetectorNode::setModeCallback(
   }
 
   FYT_WARN("blind_detector", "Set mode to {}", mode_name);
-}
-
-bool ArmorDetectorNode::fetchCameraInfoFromDriver() {
-  if (!camera_info_client_ || !camera_info_client_->service_is_ready()) {
-    return false;
-  }
-
-  auto request = std::make_shared<rm_interfaces::srv::GetCameraInfo::Request>();
-
-  // Use shared_ptr to avoid dangling reference to stack-local promise
-  auto promise = std::make_shared<std::promise<bool>>();
-  auto future = promise->get_future();
-
-  camera_info_client_->async_send_request(request,
-    [this, promise](rclcpp::Client<rm_interfaces::srv::GetCameraInfo>::SharedFuture future) {
-      auto response = future.get();
-      image_width_ = response->width;
-      image_height_ = response->height;
-      FYT_INFO("blind_detector", "Fetched camera info: {}x{}", image_width_, image_height_);
-      promise->set_value(true);
-    });
-
-  // Wait with timeout
-  auto status = future.wait_for(std::chrono::seconds(2));
-  if (status != std::future_status::ready) {
-    FYT_ERROR("blind_detector", "Camera info service call timeout");
-    return false;
-  }
-
-  return future.get();
 }
 
 } // namespace fyt::auto_aim
