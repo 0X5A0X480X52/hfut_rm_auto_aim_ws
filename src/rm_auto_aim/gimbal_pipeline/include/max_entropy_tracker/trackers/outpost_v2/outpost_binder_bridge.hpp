@@ -5,8 +5,9 @@
 #include <memory>
 #include <optional>
 
-#include "max_entropy_tracker/binder/factory/binder_factory.hpp"
+#include "max_entropy_tracker/binder/debug/binder_debug_snapshot.hpp"
 #include "max_entropy_tracker/binder/model/robot_binding_profile.hpp"
+#include "max_entropy_tracker/binder/policy/outpost_legacy_binding_policy.hpp"
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/core/observation.hpp"
 #include "max_entropy_tracker/trackers/outpost_v2/outpost_observation_frontend.hpp"
@@ -24,18 +25,16 @@ class OutpostBinderBridge {
       const ObservationData & obs,
       const std::vector<ObservationData> & all_obs,
       int obs_count,
-      const BindingCandidate & candidate,
+      BindingCandidate & candidate,
       const OutpostRuntimeContext & ctx);
 
   const binder::BinderDebugSnapshot & debug_snapshot() const;
 
  private:
-  static BinderConfig build_binder_config(const UnifiedConfig & cfg);
-
   UnifiedConfig cfg_;
   binder::RobotBindingProfile profile_;
-  std::unique_ptr<binder::BinderPipeline> pipeline_;
-  binder::BinderDebugSnapshot empty_debug_;
+  std::unique_ptr<binder::OutpostLegacyBindingPolicy> policy_;
+  binder::BinderDebugSnapshot debug_;
 };
 
 }  // namespace fyt::auto_aim::outpost_v2

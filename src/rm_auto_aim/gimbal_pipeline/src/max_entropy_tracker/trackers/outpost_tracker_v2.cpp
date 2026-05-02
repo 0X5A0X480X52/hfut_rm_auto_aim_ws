@@ -45,7 +45,12 @@ OutpostTrackerV2::OutpostTrackerV2(const UnifiedConfig &config, double dt,
           config.outpost.mode_exit_confirm_frames,
           config.outpost.mode_min_dwell_frames,
           config.outpost.mode_enter_threshold,
-          config.outpost.mode_exit_threshold}),
+          config.outpost.mode_exit_threshold,
+          config.outpost.entropy_enter,
+          config.outpost.entropy_exit,
+          config.outpost.max_prob_enter,
+          config.outpost.max_prob_exit,
+          config.outpost.stable_frames}),
       ambiguous_backend_(config),
       structured_backend_(config, dt),
       output_adapter_(config),
@@ -213,8 +218,9 @@ bool OutpostTrackerV2::update(const std::vector<ObservationData> &obs) {
             << std::endl;
   mode::ModeEvidence evidence = evidence_fuser_.fuse(
       selected->timestamp.value_or(ctx_.last_timestamp.value_or(0.0)),
-      static_cast<int>(obs.size()), has_2dz_signature, candidate.entropy_norm,
-      candidate.max_prob, candidate.candidate_margin, binder_dbg);
+      static_cast<int>(obs.size()), candidate.candidate_panel_id,
+      has_2dz_signature, candidate.entropy_norm, candidate.max_prob,
+      candidate.candidate_margin, binder_dbg);
   mode_decision = mode_fsm_.step(evidence);
 
   int selected_panel = (binder_out.selected_id >= 0)
@@ -235,6 +241,12 @@ bool OutpostTrackerV2::update(const std::vector<ObservationData> &obs) {
   outpost_v2::BackendUpdateHint hint;
   hint.panel_id = selected_panel;
   hint.position_confidence = std::max(0.05, binder_out.binding_confidence);
+  if (binder_out.binding_conflict_for_update) {
+    const double conflict_scale =
+        std::clamp(config_.outpost.binding_conflict_position_scale, 0.0, 1.0);
+    hint.position_confidence =
+        std::clamp(hint.position_confidence * conflict_scale, 0.05, 1.0);
+  }
   hint.enforce_panel_constraint = true;
 
   bool ok = false;
@@ -262,7 +274,9 @@ bool OutpostTrackerV2::update(const std::vector<ObservationData> &obs) {
   sync_runtime_from_backend(active_snap);
 
   ctx_.selected_panel_id = selected_panel;
-  if (binder_out.selected_id >= 0) {
+  if (binder_out.bound_id >= 0) {
+    ctx_.bound_panel_id = binder_out.bound_id;
+  } else if (binder_out.selected_id >= 0) {
     ctx_.bound_panel_id = binder_out.selected_id;
   } else {
     ctx_.bound_panel_id = selected_panel;

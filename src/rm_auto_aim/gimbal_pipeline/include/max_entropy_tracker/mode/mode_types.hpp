@@ -10,6 +10,7 @@ struct ModeEvidence {
   double timestamp = 0.0;
   int obs_count = 0;
   bool has_dual_obs = false;
+  int candidate_id = -1;
 
   bool jump_detected = false;
   bool jump_event_detected = false;
@@ -26,6 +27,8 @@ struct ModeEvidence {
 
   double enter_score = 0.0;
   double exit_score = 0.0;
+  double continuous_enter_score = 0.0;
+  double event_enter_score = 0.0;
 };
 
 struct ModeDecision {
@@ -42,6 +45,8 @@ struct ModeDebugSnapshot {
   double exit_score = 0.0;
   int enter_counter = 0;
   int exit_counter = 0;
+  int stable_counter = 0;
+  int last_candidate_id = -1;
   int dwell_counter = 0;
   TransitionReason last_reason = TransitionReason::NONE;
 };

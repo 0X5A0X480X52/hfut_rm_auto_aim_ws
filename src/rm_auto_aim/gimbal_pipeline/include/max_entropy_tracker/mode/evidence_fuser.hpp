@@ -27,6 +27,7 @@ class EvidenceFuser {
   ModeEvidence fuse(
       double timestamp,
       int obs_count,
+      int candidate_id,
       bool has_2dz_signature,
       double entropy_norm,
       double max_prob,

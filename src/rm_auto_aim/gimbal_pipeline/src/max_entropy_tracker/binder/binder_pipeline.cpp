@@ -72,6 +72,7 @@ BinderOutput BinderPipeline::step(const BinderFrameInput & input) {
   // 6. Build output
   BinderOutput output;
   output.selected_id = fsm_.selected_id();
+  output.bound_id = fsm_.selected_id();
   output.height_label = fsm_.selected_label();
   output.fsm_state = fsm_.state();
   output.action = action;

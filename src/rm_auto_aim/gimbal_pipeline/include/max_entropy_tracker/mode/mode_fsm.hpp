@@ -12,6 +12,11 @@ struct ModeFSMConfig {
   int min_dwell_frames = 6;
   double enter_threshold = 0.72;
   double exit_threshold = 0.45;
+  double entropy_enter = 0.75;
+  double entropy_exit = 0.55;
+  double max_prob_enter = 0.60;
+  double max_prob_exit = 0.75;
+  int stable_frames = 4;
 };
 
 class ModeFSM {
@@ -29,6 +34,8 @@ class ModeFSM {
   TrackMode mode_ = TrackMode::AMBIGUOUS;
   int enter_counter_ = 0;
   int exit_counter_ = 0;
+  int stable_counter_ = 0;
+  int last_candidate_id_ = -1;
   int dwell_counter_ = 0;
   ModeDebugSnapshot debug_;
 };
