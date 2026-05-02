@@ -70,11 +70,11 @@ gimbal_pipeline:
 
     # Outpost tracker (known 3-armor geometry + max-entropy mode switch)
     outpost.use_tracker_v2: true
-    outpost.translation_model: "CV"   # "CV" | "CA" | "Singer"
+    outpost.translation_model: "CA"   # "CV" | "CA" | "Singer"
     outpost.rotation_model: "CA"      # "CV" | "CA"
     # Outpost state machine thresholds (independent from tracker.* used by adaptive)
     outpost.tracking_thres: 2
-    outpost.lost_thres: 90
+    outpost.lost_thres: 60
     outpost.temp_lost_thres: 5
     outpost.max_match_distance: 2.0
     outpost.max_match_yaw_diff: 1.0
@@ -154,8 +154,8 @@ gimbal_pipeline:
   #$
 
     # Output smoother (1-Euro filter + Robbins-Monro)
-    smoother.enable: false
-    smoother.enable_position_smooth: false
+    smoother.enable: true
+    smoother.enable_position_smooth: true
     smoother.enable_yaw_smooth: false
     smoother.enable_velocity_smooth: true
     smoother.enable_structural_convergence: true

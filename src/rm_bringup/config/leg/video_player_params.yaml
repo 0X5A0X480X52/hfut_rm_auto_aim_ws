@@ -3,7 +3,7 @@ video_player:
     # Path to the video file (required)
     # Example: "/path/to/your/video.mp4"
     # video_path: "./src/rm_hardware_driver/video_player/video/output.avi"
-    video_path: "decoded/output.mp4"
+    video_path: "tmp/camera.mp4"
     
     # Whether to loop the video playback
     loop_playback: true

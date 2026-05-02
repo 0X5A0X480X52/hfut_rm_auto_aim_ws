@@ -3,17 +3,21 @@
 #define MAX_ENTROPY_TRACKER_BINDER_POLICY_OUTPOST_LEGACY_BINDING_POLICY_HPP_
 
 #include <array>
-#include <cmath>
-#include <deque>
 #include <limits>
 #include <optional>
 
 #include <Eigen/Dense>
 
-#include "max_entropy_tracker/binder/model/binder_enums.hpp"
+#include "max_entropy_tracker/binder/core/center_z_history.hpp"
+#include "max_entropy_tracker/binder/core/outpost_binding_fsm.hpp"
+#include "max_entropy_tracker/binder/decoder/outpost_periodic_dz_evidence.hpp"
+#include "max_entropy_tracker/binder/decoder/outpost_z_audit.hpp"
 #include "max_entropy_tracker/binder/model/binder_types.hpp"
 #include "max_entropy_tracker/binder/model/binding_hypothesis.hpp"
+#include "max_entropy_tracker/binder/model/outpost_binding_types.hpp"
 #include "max_entropy_tracker/binder/model/robot_binding_profile.hpp"
+#include "max_entropy_tracker/binder/scorer/outpost_binding_confidence.hpp"
+#include "max_entropy_tracker/binder/scorer/outpost_hypothesis_evaluator.hpp"
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/core/observation.hpp"
 
@@ -74,86 +78,33 @@ class OutpostLegacyBindingPolicy {
   OutpostLegacyBindingOutput step(const OutpostLegacyBindingInput & input);
 
  private:
-  enum class TransitionState { LOCKED = 0, TRANSITION_CANDIDATE = 1 };
-
-  struct ZJumpAuditResult {
-    int panel_id = -1;
-    double z_jump = std::numeric_limits<double>::quiet_NaN();
-    double dz_from_center = std::numeric_limits<double>::quiet_NaN();
-    std::array<double, 3> costs{{
-        std::numeric_limits<double>::quiet_NaN(),
-        std::numeric_limits<double>::quiet_NaN(),
-        std::numeric_limits<double>::quiet_NaN()}};
-  };
-
-  ZJumpAuditResult infer_panel_id_from_z_jump_audit(const ObservationData & obs);
-  std::array<BindingHypothesis, 3> evaluate_hypotheses(
-      const ObservationData & obs,
-      const Eigen::Vector3d & predicted_center_pos,
-      double predicted_center_yaw,
-      double history_center_z) const;
-  void compute_probabilities(std::array<BindingHypothesis, 3> & hyps) const;
-
-  void update_periodic_evidence(double z_jump, bool allow_model_update,
-                                double yaw_rate_est);
-  void apply_periodic_jump_prior(std::array<BindingHypothesis, 3> & hyps,
-                                 double z_jump) const;
-  std::array<double, 3> periodic_template_for_spin() const;
-  double compute_period_confidence_for_phase(int phase,
-                                             const std::array<double, 3> & templ,
-                                             int sample_count) const;
-
-  int hypothesis_index_for_panel(
-      const std::array<BindingHypothesis, 3> & hyps, int panel_id) const;
-  double compute_same_panel_score(const BindingHypothesis & hyp,
-                                  double predicted_center_z) const;
-  void update_binding_state_machine(int candidate_panel, double candidate_prob,
-                                    double candidate_margin,
-                                    double same_panel_score,
-                                    double switch_score);
-  double binding_confidence_from_scores(double candidate_prob,
-                                        double candidate_margin,
-                                        double same_panel_score,
-                                        double switch_score) const;
-
-  double history_center_z_median() const;
-  void push_center_z_history(double center_z);
-  HeightLabel height_label_from_panel(int panel_id) const;
+  OutpostLegacyBindingOutput build_output(
+      const OutpostBindingFSMOutput & fsm_out,
+      const OutpostZAuditResult & audit,
+      const std::array<BindingHypothesis, 3> & hyps,
+      int candidate_panel,
+      double candidate_prob,
+      double candidate_margin,
+      int selected_idx,
+      double selected_panel_score,
+      double switch_score,
+      double binding_confidence,
+      bool binding_conflict_for_update) const;
 
   UnifiedConfig config_;
   RobotBindingProfile profile_;
-  double radius_ = 0.26;
   std::array<double, 3> z_offsets_{{0.06, 0.0, -0.06}};
-  std::array<double, 3> panel_angles_{{0.0, 2.0 * M_PI / 3.0,
-                                       -2.0 * M_PI / 3.0}};
 
-  int selected_panel_id_ = 0;
-  int bound_panel_id_ = -1;
-  HeightLabel bound_height_label_ = HeightLabel::UNKNOWN;
-  TransitionState transition_state_ = TransitionState::LOCKED;
-  int transition_candidate_panel_ = -1;
-  int transition_confirm_count_ = 0;
-  int switch_event_ = 0;
-  int switch_reason_ = 0;
-  bool binding_conflict_for_update_ = false;
-  double binding_confidence_ = 0.5;
+  OutpostZAudit z_audit_;
+  OutpostPeriodicDzEvidence periodic_;
+  OutpostHypothesisEvaluator hypothesis_evaluator_;
+  OutpostBindingConfidenceScorer confidence_scorer_;
+  OutpostBindingFSM binding_fsm_;
+  CenterZHistory center_z_history_;
+
   double entropy_norm_ = 1.0;
-
-  bool z_audit_initialized_ = false;
-  double z_audit_center_est_ = std::numeric_limits<double>::quiet_NaN();
-  double z_audit_prev_obs_z_ = std::numeric_limits<double>::quiet_NaN();
-  int z_audit_prev_panel_id_ = -1;
+  double binding_confidence_ = 0.5;
   int z_audit_conflict_count_ = 0;
-  double z_audit_confidence_ = 0.0;
-
-  std::deque<double> dz_jump_history_;
-  double dz_small_est_ = std::numeric_limits<double>::quiet_NaN();
-  double dz_large_est_ = std::numeric_limits<double>::quiet_NaN();
-  double period_confidence_ = 0.0;
-  int period_phase_index_ = -1;
-  int spin_direction_ = 0;
-
-  std::deque<double> center_z_history_;
 };
 
 }  // namespace fyt::auto_aim::binder
