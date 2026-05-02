@@ -2417,7 +2417,7 @@ rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildBlindGuidanceCommand() {
   cmd.pitch = target_pitch_rad * 180.0 / M_PI;
   cmd.pitch_diff = pitch_diff_rad * 180.0 / M_PI;
   cmd.target_id = latest_blind_msg_ ? latest_blind_msg_->number : current_target_id_;
-  cmd.distance = 1.0;  // 补盲引导模式哨兵值，告知下位机响应引导指令
+  cmd.distance = -2.0;  // 补盲引导模式哨兵值，告知下位机响应引导指令
   cmd.fire_advice = false;
   cmd.is_guiding = true;
   cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_BLIND_CAMERA_RESULT;  // -2

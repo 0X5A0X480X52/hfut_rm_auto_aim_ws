@@ -10,7 +10,7 @@ namespace: ''
 image_source: 'hik'
 
 # true: 虚拟下位机 false: 实车
-virtual_serial: true
+virtual_serial: false
 
 # true: 开启调试模式 (发布可视化markers)
 debug: true
