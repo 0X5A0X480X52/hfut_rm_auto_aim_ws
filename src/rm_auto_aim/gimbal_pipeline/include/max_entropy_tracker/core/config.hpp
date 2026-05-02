@@ -256,6 +256,8 @@ struct BinderConfig {
   int confirm_frames = 3;
   int lock_new_hold_frames = 2;
   int force_rebind_bad_frames = 10;
+  int pending_window_frames = 0;
+  double post_jump_min_confidence = 0.45;
   double confidence_floor = 0.15;
 
   // ── Decoder: PROXIMITY gates (4-panel) ──
@@ -272,6 +274,11 @@ struct BinderConfig {
   double periodic_weight = 0.60;
   double periodic_min_spin_rate = 0.8;
   double periodic_update_min_jump = 0.015;
+  double periodic_signature_threshold = 0.60;
+  double reacquire_gap_dt_gate = 0.12;
+  int reacquire_lost_frames_gate = 1;
+  double z_cluster_ema_alpha = 0.25;
+  double z_cluster_assign_gate = 0.10;
 
   // ── ID Binder: COST gates ──
   double min_candidate_prob = 0.40;

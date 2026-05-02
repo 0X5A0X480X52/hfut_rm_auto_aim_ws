@@ -1,6 +1,9 @@
 // Copyright (C) Max Entropy Tracker. Licensed under the MIT License.
 #include "max_entropy_tracker/binder/core/binding_fsm.hpp"
 
+#include <algorithm>
+#include <iostream>
+
 namespace fyt::auto_aim::binder {
 
 BindingFSM::BindingFSM(const BindingFSMConfig & config)
@@ -16,16 +19,32 @@ void BindingFSM::reset(int panel_id, HeightLabel label) {
   confirm_counter_.reset();
   bad_health_counter_.reset();
   hold_remaining_ = 0;
+  pending_window_remaining_ = 0;
   switch_occurred_ = false;
   switch_reason_ = 0;
   confidence_ = 0.5;
 }
 
-BindingAction BindingFSM::step(int target_id, double /*target_confidence*/,
+BindingAction BindingFSM::step(int target_id, double target_confidence,
                                const JumpDecision & jump,
                                const BindingHealth & health) {
   switch_occurred_ = false;
   switch_reason_ = 0;
+  const int confirm_required = std::max(1, config_.confirm_frames);
+  const int pending_window = std::max(
+      confirm_required,
+      (config_.pending_window_frames > 0 ? config_.pending_window_frames
+                                         : confirm_required + 1));
+  const double post_jump_min_conf =
+      std::clamp(config_.post_jump_min_confidence, 0.0, 1.0);
+
+  std::cout << "[BindingFSM] BindingFSM::step: target_id=" << target_id
+            << ", target_confidence=" << target_confidence 
+            << ", jump_detected=" << jump.detected
+            << ", jump_kind=" << static_cast<int>(jump.jump_kind)
+            << ", health_force_rebind=" << health.force_rebind_recommend
+            << ", state=" << static_cast<int>(state_)
+            << std::endl;
 
   // ── UNLOCKED: wait for health recovery ──
   if (state_ == BindingFSMState::UNLOCKED) {
@@ -62,28 +81,12 @@ BindingAction BindingFSM::step(int target_id, double /*target_confidence*/,
     return BindingAction::HOLD;
   }
 
-  // ── Same target: stay locked ──
-  if (target_id < 0 || target_id == bound_id_) {
-    if (state_ == BindingFSMState::PENDING_SWITCH) {
-      state_ = BindingFSMState::LOCKED;
-      pending_target_ = -1;
-      confirm_counter_.reset();
-    }
-    return BindingAction::HOLD;
-  }
-
-  // ── No jump detected: retain current binding ──
-  if (!jump.detected) {
-    if (state_ == BindingFSMState::PENDING_SWITCH) {
-      state_ = BindingFSMState::LOCKED;
-      pending_target_ = -1;
-      confirm_counter_.reset();
-    }
-    return BindingAction::HOLD;
-  }
-
-  // ── Jump detected, target differs from bound ──
+  // ── LOCKED: normal steady phase ──
   if (state_ == BindingFSMState::LOCKED) {
+    if (target_id < 0 || target_id == bound_id_ || !jump.detected) {
+      return BindingAction::HOLD;
+    }
+
     if (config_.confirm_frames <= 1) {
       // Immediate switch
       bound_id_ = target_id;
@@ -93,33 +96,69 @@ BindingAction BindingFSM::step(int target_id, double /*target_confidence*/,
       switch_reason_ = 1;
       return BindingAction::SWITCH;
     }
+
     state_ = BindingFSMState::PENDING_SWITCH;
     pending_target_ = target_id;
+    pending_window_remaining_ = pending_window;
     confirm_counter_.reset();
-    confirm_counter_.tick(true);
+    confirm_counter_.tick(true);  // Jump pulse is the trigger anchor.
+    --pending_window_remaining_;
     return BindingAction::PENDING;
   }
 
-  // ── PENDING_SWITCH: accumulate confirmation ──
-  if (target_id == pending_target_) {
-    if (confirm_counter_.tick(true)) {
+  // ── PENDING_SWITCH: post-jump confirmation window ──
+  if (state_ == BindingFSMState::PENDING_SWITCH) {
+    if (pending_target_ < 0 || pending_target_ == bound_id_) {
+      state_ = BindingFSMState::LOCKED;
+      pending_target_ = -1;
+      pending_window_remaining_ = 0;
+      confirm_counter_.reset();
+      return BindingAction::HOLD;
+    }
+
+    if (jump.detected && target_id >= 0 && target_id != pending_target_ &&
+        target_id != bound_id_) {
+      // New jump pulse points to a different panel: restart pending candidate.
+      pending_target_ = target_id;
+      pending_window_remaining_ = pending_window;
+      confirm_counter_.reset();
+      confirm_counter_.tick(true);
+      --pending_window_remaining_;
+      return BindingAction::PENDING;
+    }
+
+    const bool same_pending_target = (target_id == pending_target_);
+    const bool support =
+        same_pending_target &&
+        (jump.detected || target_confidence >= post_jump_min_conf);
+
+    if (confirm_counter_.tick(support)) {
       bound_id_ = target_id;
       state_ = BindingFSMState::LOCKED_NEW;
       hold_remaining_ = config_.lock_new_hold_frames;
       pending_target_ = -1;
+      pending_window_remaining_ = 0;
       confirm_counter_.reset();
       switch_occurred_ = true;
       switch_reason_ = 1;
       return BindingAction::SWITCH;
     }
-    return BindingAction::PENDING;
+
+    --pending_window_remaining_;
+    if (pending_window_remaining_ > 0) {
+      return BindingAction::PENDING;
+    }
+
+    // Window expired without enough support: cancel pending switch.
+    state_ = BindingFSMState::LOCKED;
+    pending_target_ = -1;
+    pending_window_remaining_ = 0;
+    confirm_counter_.reset();
+    switch_reason_ = 7;
+    return BindingAction::HOLD;
   }
 
-  // Different candidate during pending: restart transition
-  pending_target_ = target_id;
-  confirm_counter_.reset();
-  confirm_counter_.tick(true);
-  return BindingAction::PENDING;
+  return BindingAction::HOLD;
 }
 
 }  // namespace fyt::auto_aim::binder

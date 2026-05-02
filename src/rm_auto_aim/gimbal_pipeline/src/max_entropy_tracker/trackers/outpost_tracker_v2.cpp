@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <iostream>
 
 #include "max_entropy_tracker/utils/angle_utils.hpp"
 
@@ -190,6 +191,7 @@ bool OutpostTrackerV2::update(const std::vector<ObservationData> &obs) {
     if (d > min_dt_) predict(selected->timestamp.value());
   }
 
+  ctx_.lost_frames = lost_count();
   handle_observation_received(config_.outpost.tracking_thres);
   candidate = obs_frontend_.build_binding_candidate(*selected, ctx_);
 
@@ -197,9 +199,18 @@ bool OutpostTrackerV2::update(const std::vector<ObservationData> &obs) {
                                    candidate, ctx_);
   const auto &binder_dbg = binder_bridge_.debug_snapshot();
 
+  // Phase-3 policy: periodic signature is the primary 2dz evidence.
+  // DOUBLE_DZ tag alone is no longer sufficient unless signature is also decent.
   const bool has_2dz_signature =
-      binder_dbg.jump_detected &&
-      binder_dbg.jump_kind == binder::JumpKind::DOUBLE_DZ;
+      (binder_dbg.signature_score >= 0.60) ||
+      (binder_dbg.jump_detected &&
+       binder_dbg.jump_kind == binder::JumpKind::DOUBLE_DZ &&
+       binder_dbg.signature_score >= 0.45);
+  std::cout << "[EvidenceFuser]:has_2dz_signature: " << has_2dz_signature
+            << ",jump_detected: " << binder_dbg.jump_detected
+            << ",jump_kind: " << static_cast<int>(binder_dbg.jump_kind)
+            << ",signature_score: " << binder_dbg.signature_score
+            << std::endl;
   mode::ModeEvidence evidence = evidence_fuser_.fuse(
       selected->timestamp.value_or(ctx_.last_timestamp.value_or(0.0)),
       static_cast<int>(obs.size()), has_2dz_signature, candidate.entropy_norm,

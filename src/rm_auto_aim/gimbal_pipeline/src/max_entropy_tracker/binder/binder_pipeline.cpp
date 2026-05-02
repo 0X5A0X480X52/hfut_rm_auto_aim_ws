@@ -133,6 +133,11 @@ BinderOutput BinderPipeline::step(const BinderFrameInput & input) {
   debug_.dz_large_est = decoder_ctx_.dz_large_est;
   debug_.period_confidence = decoder_ctx_.period_confidence;
   debug_.period_phase = decoder_ctx_.period_phase;
+  debug_.signature_score = jump.signature_score;
+  debug_.event_type = input.event_type;
+  debug_.is_reacquired = input.is_reacquired;
+  debug_.gap_dt = input.gap_dt;
+  debug_.lost_frames = input.lost_frames;
 
   return output;
 }

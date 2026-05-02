@@ -1389,6 +1389,9 @@ BinderConfig OutpostArmorTracker::build_binder_config_from_outpost() const {
   cfg.confirm_frames = std::max(1, config_.outpost.binding_transition_confirm_frames);
   cfg.lock_new_hold_frames = 2;
   cfg.force_rebind_bad_frames = std::max(1, config_.outpost.z_audit_rebind_confirm_frames);
+  cfg.pending_window_frames = std::max(cfg.confirm_frames + 1, 4);
+  cfg.post_jump_min_confidence =
+      std::clamp(config_.outpost.binding_min_candidate_prob, 0.35, 0.70);
   cfg.confidence_floor = std::clamp(config_.outpost.binding_confidence_floor, 0.0, 0.95);
 
   cfg.z_jump_min = std::max(0.0, config_.outpost.binding_period_update_min_jump);

@@ -20,11 +20,18 @@ struct OutpostTriLevelJumpDecoderConfig {
   double periodic_min_spin_rate = 0.8;
   double periodic_update_min_jump = 0.015;
   double dz_ema_alpha = 0.20;
+  double periodic_signature_threshold = 0.60;
 
   bool z_audit_enable = true;
   double z_audit_min_confidence = 0.60;
   double z_audit_min_jump = 0.015;
   int z_audit_confirm_frames = 3;
+
+  double reacquire_gap_dt_gate = 0.12;
+  int reacquire_lost_frames_gate = 1;
+  double z_cluster_ema_alpha = 0.25;
+  double z_cluster_assign_gate = 0.10;
+  int z_cluster_window_slots = 8;
 
   std::array<double, 3> z_offsets{0.06, 0.0, -0.06};
   std::array<int, 3> cyclic_order{0, 2, 1};
@@ -47,10 +54,34 @@ class OutpostTriLevelJumpDecoder : public JumpEventDecoder {
  private:
   JumpDecision decode_from_z_audit(const BinderFrameInput & input,
                                     DecoderContext & ctx);
+  JumpDecision decode_from_reacquire(const BinderFrameInput & input,
+                                     DecoderContext & ctx);
   JumpDecision decode_from_cost(const BinderFrameInput & input,
                                 const DecoderContext & ctx);
+  void update_z_cluster(int slot_id, double obs_z);
+  int allocate_cluster_slot();
+  void ensure_active_cluster(double obs_z);
+  void rotate_cluster_after_jump(int to_alias_id, double obs_z);
+  bool infer_dz_bands_from_raw_clusters(double & dz_small,
+                                        double & dz_large) const;
+  JumpKind classify_jump_kind_by_bands(double abs_jump,
+                                       const DecoderContext & ctx) const;
 
   OutpostTriLevelJumpDecoderConfig config_;
+
+  struct ZCluster {
+    bool initialized = false;
+    double mean = 0.0;
+    double var = 0.02;
+    double raw_mean = std::numeric_limits<double>::quiet_NaN();
+    double raw_var = 0.02;
+    int count = 0;
+  };
+  static constexpr int kMaxClusterSlots = 16;
+  std::array<ZCluster, kMaxClusterSlots> z_clusters_{};
+  int active_cluster_slot_ = -1;
+  int next_cluster_slot_ = 0;
+  std::array<int, 3> alias_to_slot_{{-1, -1, -1}};
 
   bool z_audit_init_ = false;
   double z_audit_center_ = std::numeric_limits<double>::quiet_NaN();

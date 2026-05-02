@@ -34,6 +34,11 @@ struct BinderFrameInput {
   double same_panel_residual = 0.0;
   double nis = 0.0;
   bool has_history = false;
+
+  TrackEventType event_type = TrackEventType::AMBIGUOUS;
+  bool is_reacquired = false;
+  double gap_dt = 0.0;
+  int lost_frames = 0;
 };
 
 struct JumpDecision {
@@ -44,6 +49,7 @@ struct JumpDecision {
   double confidence = 0.0;
   int evidence_mask = 0;
   int reason_code = 0;
+  double signature_score = 0.0;
 };
 
 struct TargetDecision {

@@ -31,6 +31,7 @@ struct OutpostRuntimeContext {
 
   std::optional<double> last_timestamp;
   std::optional<double> last_obs_z;
+  int lost_frames = 0;
 };
 
 }  // namespace fyt::auto_aim::outpost_v2

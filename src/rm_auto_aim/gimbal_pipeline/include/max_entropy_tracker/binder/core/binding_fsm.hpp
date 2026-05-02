@@ -12,6 +12,8 @@ struct BindingFSMConfig {
   int confirm_frames = 3;
   int lock_new_hold_frames = 2;
   int force_rebind_bad_frames = 10;
+  int pending_window_frames = 0;  // 0 -> auto derive from confirm_frames
+  double post_jump_min_confidence = 0.45;
 };
 
 class BindingFSM {
@@ -41,6 +43,7 @@ class BindingFSM {
   BindingWindowCounter confirm_counter_;
   BindingWindowCounter bad_health_counter_;
   int hold_remaining_ = 0;
+  int pending_window_remaining_ = 0;
   bool switch_occurred_ = false;
   int switch_reason_ = 0;
   double confidence_ = 0.0;

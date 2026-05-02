@@ -29,6 +29,13 @@ enum class JumpKind {
   INVALID = 4
 };
 
+enum class TrackEventType {
+  CONTINUITY = 0,
+  REACQUIRE = 1,
+  SWITCH_CANDIDATE = 2,
+  AMBIGUOUS = 3
+};
+
 }  // namespace fyt::auto_aim::binder
 
 #endif  // MAX_ENTROPY_TRACKER_BINDER_MODEL_BINDER_ENUMS_HPP_

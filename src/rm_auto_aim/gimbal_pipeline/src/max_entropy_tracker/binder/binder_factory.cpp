@@ -1,6 +1,8 @@
 // Copyright (C) Max Entropy Tracker. Licensed under the MIT License.
 #include "max_entropy_tracker/binder/factory/binder_factory.hpp"
 
+#include <algorithm>
+
 #include "max_entropy_tracker/binder/decoder/four_panel_jump_decoder.hpp"
 #include "max_entropy_tracker/binder/decoder/generic_cyclic_jump_decoder.hpp"
 #include "max_entropy_tracker/binder/decoder/outpost_trilevel_jump_decoder.hpp"
@@ -27,7 +29,12 @@ std::unique_ptr<BinderPipeline> BinderFactory::create(
     dcfg.periodic_weight = config.periodic_weight;
     dcfg.periodic_min_spin_rate = config.periodic_min_spin_rate;
     dcfg.periodic_update_min_jump = config.periodic_update_min_jump;
+    dcfg.periodic_signature_threshold = config.periodic_signature_threshold;
     dcfg.dz_ema_alpha = config.dz_ema_alpha;
+    dcfg.reacquire_gap_dt_gate = config.reacquire_gap_dt_gate;
+    dcfg.reacquire_lost_frames_gate = config.reacquire_lost_frames_gate;
+    dcfg.z_cluster_ema_alpha = config.z_cluster_ema_alpha;
+    dcfg.z_cluster_assign_gate = config.z_cluster_assign_gate;
     dcfg.z_audit_enable = config.z_audit_rebind_enable;
     dcfg.z_audit_min_confidence = config.z_audit_rebind_min_confidence;
     dcfg.z_audit_min_jump = config.z_audit_rebind_min_jump;
@@ -57,6 +64,10 @@ std::unique_ptr<BinderPipeline> BinderFactory::create(
     SingleObsSequenceBinderConfig scfg;
     scfg.history_window = config.single_obs_history_window;
     scfg.dz_gate = config.dz_gate;
+    scfg.pending_confirm_window =
+        std::max(1, config.pending_window_frames > 0
+                        ? config.pending_window_frames
+                        : config.confirm_frames + 1);
     auto single = std::make_unique<SingleObsSequenceBinder>(scfg);
     auto dual = std::make_unique<DualObsDirectBinder>();
     id_binder = std::make_unique<HybridIDBinder>(
@@ -81,6 +92,8 @@ std::unique_ptr<BinderPipeline> BinderFactory::create(
   pcfg.fsm.confirm_frames = config.confirm_frames;
   pcfg.fsm.lock_new_hold_frames = config.lock_new_hold_frames;
   pcfg.fsm.force_rebind_bad_frames = config.force_rebind_bad_frames;
+  pcfg.fsm.pending_window_frames = config.pending_window_frames;
+  pcfg.fsm.post_jump_min_confidence = config.post_jump_min_confidence;
 
   return std::make_unique<BinderPipeline>(
       std::move(decoder), std::move(id_binder), std::move(scorer), pcfg);

@@ -11,11 +11,17 @@ namespace fyt::auto_aim::outpost_v2 {
 namespace {
 
 constexpr double kLog3 = 1.0986122886681098;
+constexpr double kPanelPeriod = 2.0 * M_PI / 3.0;
 
 double clamp01(double x) { return std::clamp(x, 0.0, 1.0); }
 
 double angle_abs_diff(double a, double b) {
   return std::abs(normalize_angle(a - b));
+}
+
+double angle_abs_diff_periodic(double a, double b, double period) {
+  const double p = std::max(1e-6, period);
+  return std::abs(std::remainder(normalize_angle(a - b), p));
 }
 
 }  // namespace
@@ -58,10 +64,19 @@ const ObservationData * ObservationFrontend::select_primary_observation(
 BindingCandidate ObservationFrontend::build_binding_candidate(
     const ObservationData & obs, const OutpostRuntimeContext & ctx) const {
   BindingCandidate c;
-  const double w_yaw = std::max(0.0, cfg_.outpost.weight_yaw);
-  const double w_z_state = std::max(0.0, cfg_.outpost.weight_z_state);
-  const double w_xy = std::max(0.0, cfg_.outpost.weight_xy_residual);
-  const double w_switch = std::max(0.0, cfg_.outpost.weight_switch_penalty);
+  const bool is_ambiguous = (ctx.mode == mode::TrackMode::AMBIGUOUS);
+  const double w_yaw_raw = std::max(0.0, cfg_.outpost.weight_yaw);
+  const double w_z_state_raw = std::max(0.0, cfg_.outpost.weight_z_state);
+  const double w_xy_raw = std::max(0.0, cfg_.outpost.weight_xy_residual);
+  const double w_switch_raw = std::max(0.0, cfg_.outpost.weight_switch_penalty);
+
+  // In AMBIGUOUS mode, center state is back-projected from the currently bound panel.
+  // Reduce panel-coupled terms to avoid lock-in positive feedback.
+  const double amb_decay = is_ambiguous ? 0.30 : 1.0;
+  const double w_yaw = w_yaw_raw * (is_ambiguous ? 0.45 : 1.0);
+  const double w_z_state = w_z_state_raw * amb_decay;
+  const double w_xy = w_xy_raw * amb_decay;
+  const double w_switch = is_ambiguous ? 0.0 : w_switch_raw;
   const double temp = std::max(1e-3, cfg_.outpost.softmax_temperature);
 
   std::array<double, 3> yaw_errs{0.0, 0.0, 0.0};
@@ -70,7 +85,10 @@ BindingCandidate ObservationFrontend::build_binding_candidate(
   for (int i = 0; i < 3; ++i) {
     const double center_yaw = normalize_angle(obs.yaw - panel_angles_[i]);
     const double center_z = obs.z - z_offsets_[i];
-    yaw_errs[i] = angle_abs_diff(center_yaw, ctx.center_yaw);
+    yaw_errs[i] = is_ambiguous
+                      ? angle_abs_diff_periodic(center_yaw, ctx.center_yaw,
+                                                kPanelPeriod)
+                      : angle_abs_diff(center_yaw, ctx.center_yaw);
     const double z_state_err = std::abs(center_z - ctx.center_pos.z());
 
     const double predicted_panel_yaw = normalize_angle(ctx.center_yaw + panel_angles_[i]);

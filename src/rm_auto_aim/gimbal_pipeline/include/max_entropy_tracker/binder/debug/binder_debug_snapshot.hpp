@@ -44,6 +44,11 @@ struct BinderDebugSnapshot {
   double dz_large_est = std::numeric_limits<double>::quiet_NaN();
   double period_confidence = 0.0;
   int period_phase = -1;
+  double signature_score = 0.0;
+  TrackEventType event_type = TrackEventType::AMBIGUOUS;
+  bool is_reacquired = false;
+  double gap_dt = 0.0;
+  int lost_frames = 0;
 };
 
 }  // namespace fyt::auto_aim::binder

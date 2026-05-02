@@ -2,6 +2,7 @@
 #include "max_entropy_tracker/trackers/outpost_v2/outpost_binder_bridge.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 namespace fyt::auto_aim::outpost_v2 {
 
@@ -49,6 +50,30 @@ binder::BinderOutput OutpostBinderBridge::step(
   in.cost_margin = candidate.candidate_margin;
   in.same_panel_residual = candidate.selected_xy_residual;
   in.has_history = ctx.last_obs_z.has_value();
+  in.lost_frames = std::max(0, ctx.lost_frames);
+  in.is_reacquired = in.lost_frames > 0;
+  in.gap_dt = 0.0;
+  if (obs.timestamp.has_value() && ctx.last_timestamp.has_value()) {
+    in.gap_dt = std::max(0.0, obs.timestamp.value() - ctx.last_timestamp.value());
+  }
+
+  const double reacquire_dt_gate = std::max(0.12, 3.0 * cfg_.dt);
+  const bool reacquire_by_gap = in.gap_dt > reacquire_dt_gate;
+  const bool continuity_gate =
+      std::isfinite(in.selected_yaw_err) && std::isfinite(in.same_panel_residual) &&
+      (in.selected_yaw_err <= std::max(1e-3, cfg_.outpost.binding_same_panel_yaw_gate)) &&
+      (in.same_panel_residual <= std::max(1e-3, cfg_.outpost.binding_same_panel_xy_gate));
+
+  if (in.is_reacquired || reacquire_by_gap) {
+    in.event_type = binder::TrackEventType::REACQUIRE;
+  } else if (continuity_gate) {
+    in.event_type = binder::TrackEventType::CONTINUITY;
+  } else if (candidate.candidate_margin >=
+             std::max(0.01, cfg_.outpost.binding_min_candidate_margin)) {
+    in.event_type = binder::TrackEventType::SWITCH_CANDIDATE;
+  } else {
+    in.event_type = binder::TrackEventType::AMBIGUOUS;
+  }
 
   out = pipeline_->step(in);
   return out;
@@ -64,6 +89,9 @@ BinderConfig OutpostBinderBridge::build_binder_config(const UnifiedConfig & cfg)
   b.confirm_frames = std::max(1, cfg.outpost.binding_transition_confirm_frames);
   b.lock_new_hold_frames = 2;
   b.force_rebind_bad_frames = std::max(1, cfg.outpost.z_audit_rebind_confirm_frames);
+  b.pending_window_frames = std::max(b.confirm_frames + 1, 4);
+  b.post_jump_min_confidence =
+      std::clamp(cfg.outpost.binding_min_candidate_prob, 0.35, 0.70);
   b.confidence_floor =
       std::clamp(cfg.outpost.binding_confidence_floor, 0.0, 0.95);
 
@@ -79,6 +107,11 @@ BinderConfig OutpostBinderBridge::build_binder_config(const UnifiedConfig & cfg)
   b.periodic_weight = std::max(0.0, cfg.outpost.binding_period_weight);
   b.periodic_min_spin_rate = std::max(0.0, cfg.outpost.binding_period_min_spin_rate);
   b.periodic_update_min_jump = std::max(1e-5, cfg.outpost.binding_period_update_min_jump);
+  b.periodic_signature_threshold = 0.60;
+  b.reacquire_gap_dt_gate = std::max(0.08, 3.0 * cfg.dt);
+  b.reacquire_lost_frames_gate = 1;
+  b.z_cluster_ema_alpha = 0.25;
+  b.z_cluster_assign_gate = 0.10;
 
   b.min_candidate_prob = std::clamp(cfg.outpost.binding_min_candidate_prob, 0.0, 1.0);
   b.min_candidate_margin = std::clamp(cfg.outpost.binding_min_candidate_margin, 0.0, 1.0);
@@ -86,7 +119,9 @@ BinderConfig OutpostBinderBridge::build_binder_config(const UnifiedConfig & cfg)
   b.single_obs_history_window = std::max(3, cfg.outpost.z_history_window);
   b.dual_obs_enable = cfg.outpost.binding_enable_multi_obs;
 
-  b.scorer_enable = true;
+  // Debug mode for binding diagnosis:
+  // disable scorer/force-rebind chain to avoid masking jump/cluster behavior.
+  b.scorer_enable = false;
   b.same_panel_yaw_gate = std::max(1e-3, cfg.outpost.binding_same_panel_yaw_gate);
   b.same_panel_z_gate = std::max(1e-3, cfg.outpost.binding_same_panel_z_gate);
   b.same_panel_xy_gate = std::max(1e-3, cfg.outpost.binding_same_panel_xy_gate);
