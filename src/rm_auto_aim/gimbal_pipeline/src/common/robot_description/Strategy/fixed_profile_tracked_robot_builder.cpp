@@ -17,6 +17,9 @@
 #include <algorithm>
 #include <utility>
 
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+
 #include "max_entropy_tracker/trackers/base_tracker.hpp"
 #include "max_entropy_tracker/utils/output_smoother.hpp"
 
@@ -118,6 +121,20 @@ public:
     const int runtime_num_armors = input.tracker.effective_num_armors();
     msg.num_armors = runtime_num_armors > 0 ? runtime_num_armors : num_armors_;
 
+    // ── AMBIGUOUS single-armor: zero out geometry fields ──
+    const bool ambiguous_mode =
+      input.tracker.supports_ambiguous_single_semantics() &&
+      input.tracker.is_ambiguous_single_mode();
+    if (ambiguous_mode) {
+      msg.radius = 0.0;
+      msg.radius_2 = 0.0;
+      msg.d_za = 0.0;
+      msg.d_zc = 0.0;
+      msg.representation_mode = rm_interfaces::msg::TrackedRobot::REP_AMBIGUOUS_SINGLE_ARMOR;
+    } else {
+      msg.representation_mode = rm_interfaces::msg::TrackedRobot::REP_STRUCTURED_ROBOT;
+    }
+
     const double off_r1 = input.smoothed ? input.smoothed->r1 : msg.radius;
     const double off_r2 = input.smoothed ? input.smoothed->r2 : msg.radius_2;
     const double off_dza = input.smoothed ? input.smoothed->dza : msg.d_za;
@@ -127,9 +144,9 @@ public:
       msg.armors_offset = runtime_offsets;
 
       // For outpost, also encode a fallback-compatible tri-layer summary.
-      // This allows downstream modules to recover non-flat 3-armor heights
-      // even if armors_offset is missing in intermediate transport.
-      if (msg.robot_type == rm_interfaces::msg::TrackedRobot::OUTPOST_3 &&
+      // Skip this in ambiguous mode (single armor, no tri-layer).
+      if (!ambiguous_mode &&
+          msg.robot_type == rm_interfaces::msg::TrackedRobot::OUTPOST_3 &&
           runtime_offsets.size() >= 3) {
         double z_min = runtime_offsets.front().position.z;
         double z_max = z_min;
@@ -143,12 +160,24 @@ public:
         msg.d_zc = z_sum / static_cast<double>(runtime_offsets.size());
       }
     } else {
-      msg.armors_offset = TrackedRobotUsage::generateArmorsOffsetFromProfile(
-        msg.num_armors,
-        off_r1,
-        off_r2,
-        off_dza,
-        msg.d_zc);
+      if (ambiguous_mode) {
+        // Single zero-offset armor for ambiguous mode.
+        geometry_msgs::msg::Pose single_offset;
+        single_offset.position.x = 0.0;
+        single_offset.position.y = 0.0;
+        single_offset.position.z = 0.0;
+        tf2::Quaternion q;
+        q.setRPY(0.0, 0.0, 0.0);
+        single_offset.orientation = tf2::toMsg(q);
+        msg.armors_offset = {single_offset};
+      } else {
+        msg.armors_offset = TrackedRobotUsage::generateArmorsOffsetFromProfile(
+          msg.num_armors,
+          off_r1,
+          off_r2,
+          off_dza,
+          msg.d_zc);
+      }
     }
 
     try {

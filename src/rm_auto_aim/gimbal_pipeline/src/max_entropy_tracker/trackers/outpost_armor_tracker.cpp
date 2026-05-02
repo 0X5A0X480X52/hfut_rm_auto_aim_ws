@@ -50,7 +50,11 @@ OutpostArmorTracker::OutpostArmorTracker(const UnifiedConfig &config, double dt,
       z_offsets_{config.outpost.z_offset_0, config.outpost.z_offset_1,
                  config.outpost.z_offset_2},
       outpost_ukf_(config, dt),
-      maneuver_detector_(config.maneuver) {
+      maneuver_detector_(config.maneuver),
+      binding_profile_(binder::RobotBindingProfileProvider::from_robot_id(
+          "outpost",
+          {config.outpost.z_offset_0, config.outpost.z_offset_1,
+           config.outpost.z_offset_2})) {
   (void)enable_oscillation;
   const double raw_step = (config.outpost.panel_angle_step > 1e-6)
                               ? config.outpost.panel_angle_step
@@ -61,6 +65,9 @@ OutpostArmorTracker::OutpostArmorTracker(const UnifiedConfig &config, double dt,
   //   clockwise order: 0 -> 2 -> 1.
   // In CCW-positive yaw convention this is: [0, +step, -step].
   panel_angles_ = {0.0, step, -step};
+
+  binder_pipeline_ = binder::BinderFactory::create(
+      binding_profile_, build_binder_config_from_outpost());
 }
 
 void OutpostArmorTracker::initialize(const std::vector<ObservationData> &obs,
@@ -126,6 +133,10 @@ void OutpostArmorTracker::initialize(const std::vector<ObservationData> &obs,
   spin_direction_ = 0;
 
   outpost_ukf_.initialize({*selected}, radius_, radius_, 0.0, init_panel);
+  if (binder_pipeline_) {
+    binder_pipeline_->reset(init_panel, binder::HeightLabel::MIDDLE,
+                            selected->z);
+  }
   sync_internal_state_from_filter();
 
   if (selected->timestamp.has_value()) {
@@ -421,64 +432,119 @@ bool OutpostArmorTracker::update(const std::vector<ObservationData> &obs) {
       clamp01(0.50 * switch_base + 0.20 * period_confidence_ +
               0.10 * z_audit_switch_support + 0.20 * candidate_margin_);
 
-  update_binding_state_machine(candidate_panel_id_, candidate_prob_,
-                   candidate_margin_, current_panel_score,
-                               switch_score);
-  const bool z_audit_conflicts =
-      config_.outpost.z_audit_rebind_enable && z_audit.panel_id >= 0 &&
-      bound_panel_id_ >= 0 && z_audit.panel_id != bound_panel_id_;
-  const double min_rebind_conf = std::clamp(
-      config_.outpost.z_audit_rebind_min_confidence, 0.0, 1.0);
-  const double min_rebind_jump =
-      std::max(0.0, config_.outpost.z_audit_rebind_min_jump);
-  const bool z_audit_has_jump =
-      std::isfinite(z_audit.z_jump) && std::abs(z_audit.z_jump) >= min_rebind_jump;
-  const bool z_audit_strong_level =
-      z_audit_confidence_ >= std::min(1.0, min_rebind_conf + 0.25);
-  if (z_audit_conflicts && z_audit_confidence_ >= min_rebind_conf &&
-      (z_audit_has_jump || z_audit_strong_level)) {
-    ++z_audit_conflict_count_;
-  } else if (!z_audit_conflicts) {
-    z_audit_conflict_count_ = 0;
-  }
+  if (config_.outpost.binding_use_new_binder_pipeline && binder_pipeline_) {
+    binder::BinderFrameInput binder_in;
+    binder_in.timestamp =
+        selected->timestamp.value_or(current_time_.value_or(0.0));
+    binder_in.profile = &binding_profile_;
+    binder_in.obs_count = static_cast<int>(obs.size());
+    binder_in.candidate_id = candidate_panel_id_;
+    binder_in.candidate_prob = candidate_prob_;
+    binder_in.candidate_margin = candidate_margin_;
+    binder_in.obs_z_values.push_back(selected->z);
+    binder_in.obs_yaw_values.push_back(selected->yaw);
+    binder_in.z_jump = z_audit.z_jump;
+    binder_in.has_z_jump = std::isfinite(z_audit.z_jump);
+    binder_in.yaw_rate_est = yaw_rate_est_;
+    binder_in.spin_direction_hint = spin_direction_;
+    binder_in.selected_yaw_err = hyps[current_idx].yaw_err;
+    binder_in.cost_margin = candidate_margin_;
+    binder_in.same_panel_residual = hyps[current_idx].xy_residual;
+    binder_in.has_history = !center_z_history_.empty();
 
-  const int z_rebind_required =
-      std::max(1, config_.outpost.z_audit_rebind_confirm_frames);
-  if (z_audit_conflict_count_ >= z_rebind_required) {
-    bound_panel_id_ = z_audit.panel_id;
-    binding_transition_state_ = BindingTransitionState::LOCKED;
-    transition_candidate_panel_ = -1;
+    const binder::BinderOutput binder_out = binder_pipeline_->step(binder_in);
+    const auto &binder_dbg = binder_pipeline_->debug_snapshot();
+
+    if (binder_out.selected_id >= 0) {
+      selected_panel_id_ = binder_out.selected_id;
+      bound_panel_id_ = binder_out.selected_id;
+    } else {
+      selected_panel_id_ = candidate_panel_id_;
+      bound_panel_id_ = candidate_panel_id_;
+    }
+    bound_height_label_ = semantic_from_panel(selected_panel_id_);
+    switch_event_ = binder_out.switch_occurred ? 1 : 0;
+    switch_reason_ = binder_out.switch_reason;
+    binding_confidence_ = binder_out.binding_confidence;
+    binding_transition_state_ =
+        (binder_out.fsm_state == binder::BindingFSMState::PENDING_SWITCH)
+            ? BindingTransitionState::TRANSITION_CANDIDATE
+            : BindingTransitionState::LOCKED;
+    transition_candidate_panel_ = binder_dbg.target_id;
     transition_confirm_count_ = 0;
     z_audit_conflict_count_ = 0;
-    switch_event_ = 1;
-    switch_reason_ = 5;
-  }
-  if (bound_panel_id_ >= 0) {
-    if (binding_transition_state_ == BindingTransitionState::TRANSITION_CANDIDATE &&
-        transition_candidate_panel_ >= 0) {
-      selected_panel_id_ = transition_candidate_panel_;
-    } else {
-      selected_panel_id_ = bound_panel_id_;
-    }
+    z_audit_confidence_ = binder_dbg.health_score;
+    period_confidence_ = binder_dbg.period_confidence;
+    period_phase_index_ = binder_dbg.period_phase;
+    spin_direction_ = binder_dbg.spin_direction;
+    dz_small_est_ = binder_dbg.dz_small_est;
+    dz_large_est_ = binder_dbg.dz_large_est;
+    binding_conflict_for_update_ =
+        (candidate_panel_id_ >= 0 && candidate_panel_id_ != selected_panel_id_);
   } else {
-    selected_panel_id_ = candidate_panel_id_;
+    update_binding_state_machine(candidate_panel_id_, candidate_prob_,
+                     candidate_margin_, current_panel_score,
+                                 switch_score);
+    const bool z_audit_conflicts =
+        config_.outpost.z_audit_rebind_enable && z_audit.panel_id >= 0 &&
+        bound_panel_id_ >= 0 && z_audit.panel_id != bound_panel_id_;
+    const double min_rebind_conf = std::clamp(
+        config_.outpost.z_audit_rebind_min_confidence, 0.0, 1.0);
+    const double min_rebind_jump =
+        std::max(0.0, config_.outpost.z_audit_rebind_min_jump);
+    const bool z_audit_has_jump =
+        std::isfinite(z_audit.z_jump) && std::abs(z_audit.z_jump) >= min_rebind_jump;
+    const bool z_audit_strong_level =
+        z_audit_confidence_ >= std::min(1.0, min_rebind_conf + 0.25);
+    if (z_audit_conflicts && z_audit_confidence_ >= min_rebind_conf &&
+        (z_audit_has_jump || z_audit_strong_level)) {
+      ++z_audit_conflict_count_;
+    } else if (!z_audit_conflicts) {
+      z_audit_conflict_count_ = 0;
+    }
+
+    const int z_rebind_required =
+        std::max(1, config_.outpost.z_audit_rebind_confirm_frames);
+    if (z_audit_conflict_count_ >= z_rebind_required) {
+      bound_panel_id_ = z_audit.panel_id;
+      binding_transition_state_ = BindingTransitionState::LOCKED;
+      transition_candidate_panel_ = -1;
+      transition_confirm_count_ = 0;
+      z_audit_conflict_count_ = 0;
+      switch_event_ = 1;
+      switch_reason_ = 5;
+    }
+    if (bound_panel_id_ >= 0) {
+      if (binding_transition_state_ == BindingTransitionState::TRANSITION_CANDIDATE &&
+          transition_candidate_panel_ >= 0) {
+        selected_panel_id_ = transition_candidate_panel_;
+      } else {
+        selected_panel_id_ = bound_panel_id_;
+      }
+    } else {
+      selected_panel_id_ = candidate_panel_id_;
+    }
+    bound_height_label_ =
+        (bound_panel_id_ >= 0)
+            ? semantic_from_panel(bound_panel_id_)
+            : semantic_from_panel(selected_panel_id_);
   }
-  bound_height_label_ =
-      (bound_panel_id_ >= 0)
-          ? semantic_from_panel(bound_panel_id_)
-          : semantic_from_panel(selected_panel_id_);
 
   const int selected_idx = hypothesis_index_for_panel(hyps, selected_panel_id_);
-  binding_conflict_for_update_ =
-      (candidate_panel_id_ >= 0 && candidate_panel_id_ != selected_panel_id_) ||
-      (z_audit.panel_id >= 0 && z_audit.panel_id != selected_panel_id_);
+  if (!config_.outpost.binding_use_new_binder_pipeline) {
+    binding_conflict_for_update_ =
+        (candidate_panel_id_ >= 0 && candidate_panel_id_ != selected_panel_id_) ||
+        (z_audit.panel_id >= 0 && z_audit.panel_id != selected_panel_id_);
+  }
   max_prob_ = hyps[selected_idx].probability;
   selected_xy_residual_ = hyps[selected_idx].xy_residual;
     const double selected_panel_score =
       compute_same_panel_score(hyps[selected_idx], center_position_est_.z());
-  binding_confidence_ =
-      binding_confidence_from_scores(max_prob_, candidate_margin_,
-                     selected_panel_score, switch_score);
+  if (!config_.outpost.binding_use_new_binder_pipeline) {
+    binding_confidence_ =
+        binding_confidence_from_scores(max_prob_, candidate_margin_,
+                       selected_panel_score, switch_score);
+  }
 
   double entropy = 0.0;
   for (const auto &h : hyps) {
@@ -1316,6 +1382,46 @@ void OutpostArmorTracker::update_publish_state() {
 
   publish_position_ = center_position_est_;
   publish_velocity_ = center_velocity_est_;
+}
+
+BinderConfig OutpostArmorTracker::build_binder_config_from_outpost() const {
+  BinderConfig cfg;
+  cfg.confirm_frames = std::max(1, config_.outpost.binding_transition_confirm_frames);
+  cfg.lock_new_hold_frames = 2;
+  cfg.force_rebind_bad_frames = std::max(1, config_.outpost.z_audit_rebind_confirm_frames);
+  cfg.confidence_floor = std::clamp(config_.outpost.binding_confidence_floor, 0.0, 0.95);
+
+  cfg.z_jump_min = std::max(0.0, config_.outpost.binding_period_update_min_jump);
+  cfg.dz_match_tolerance = 0.03;
+  cfg.dz_gate = 0.010;
+  cfg.yaw_err_gate = std::max(1e-3, config_.outpost.binding_same_panel_yaw_gate);
+  cfg.cost_margin_min = std::clamp(config_.outpost.binding_min_candidate_margin, 0.0, 1.0);
+  cfg.dz_ema_alpha = std::clamp(config_.outpost.binding_dz_ema_alpha, 0.01, 1.0);
+
+  cfg.periodic_enable = true;
+  cfg.periodic_window = std::max(3, config_.outpost.binding_period_window);
+  cfg.periodic_weight = std::max(0.0, config_.outpost.binding_period_weight);
+  cfg.periodic_min_spin_rate = std::max(0.0, config_.outpost.binding_period_min_spin_rate);
+  cfg.periodic_update_min_jump = std::max(1e-5, config_.outpost.binding_period_update_min_jump);
+
+  cfg.min_candidate_prob = std::clamp(config_.outpost.binding_min_candidate_prob, 0.0, 1.0);
+  cfg.min_candidate_margin = std::clamp(config_.outpost.binding_min_candidate_margin, 0.0, 1.0);
+  cfg.switch_strong_score = std::clamp(config_.outpost.binding_switch_strong_score, 0.0, 1.0);
+  cfg.single_obs_history_window = std::max(3, config_.outpost.z_history_window);
+  cfg.dual_obs_enable = config_.outpost.binding_enable_multi_obs;
+
+  cfg.scorer_enable = true;
+  cfg.same_panel_yaw_gate = std::max(1e-3, config_.outpost.binding_same_panel_yaw_gate);
+  cfg.same_panel_z_gate = std::max(1e-3, config_.outpost.binding_same_panel_z_gate);
+  cfg.same_panel_xy_gate = std::max(1e-3, config_.outpost.binding_same_panel_xy_gate);
+
+  cfg.z_audit_rebind_enable = config_.outpost.z_audit_rebind_enable;
+  cfg.z_audit_rebind_confirm_frames =
+      std::max(1, config_.outpost.z_audit_rebind_confirm_frames);
+  cfg.z_audit_rebind_min_confidence =
+      std::clamp(config_.outpost.z_audit_rebind_min_confidence, 0.0, 1.0);
+  cfg.z_audit_rebind_min_jump = std::max(0.0, config_.outpost.z_audit_rebind_min_jump);
+  return cfg;
 }
 
 }  // namespace fyt::auto_aim

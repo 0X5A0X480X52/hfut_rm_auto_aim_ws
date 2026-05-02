@@ -134,6 +134,14 @@ public:
     CONSTANT_ACCELERATION = 1,
   };
 
+  /// Discriminates between full-robot and degraded single-armor representations.
+  enum class RepresentationMode
+  {
+    STRUCTURED_ROBOT = 0,         // full center + N-armor geometry
+    AMBIGUOUS_SINGLE_ARMOR = 1,   // single-armor degraded representation
+    UNKNOWN = 2,
+  };
+
   using OffsetFallbackGenerator = std::function<std::vector<Eigen::Vector3d>(
     const rm_interfaces::msg::TrackedRobot &)>;
 
@@ -205,6 +213,28 @@ public:
   static double yawAcceleration(const rm_interfaces::msg::TrackedRobot & robot);
 
   static double centerDistance(const rm_interfaces::msg::TrackedRobot & robot);
+
+  // ── Representation mode ──
+
+  /// Infer representation mode from TrackedRobot fields.
+  /// - num_armors == 1 && armors_offset.size() <= 1 → AMBIGUOUS_SINGLE_ARMOR
+  /// - num_armors >= 3 → STRUCTURED_ROBOT
+  /// - otherwise: fall back to robot_type-based heuristic.
+  static RepresentationMode inferRepresentationMode(
+      const rm_interfaces::msg::TrackedRobot &robot);
+
+  static bool isSingleArmorRepresentation(
+      const rm_interfaces::msg::TrackedRobot &robot);
+
+  /// Accessors that interpret center_* fields as single-armor state when
+  /// isSingleArmorRepresentation() is true. They are identity wrappers over
+  /// centerPosition/linearVelocity/yaw but carry semantic intent.
+  static Eigen::Vector3d singleArmorPosition(
+      const rm_interfaces::msg::TrackedRobot &robot);
+  static Eigen::Vector3d singleArmorVelocity(
+      const rm_interfaces::msg::TrackedRobot &robot);
+  static double singleArmorYaw(
+      const rm_interfaces::msg::TrackedRobot &robot);
 
   static std::vector<geometry_msgs::msg::Pose> generateArmorsOffsetFromProfile(
     int num_armors,

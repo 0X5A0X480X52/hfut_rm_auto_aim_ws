@@ -97,89 +97,38 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 
   find_package(ament_cmake_gtest REQUIRED)
-  ament_add_gtest(test_mpc_core test/test_mpc_core.cpp
-    ${ALL_SRCS}
-  )
-  target_include_directories(test_mpc_core PRIVATE
-    include
-    ${EIGEN3_INCLUDE_DIRS}
-    ${qpOASES_INCLUDE_DIR}
-  )
-  ament_target_dependencies(test_mpc_core
-    rclcpp
-    rm_interfaces
-    rm_utils
-    geometry_msgs
-    std_msgs
-    sensor_msgs
-    visualization_msgs
-    tf2
-    tf2_ros
-    tf2_geometry_msgs
-    message_filters
-    angles
-    rclcpp_components
-  )
-  target_link_libraries(test_mpc_core
-    Eigen3::Eigen
-    ${qpOASES_LIBRARY}
-  )
+  function(add_gimbal_pipeline_gtest target_name test_src)
+    ament_add_gtest(${target_name} ${test_src})
+    target_include_directories(${target_name} PRIVATE
+      include
+      ${EIGEN3_INCLUDE_DIRS}
+      ${qpOASES_INCLUDE_DIR}
+    )
+    ament_target_dependencies(${target_name}
+      rclcpp
+      rm_interfaces
+      rm_utils
+      geometry_msgs
+      std_msgs
+      sensor_msgs
+      visualization_msgs
+      tf2
+      tf2_ros
+      tf2_geometry_msgs
+      message_filters
+      angles
+      rclcpp_components
+    )
+    target_link_libraries(${target_name}
+      ${PROJECT_NAME}
+      Eigen3::Eigen
+      ${qpOASES_LIBRARY}
+    )
+  endfunction()
 
-  ament_add_gtest(test_outpost_binding test/test_outpost_binding.cpp
-    ${ALL_SRCS}
-  )
-  target_include_directories(test_outpost_binding PRIVATE
-    include
-    ${EIGEN3_INCLUDE_DIRS}
-    ${qpOASES_INCLUDE_DIR}
-  )
-  ament_target_dependencies(test_outpost_binding
-    rclcpp
-    rm_interfaces
-    rm_utils
-    geometry_msgs
-    std_msgs
-    sensor_msgs
-    visualization_msgs
-    tf2
-    tf2_ros
-    tf2_geometry_msgs
-    message_filters
-    angles
-    rclcpp_components
-  )
-  target_link_libraries(test_outpost_binding
-    Eigen3::Eigen
-    ${qpOASES_LIBRARY}
-  )
-
-  ament_add_gtest(test_adaptive_jump_binder test/test_adaptive_jump_binder.cpp
-    ${ALL_SRCS}
-  )
-  target_include_directories(test_adaptive_jump_binder PRIVATE
-    include
-    ${EIGEN3_INCLUDE_DIRS}
-    ${qpOASES_INCLUDE_DIR}
-  )
-  ament_target_dependencies(test_adaptive_jump_binder
-    rclcpp
-    rm_interfaces
-    rm_utils
-    geometry_msgs
-    std_msgs
-    sensor_msgs
-    visualization_msgs
-    tf2
-    tf2_ros
-    tf2_geometry_msgs
-    message_filters
-    angles
-    rclcpp_components
-  )
-  target_link_libraries(test_adaptive_jump_binder
-    Eigen3::Eigen
-    ${qpOASES_LIBRARY}
-  )
+  add_gimbal_pipeline_gtest(test_mpc_core test/test_mpc_core.cpp)
+  add_gimbal_pipeline_gtest(test_outpost_binding test/test_outpost_binding.cpp)
+  add_gimbal_pipeline_gtest(test_adaptive_jump_binder test/test_adaptive_jump_binder.cpp)
 endif()
 
 # ─── Export ─────────────────────────────────────────────────────

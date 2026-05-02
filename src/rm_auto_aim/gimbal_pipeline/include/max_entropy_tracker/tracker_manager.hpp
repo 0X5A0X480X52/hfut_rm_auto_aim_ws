@@ -16,6 +16,7 @@
 #include "max_entropy_tracker/trackers/base_tracker.hpp"
 #include "max_entropy_tracker/trackers/adaptive_armor_tracker.hpp"
 #include "max_entropy_tracker/trackers/outpost_armor_tracker.hpp"
+#include "max_entropy_tracker/trackers/outpost_tracker_v2.hpp"
 #include "max_entropy_tracker/utils/observation_outlier_filter.hpp"
 #include "max_entropy_tracker/utils/output_smoother.hpp"
 
@@ -175,7 +176,11 @@ class TrackerManager {
 
     std::unique_ptr<BaseTracker> t;
     if (robot_id == "outpost") {
-      t = std::make_unique<OutpostArmorTracker>(config_, dt_, enable_osc_);
+      if (config_.outpost.use_tracker_v2) {
+        t = std::make_unique<OutpostTrackerV2>(config_, dt_, enable_osc_);
+      } else {
+        t = std::make_unique<OutpostArmorTracker>(config_, dt_, enable_osc_);
+      }
     } else {
       t = std::make_unique<AdaptiveArmorTracker>(config_, dt_, enable_osc_);
     }

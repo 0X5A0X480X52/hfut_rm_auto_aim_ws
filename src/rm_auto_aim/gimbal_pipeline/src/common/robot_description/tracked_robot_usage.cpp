@@ -350,6 +350,57 @@ double TrackedRobotUsage::centerDistance(const rm_interfaces::msg::TrackedRobot 
   return centerPosition(robot).norm();
 }
 
+// ── Representation mode ──
+
+TrackedRobotUsage::RepresentationMode TrackedRobotUsage::inferRepresentationMode(
+    const rm_interfaces::msg::TrackedRobot &robot)
+{
+  // Phase B: explicit field takes priority when set.
+  if (robot.representation_mode == rm_interfaces::msg::TrackedRobot::REP_AMBIGUOUS_SINGLE_ARMOR) {
+    return RepresentationMode::AMBIGUOUS_SINGLE_ARMOR;
+  }
+  if (robot.representation_mode == rm_interfaces::msg::TrackedRobot::REP_STRUCTURED_ROBOT) {
+    return RepresentationMode::STRUCTURED_ROBOT;
+  }
+
+  // Phase A convention: num_armors == 1 signals single-armor degraded mode.
+  if (robot.num_armors == 1 && robot.armors_offset.size() <= 1) {
+    return RepresentationMode::AMBIGUOUS_SINGLE_ARMOR;
+  }
+  if (robot.num_armors >= 3 && robot.armors_offset.size() >= 3) {
+    return RepresentationMode::STRUCTURED_ROBOT;
+  }
+  // Fallback: use robot_type. OUTPOST_3 defaults to single-armor (safer).
+  if (robot.robot_type == rm_interfaces::msg::TrackedRobot::OUTPOST_3) {
+    return RepresentationMode::AMBIGUOUS_SINGLE_ARMOR;
+  }
+  return RepresentationMode::STRUCTURED_ROBOT;
+}
+
+bool TrackedRobotUsage::isSingleArmorRepresentation(
+    const rm_interfaces::msg::TrackedRobot &robot)
+{
+  return inferRepresentationMode(robot) == RepresentationMode::AMBIGUOUS_SINGLE_ARMOR;
+}
+
+Eigen::Vector3d TrackedRobotUsage::singleArmorPosition(
+    const rm_interfaces::msg::TrackedRobot &robot)
+{
+  return centerPosition(robot);
+}
+
+Eigen::Vector3d TrackedRobotUsage::singleArmorVelocity(
+    const rm_interfaces::msg::TrackedRobot &robot)
+{
+  return linearVelocity(robot);
+}
+
+double TrackedRobotUsage::singleArmorYaw(
+    const rm_interfaces::msg::TrackedRobot &robot)
+{
+  return yaw(robot);
+}
+
 std::vector<geometry_msgs::msg::Pose> TrackedRobotUsage::generateArmorsOffsetFromProfile(
   int num_armors,
   double r1,

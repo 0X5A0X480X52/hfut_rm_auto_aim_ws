@@ -123,6 +123,11 @@ struct PanelMismatchParameters {
 };
 
 struct OutpostParameters {
+  // Outpost tracker implementation switch.
+  // false: legacy OutpostArmorTracker
+  // true : OutpostTrackerV2 (mode-aware pipeline)
+  bool use_tracker_v2 = false;
+
   // Outpost-specific tracker state machine thresholds
   int tracking_thres = 2;
   int lost_thres = 40;
@@ -174,6 +179,7 @@ struct OutpostParameters {
   double single_mode_confidence_scale = 0.70;
 
   // Binding engine controls (periodic evidence + transition confirmation)
+  bool binding_use_new_binder_pipeline = false;
   bool binding_enable_multi_obs = true;
   int binding_transition_confirm_frames = 3;
   double binding_same_panel_yaw_gate = 0.35;
@@ -207,6 +213,25 @@ struct OutpostParameters {
   double yaw_rate_damping = 0.98;
   double max_center_speed = 1.00;
   double max_yaw_rate = 12.0;
+
+  // ── Ambiguous semantics & backend control ──
+  bool ambiguous_publish_single_armor_semantics = true;
+  bool ambiguous_single_armor_zero_offset = true;
+  bool ambiguous_backend_use_imm_adapter = false;
+
+  // ModeFSM (OutpostTrackerV2)
+  int mode_enter_confirm_frames = 3;
+  int mode_exit_confirm_frames = 4;
+  int mode_min_dwell_frames = 6;
+  double mode_enter_threshold = 0.72;
+  double mode_exit_threshold = 0.45;
+
+  // Mode evidence fusion weights (OutpostTrackerV2)
+  double mode_weight_jump = 0.30;
+  double mode_weight_dual = 0.20;
+  double mode_weight_margin = 0.20;
+  double mode_weight_health = 0.20;
+  double mode_weight_entropy = 0.10;
 };
 
 struct ManeuverDetectionParameters {
@@ -224,6 +249,50 @@ struct ManeuverDetectionParameters {
   double mad_k             = 3.0;   ///< outlier threshold = mad_k * MAD
 };
 
+// ======================== Binder Config ========================
+
+struct BinderConfig {
+  // ── Common / FSM ──
+  int confirm_frames = 3;
+  int lock_new_hold_frames = 2;
+  int force_rebind_bad_frames = 10;
+  double confidence_floor = 0.15;
+
+  // ── Decoder: PROXIMITY gates (4-panel) ──
+  double z_jump_min = 0.015;
+  double dz_match_tolerance = 0.03;
+  double dz_gate = 0.010;
+  double yaw_err_gate = 0.35;
+  double cost_margin_min = 0.08;
+  double dz_ema_alpha = 0.20;
+
+  // ── Decoder: periodic evidence ──
+  bool periodic_enable = false;
+  int periodic_window = 12;
+  double periodic_weight = 0.60;
+  double periodic_min_spin_rate = 0.8;
+  double periodic_update_min_jump = 0.015;
+
+  // ── ID Binder: COST gates ──
+  double min_candidate_prob = 0.40;
+  double min_candidate_margin = 0.12;
+  double switch_strong_score = 0.60;
+  int single_obs_history_window = 8;
+  bool dual_obs_enable = true;
+
+  // ── Scorer ──
+  bool scorer_enable = true;
+  double same_panel_yaw_gate = 0.35;
+  double same_panel_z_gate = 0.08;
+  double same_panel_xy_gate = 0.18;
+
+  // ── Scorer: z-audit rebind (outpost) ──
+  bool z_audit_rebind_enable = false;
+  int z_audit_rebind_confirm_frames = 3;
+  double z_audit_rebind_min_confidence = 0.60;
+  double z_audit_rebind_min_jump = 0.015;
+};
+
 // ======================== Unified Config ========================
 
 struct UnifiedConfig {
@@ -239,6 +308,7 @@ struct UnifiedConfig {
   ManeuverDetectionParameters maneuver;
   PanelMismatchParameters panel_mismatch;
   OutpostParameters outpost;
+  BinderConfig binder;
 
   static UnifiedConfig create_default() { return UnifiedConfig{}; }
 

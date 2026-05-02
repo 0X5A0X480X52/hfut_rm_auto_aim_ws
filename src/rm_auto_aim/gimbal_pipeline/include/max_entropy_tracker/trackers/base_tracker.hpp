@@ -60,6 +60,8 @@ class BaseTracker {
 
   /// Runtime ambiguity status. Default trackers are not in single-armor ambiguity mode.
   virtual bool is_ambiguous_single_mode() const { return false; }
+  /// Whether ambiguous mode can be safely interpreted as single-armor representation.
+  virtual bool supports_ambiguous_single_semantics() const { return false; }
 
   /// Runtime armor count hint. <=0 means caller should use profile/default count.
   virtual int effective_num_armors() const { return 0; }

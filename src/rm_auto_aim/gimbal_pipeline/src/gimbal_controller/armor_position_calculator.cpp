@@ -27,6 +27,13 @@ std::vector<Eigen::Vector3d> ArmorPositionCalculator::calculate(
   const auto normalized_robot =
     fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(robot);
 
+  // Single-armor representation: center_position is already the armor world position.
+  if (fyt::auto_aim::robot_description::TrackedRobotUsage::isSingleArmorRepresentation(
+          normalized_robot)) {
+    return {fyt::auto_aim::robot_description::TrackedRobotUsage::singleArmorPosition(
+        normalized_robot)};
+  }
+
   if (!normalized_robot.armors_offset.empty()) {
     RCLCPP_DEBUG(
       rclcpp::get_logger("ArmorPositionCalculator"),
@@ -60,6 +67,18 @@ std::vector<Eigen::Vector3d> ArmorPositionCalculator::calculatePredicted(
 {
   const auto normalized_robot =
     fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(robot);
+
+  if (fyt::auto_aim::robot_description::TrackedRobotUsage::isSingleArmorRepresentation(
+          normalized_robot)) {
+    const Eigen::Vector3d armor_pos =
+        fyt::auto_aim::robot_description::TrackedRobotUsage::singleArmorPosition(
+            normalized_robot);
+    const Eigen::Vector3d armor_vel =
+        fyt::auto_aim::robot_description::TrackedRobotUsage::singleArmorVelocity(
+            normalized_robot);
+    return {armor_pos + armor_vel * dt};
+  }
+
   return fyt::auto_aim::robot_description::TrackedRobotUsage::calculateArmorWorldPositionsEigen(
     normalized_robot,
     dt,

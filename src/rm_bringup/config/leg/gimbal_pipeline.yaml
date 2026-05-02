@@ -69,18 +69,19 @@ gimbal_pipeline:
     constraints.max_dz: 1.0
 
     # Outpost tracker (known 3-armor geometry + max-entropy mode switch)
+    outpost.use_tracker_v2: true
     outpost.translation_model: "CV"   # "CV" | "CA" | "Singer"
-    outpost.rotation_model: "CV"      # "CV" | "CA"
+    outpost.rotation_model: "CA"      # "CV" | "CA"
     # Outpost state machine thresholds (independent from tracker.* used by adaptive)
     outpost.tracking_thres: 2
-    outpost.lost_thres: 45
-    outpost.temp_lost_thres: 3
+    outpost.lost_thres: 90
+    outpost.temp_lost_thres: 5
     outpost.max_match_distance: 2.0
     outpost.max_match_yaw_diff: 1.0
-    outpost.singer_alpha: 0.0          # <=0: fallback to motion.singer_alpha
-    outpost.singer_sigma: 0.0          # <=0: fallback to motion.singer_sigma
-    outpost.spin_process_noise_theta_rate: 0.0  # <=0: fallback to spin.spin_process_noise_delta_rate
-    outpost.spin_process_noise_theta_acc: 0.0   # <=0: fallback to spin.spin_process_noise_delta_acc
+    outpost.singer_alpha: 0.01          # <=0: fallback to motion.singer_alpha
+    outpost.singer_sigma: 0.01          # <=0: fallback to motion.singer_sigma
+    outpost.spin_process_noise_theta_rate: 0.01  # <=0: fallback to spin.spin_process_noise_delta_rate
+    outpost.spin_process_noise_theta_acc: 0.01   # <=0: fallback to spin.spin_process_noise_delta_acc
     outpost.radius: 0.275
     # 语义约定:
     #   id0=最高, id1=中间, id2=最低
@@ -101,8 +102,9 @@ gimbal_pipeline:
     outpost.max_prob_enter: 0.60
     outpost.max_prob_exit: 0.75
     outpost.stable_frames: 4
-    outpost.z_history_window: 15
+    outpost.z_history_window: 20
     outpost.single_mode_confidence_scale: 0.70
+    outpost.binding_use_new_binder_pipeline: true
     outpost.binding_enable_multi_obs: true
     outpost.binding_transition_confirm_frames: 3
     outpost.binding_same_panel_yaw_gate: 0.35
@@ -127,6 +129,21 @@ gimbal_pipeline:
     outpost.yaw_rate_damping: 0.98
     outpost.max_center_speed: 1.00
     outpost.max_yaw_rate: 12.0
+    outpost.mode_enter_confirm_frames: 3
+    outpost.mode_exit_confirm_frames: 4
+    outpost.mode_min_dwell_frames: 6
+    outpost.mode_enter_threshold: 0.72
+    outpost.mode_exit_threshold: 0.45
+    outpost.mode_weight_jump: 0.30
+    outpost.mode_weight_dual: 0.20
+    outpost.mode_weight_margin: 0.20
+    outpost.mode_weight_health: 0.20
+    outpost.mode_weight_entropy: 0.10
+
+    # Ambiguous single-armor semantics and backend control
+    outpost.ambiguous_publish_single_armor_semantics: true
+    outpost.ambiguous_single_armor_zero_offset: true
+    outpost.ambiguous_backend_use_imm_adapter: true
 
     # Panel mismatch detection
     panel_mismatch.enable: true
@@ -664,4 +681,3 @@ gimbal_pipeline:
     # logging.flush_every_n
 
     # 注意：要修改参数请在此文件中对应键下修改数值（或取消注释并覆盖）。
-

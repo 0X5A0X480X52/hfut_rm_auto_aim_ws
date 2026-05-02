@@ -88,6 +88,11 @@ float64 confidence
 # 装甲板数量
 int32 num_armors
 
+# 表示模式：区分完整机器人 vs 单装甲板降级表示
+uint8 REP_STRUCTURED_ROBOT = 0
+uint8 REP_AMBIGUOUS_SINGLE_ARMOR = 1
+uint8 representation_mode
+
 # 可见性信息
 bool is_visible
 int32 visible_armor_count

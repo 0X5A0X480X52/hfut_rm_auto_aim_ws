@@ -5,12 +5,15 @@
 #include <array>
 #include <deque>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <vector>
 
 #include <Eigen/Dense>
 #include <geometry_msgs/msg/pose.hpp>
 
+#include "max_entropy_tracker/binder/factory/binder_factory.hpp"
+#include "max_entropy_tracker/binder/model/robot_binding_profile.hpp"
 #include "max_entropy_tracker/filters/outpost_spin_ukf.hpp"
 #include "max_entropy_tracker/trackers/base_tracker.hpp"
 #include "max_entropy_tracker/utils/maneuver_detector.hpp"
@@ -182,6 +185,7 @@ class OutpostArmorTracker : public BaseTracker {
   void sync_internal_state_from_filter();
 
   void update_publish_state();
+  BinderConfig build_binder_config_from_outpost() const;
 
   const UnifiedConfig config_;
   double radius_ = 0.26;
@@ -244,6 +248,9 @@ class OutpostArmorTracker : public BaseTracker {
   int period_phase_index_ = -1;
   double period_confidence_ = std::numeric_limits<double>::quiet_NaN();
   int spin_direction_ = 0;
+
+  binder::RobotBindingProfile binding_profile_;
+  std::unique_ptr<binder::BinderPipeline> binder_pipeline_;
 };
 
 }  // namespace fyt::auto_aim
