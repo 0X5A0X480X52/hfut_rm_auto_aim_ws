@@ -76,11 +76,16 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
         debug_ ? createDebugPublishers() : destroyDebugPublishers();
       });
 
-  // Image Subscription
-  img_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
-      img_topic,
-      rclcpp::SensorDataQoS(),
-      std::bind(&ArmorDetectorNode::imageCallback, this, std::placeholders::_1));
+  // Image Subscription via tf2_ros::MessageFilter — 当且仅当
+  // odom→camera_optical_frame 在 img_msg->header.stamp 时刻可解算时
+  // 才触发 imageCallback；TF 滞后的图像会被排队等候，超出 queue/tolerance 的丢弃。
+  img_mf_sub_.subscribe(this, img_topic, rmw_qos_profile_sensor_data);
+  tf2_filter_ = std::make_shared<tf2_ros::MessageFilter<sensor_msgs::msg::Image>>(
+      img_mf_sub_, *tf2_buffer_, odom_frame_,
+      /*queue_size=*/10,
+      get_node_logging_interface(), get_node_clock_interface(),
+      std::chrono::duration<int>(1));
+  tf2_filter_->registerCallback(&ArmorDetectorNode::imageCallback, this);
 
   // Set Mode 服务 (节点私有服务，在命名空间下解析)
   set_mode_srv_ = this->create_service<rm_interfaces::srv::SetMode>(
@@ -100,7 +105,7 @@ void ArmorDetectorNode::imageCallback(
   double camera_pitch_current = 0.0;
   try {
     auto odom_to_camera = tf2_buffer_->lookupTransform(
-        odom_frame_, img_msg->header.frame_id, tf2::TimePointZero);
+        odom_frame_, img_msg->header.frame_id, img_msg->header.stamp);
     tf2::Quaternion q;
     tf2::fromMsg(odom_to_camera.transform.rotation, q);
     tf2::Matrix3x3 m(q);
@@ -324,12 +329,7 @@ void ArmorDetectorNode::setModeCallback(
   }
 
   auto createImageSub = [this]() {
-    if (img_sub_ == nullptr) {
-      img_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
-          "image_raw", rclcpp::SensorDataQoS(),
-          std::bind(&ArmorDetectorNode::imageCallback, this,
-                    std::placeholders::_1));
-    }
+    img_mf_sub_.subscribe(this, "image_raw", rmw_qos_profile_sensor_data);
   };
 
   switch (mode) {
@@ -344,7 +344,7 @@ void ArmorDetectorNode::setModeCallback(
     break;
   }
   default: {
-    img_sub_.reset();
+    img_mf_sub_.unsubscribe();
   }
   }
 

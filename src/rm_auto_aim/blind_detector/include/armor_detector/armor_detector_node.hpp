@@ -33,6 +33,8 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
+#include <tf2_ros/message_filter.h>
+#include <message_filters/subscriber.h>
 // project
 #include "armor_detector/armor_detector.hpp"
 #include "armor_detector/number_classifier.hpp"
@@ -106,8 +108,11 @@ private:
   float h_fov_;  // Horizontal field of view in degrees
   float v_fov_;  // Vertical field of view in degrees
 
-  // Image subscription
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr img_sub_;
+  // Image subscription — 通过 tf2_ros::MessageFilter 排队，
+  // 仅当 odom→camera_optical_frame 在 img_msg->header.stamp 时刻可解算时
+  // 才触发 imageCallback。与 gimbal_pipeline 中 tf2_armor_filter 同款思路。
+  message_filters::Subscriber<sensor_msgs::msg::Image> img_mf_sub_;
+  std::shared_ptr<tf2_ros::MessageFilter<sensor_msgs::msg::Image>> tf2_filter_;
 
   // Target subscription
   // rclcpp::Subscription<rm_interfaces::msg::Target>::SharedPtr target_sub_;
