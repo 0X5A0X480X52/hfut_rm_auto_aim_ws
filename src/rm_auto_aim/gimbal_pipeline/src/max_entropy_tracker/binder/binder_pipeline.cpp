@@ -66,11 +66,13 @@ BinderOutput BinderPipeline::step(const BinderFrameInput & input) {
   }
 
   // 5. FSM step
-  BindingAction action = fsm_.step(target.target_id, target.confidence,
+  BindingAction action = fsm_.step(target.target_id, target.height_label,
+                                   target.confidence,
                                    jump, health);
 
   // 6. Build output
   BinderOutput output;
+  output.pending_id = fsm_.pending_id();
   output.selected_id = fsm_.selected_id();
   output.bound_id = fsm_.selected_id();
   output.height_label = fsm_.selected_label();
@@ -84,8 +86,8 @@ BinderOutput BinderPipeline::step(const BinderFrameInput & input) {
   if (!input.obs_z_values.empty()) {
     decoder_ctx_.last_obs_z = input.obs_z_values[0];
   }
-  decoder_ctx_.last_panel_id = output.selected_id;
-  binder_ctx_.current_bound_id = output.selected_id;
+  decoder_ctx_.last_panel_id = output.bound_id;
+  binder_ctx_.current_bound_id = output.bound_id;
   binder_ctx_.current_bound_label = output.height_label;
 
   // Maintain history windows
@@ -103,7 +105,7 @@ BinderOutput BinderPipeline::step(const BinderFrameInput & input) {
       binder_ctx_.z_jump_history.pop_front();
     }
   }
-  binder_ctx_.panel_id_history.push_back(output.selected_id);
+  binder_ctx_.panel_id_history.push_back(output.bound_id);
   const int max_pid = 20;
   while (static_cast<int>(binder_ctx_.panel_id_history.size()) > max_pid) {
     binder_ctx_.panel_id_history.pop_front();

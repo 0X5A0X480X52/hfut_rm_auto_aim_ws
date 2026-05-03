@@ -22,12 +22,14 @@ class BindingFSM {
 
   void reset(int panel_id, HeightLabel label);
 
-  BindingAction step(int target_id, double target_confidence,
+  BindingAction step(int target_id, HeightLabel target_label,
+                     double target_confidence,
                      const JumpDecision & jump,
                      const BindingHealth & health);
 
   int selected_id() const { return bound_id_; }
   HeightLabel selected_label() const { return bound_label_; }
+  int pending_id() const { return pending_target_; }
   BindingFSMState state() const { return state_; }
   bool switch_occurred() const { return switch_occurred_; }
   int switch_reason() const { return switch_reason_; }

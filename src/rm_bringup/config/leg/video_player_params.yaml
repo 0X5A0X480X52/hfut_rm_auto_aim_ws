@@ -3,13 +3,13 @@ video_player:
     # Path to the video file (required)
     # Example: "/path/to/your/video.mp4"
     # video_path: "./src/rm_hardware_driver/video_player/video/output.avi"
-    video_path: "tmp/camera.mp4"
+    video_path: "test_video/output.avi"
     
     # Whether to loop the video playback
     loop_playback: true
     
     # Playback frame rate (fps)
-    fps: 250.0
+    fps: 60.0
     
     # Camera name for camera info manager
     camera_name: "camera"

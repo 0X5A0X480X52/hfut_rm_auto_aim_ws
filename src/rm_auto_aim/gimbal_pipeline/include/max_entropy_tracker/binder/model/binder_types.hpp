@@ -22,6 +22,8 @@ struct BinderFrameInput {
 
   std::vector<double> obs_z_values;
   std::vector<double> obs_yaw_values;
+  std::vector<int> obs_panel_ids;
+  std::vector<HeightLabel> obs_height_labels;
   double z_jump = 0.0;
   bool has_z_jump = false;
 

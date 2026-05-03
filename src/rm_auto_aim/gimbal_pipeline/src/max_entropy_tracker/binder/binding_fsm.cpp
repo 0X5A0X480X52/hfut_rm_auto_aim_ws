@@ -25,11 +25,23 @@ void BindingFSM::reset(int panel_id, HeightLabel label) {
   confidence_ = 0.5;
 }
 
-BindingAction BindingFSM::step(int target_id, double target_confidence,
+BindingAction BindingFSM::step(int target_id, HeightLabel target_label,
+                               double target_confidence,
                                const JumpDecision & jump,
                                const BindingHealth & health) {
   switch_occurred_ = false;
   switch_reason_ = 0;
+  const double target_conf =
+      std::clamp(target_confidence, 0.0, 1.0);
+  auto resolved_target_label = [&]() -> HeightLabel {
+    if (target_label != HeightLabel::UNKNOWN) {
+      return target_label;
+    }
+    if (bound_label_ != HeightLabel::UNKNOWN) {
+      return bound_label_;
+    }
+    return HeightLabel::LOWER;
+  };
   const int confirm_required = std::max(1, config_.confirm_frames);
   const int pending_window = std::max(
       confirm_required,
@@ -51,6 +63,8 @@ BindingAction BindingFSM::step(int target_id, double target_confidence,
     if (!health.force_rebind_recommend && target_id >= 0) {
       if (confirm_counter_.tick(true)) {
         bound_id_ = target_id;
+        bound_label_ = resolved_target_label();
+        confidence_ = target_conf;
         state_ = BindingFSMState::LOCKED;
         confirm_counter_.reset();
         switch_reason_ = 5;
@@ -65,6 +79,7 @@ BindingAction BindingFSM::step(int target_id, double target_confidence,
   // ── Health-triggered force rebind ──
   if (health.force_rebind_recommend) {
     state_ = BindingFSMState::UNLOCKED;
+    confidence_ = std::max(0.10, 0.50 * confidence_);
     confirm_counter_.reset();
     switch_occurred_ = true;
     switch_reason_ = 6;
@@ -73,6 +88,9 @@ BindingAction BindingFSM::step(int target_id, double target_confidence,
 
   // ── LOCKED_NEW: hold period after switch ──
   if (state_ == BindingFSMState::LOCKED_NEW) {
+    if (target_id == bound_id_) {
+      confidence_ = std::clamp(0.85 * confidence_ + 0.15 * target_conf, 0.0, 1.0);
+    }
     if (hold_remaining_ > 0) --hold_remaining_;
     if (hold_remaining_ == 0) {
       state_ = BindingFSMState::LOCKED;
@@ -84,12 +102,17 @@ BindingAction BindingFSM::step(int target_id, double target_confidence,
   // ── LOCKED: normal steady phase ──
   if (state_ == BindingFSMState::LOCKED) {
     if (target_id < 0 || target_id == bound_id_ || !jump.detected) {
+      if (target_id == bound_id_ && target_conf > 0.0) {
+        confidence_ = std::clamp(0.85 * confidence_ + 0.15 * target_conf, 0.0, 1.0);
+      }
       return BindingAction::HOLD;
     }
 
     if (config_.confirm_frames <= 1) {
       // Immediate switch
       bound_id_ = target_id;
+      bound_label_ = resolved_target_label();
+      confidence_ = target_conf;
       state_ = BindingFSMState::LOCKED_NEW;
       hold_remaining_ = config_.lock_new_hold_frames;
       switch_occurred_ = true;
@@ -102,6 +125,7 @@ BindingAction BindingFSM::step(int target_id, double target_confidence,
     pending_window_remaining_ = pending_window;
     confirm_counter_.reset();
     confirm_counter_.tick(true);  // Jump pulse is the trigger anchor.
+    confidence_ = std::clamp(std::max(confidence_, 0.60 * target_conf), 0.0, 1.0);
     --pending_window_remaining_;
     return BindingAction::PENDING;
   }
@@ -134,6 +158,8 @@ BindingAction BindingFSM::step(int target_id, double target_confidence,
 
     if (confirm_counter_.tick(support)) {
       bound_id_ = target_id;
+      bound_label_ = resolved_target_label();
+      confidence_ = target_conf;
       state_ = BindingFSMState::LOCKED_NEW;
       hold_remaining_ = config_.lock_new_hold_frames;
       pending_target_ = -1;
@@ -145,6 +171,9 @@ BindingAction BindingFSM::step(int target_id, double target_confidence,
     }
 
     --pending_window_remaining_;
+    if (support) {
+      confidence_ = std::clamp(std::max(confidence_, 0.70 * target_conf), 0.0, 1.0);
+    }
     if (pending_window_remaining_ > 0) {
       return BindingAction::PENDING;
     }
