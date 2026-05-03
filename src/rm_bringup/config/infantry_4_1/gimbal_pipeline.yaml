@@ -69,6 +69,7 @@ gimbal_pipeline:
     constraints.max_dz: 1.0
 
     # Outpost tracker (known 3-armor geometry + max-entropy mode switch)
+    outpost.use_tracker_v2: true
     outpost.translation_model: "CA"   # "CV" | "CA" | "Singer"
     outpost.rotation_model: "CA"      # "CV" | "CA"
     # Outpost state machine thresholds (independent from tracker.* used by adaptive)
@@ -86,6 +87,10 @@ gimbal_pipeline:
     #   id0=最高, id1=中间, id2=最低
     # 俯视顺时针角序:
     #   0deg(id0) -> 120deg(id2) -> 240deg(id1)
+# 语义约定:
+    #   id0=最高, id1=中间, id2=最低
+    # 俯视顺时针角序:
+    #   0deg(id0) -> 120deg(id2) -> 240deg(id1)
     outpost.z_offset_0: 0.102
     outpost.z_offset_1: 0.00
     outpost.z_offset_2: -0.102
@@ -93,7 +98,7 @@ gimbal_pipeline:
     outpost.softmax_temperature: 1.5
     outpost.weight_yaw: 1.0
     outpost.weight_z_state: 6.0
-    outpost.weight_z_history: 3.0
+    outpost.weight_z_history: 2.0
     outpost.weight_xy_residual: 2.5
     outpost.weight_switch_penalty: 0.05
     outpost.entropy_enter: 0.75
@@ -101,9 +106,10 @@ gimbal_pipeline:
     outpost.max_prob_enter: 0.60
     outpost.max_prob_exit: 0.75
     outpost.stable_frames: 4
-    outpost.z_history_window: 35
+    outpost.z_history_window: 20
     outpost.single_mode_confidence_scale: 0.70
-    outpost.binding_enable_multi_obs: false
+    outpost.binding_use_new_binder_pipeline: true
+    outpost.binding_enable_multi_obs: true
     outpost.binding_transition_confirm_frames: 3
     outpost.binding_same_panel_yaw_gate: 0.35
     outpost.binding_same_panel_z_gate: 0.08
@@ -111,7 +117,7 @@ gimbal_pipeline:
     outpost.binding_min_candidate_prob: 0.40
     outpost.binding_min_candidate_margin: 0.12
     outpost.binding_switch_strong_score: 0.60
-    outpost.binding_period_window: 30
+    outpost.binding_period_window: 12
     outpost.binding_period_weight: 0.60
     outpost.binding_period_min_spin_rate: 0.8
     outpost.binding_period_update_min_confidence: 0.55
@@ -127,6 +133,21 @@ gimbal_pipeline:
     outpost.yaw_rate_damping: 0.98
     outpost.max_center_speed: 1.00
     outpost.max_yaw_rate: 12.0
+    outpost.mode_enter_confirm_frames: 3
+    outpost.mode_exit_confirm_frames: 4
+    outpost.mode_min_dwell_frames: 6
+    outpost.mode_enter_threshold: 0.72
+    outpost.mode_exit_threshold: 0.45
+    outpost.mode_weight_jump: 0.30
+    outpost.mode_weight_dual: 0.20
+    outpost.mode_weight_margin: 0.20
+    outpost.mode_weight_health: 0.20
+    outpost.mode_weight_entropy: 0.10
+
+    # Ambiguous single-armor semantics and backend control
+    outpost.ambiguous_publish_single_armor_semantics: true
+    outpost.ambiguous_single_armor_zero_offset: true
+    outpost.ambiguous_backend_use_imm_adapter: true
 
     # Panel mismatch detection
     panel_mismatch.enable: true

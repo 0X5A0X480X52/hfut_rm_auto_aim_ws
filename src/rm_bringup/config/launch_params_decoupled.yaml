@@ -4,16 +4,16 @@
 
 # --------- 通用参数 ---------
 # 机器人配置标签，用于选择 rm_bringup/config/<robot>/ 下的真实参数
-robot: 'video_test'
+robot: 'infantry_4_1'
 
 # 命名空间 所有节点、话题都会以这个命名空间开头
 namespace: ''
 
 # image_source: (video | mindvision | hik)
-image_source: 'video'
+image_source: 'hik'
 
 # true: 虚拟下位机 false: 实车
-virtual_serial: true
+virtual_serial: false
 
 # true: 开启调试模式 (发布可视化markers)
 debug: true
@@ -46,11 +46,6 @@ odom2camera:
 # odom2camera:
 #   xyz: "\"0.12514 0.000 0.0505 \""
 #   rpy: "\"0.0  0.0  -0.00\""
-
-# uav
-# odom2camera:
-#   xyz: "\"0.0764  0.000 -0.044630 \""
-#   rpy: "\"0.0  0.020  0.00\""
 
 # # 英雄
 # odom2camera:
