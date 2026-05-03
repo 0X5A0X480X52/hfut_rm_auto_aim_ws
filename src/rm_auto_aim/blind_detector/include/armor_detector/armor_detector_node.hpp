@@ -31,12 +31,15 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
 // project
 #include "armor_detector/armor_detector.hpp"
 #include "armor_detector/number_classifier.hpp"
 #include "rm_interfaces/msg/armors.hpp"
 #include "rm_interfaces/msg/target.hpp"
 #include "rm_interfaces/msg/blind.hpp"
+#include "rm_interfaces/msg/blinds.hpp"
 #include "rm_interfaces/srv/set_mode.hpp"
 #include "rm_utils/heartbeat.hpp"
 #include "rm_utils/logger/log.hpp"
@@ -83,16 +86,19 @@ private:
   // Detected armors publisher
   rm_interfaces::msg::Armor armor_msg_;
   rm_interfaces::msg::Armors armors_msg_;
-  rm_interfaces::msg::Blind blind_msg_;
+  rm_interfaces::msg::Blinds blinds_msg_;
   rclcpp::Publisher<rm_interfaces::msg::Armors>::SharedPtr armors_pub_;
-  rclcpp::Publisher<rm_interfaces::msg::Blind>::SharedPtr blind_pub_;
+  rclcpp::Publisher<rm_interfaces::msg::Blinds>::SharedPtr blinds_pub_;
 
   // Camera info part
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr cam_info_sub_;
   cv::Point2f cam_center_;
-  float camera_yaw_;
-  float camera_pitch_;  // Camera pitch angle in degrees
   std::shared_ptr<sensor_msgs::msg::CameraInfo> cam_info_;
+
+  // TF2 for real-time camera orientation (follows gimbal rotation)
+  std::string odom_frame_;
+  std::shared_ptr<tf2_ros::Buffer> tf2_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf2_listener_;
 
   // Image and FOV parameters for angle estimation
   int image_width_;
@@ -113,7 +119,6 @@ private:
 
   // Debug information
   bool debug_;
-  std::string camera_name_;
   std::shared_ptr<rclcpp::ParameterEventHandler> debug_param_sub_;
   std::shared_ptr<rclcpp::ParameterCallbackHandle> debug_cb_handle_;
   rclcpp::Publisher<rm_interfaces::msg::DebugLights>::SharedPtr

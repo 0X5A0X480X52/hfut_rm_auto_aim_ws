@@ -11,6 +11,11 @@
 
 #include <image_transport/image_transport.hpp>
 #include <rclcpp/qos.hpp>
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2/exceptions.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/create_timer_ros.h>
 // third party
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
@@ -31,29 +36,32 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
   FYT_REGISTER_LOGGER("blind_detector", "~/fyt2024-log", INFO);
   FYT_INFO("blind_detector", "Starting BlindArmorDetectorNode!");
 
-  // 动态获取摄像头名称前缀 (e.g., "left" or "right")
-  camera_name_ = this->declare_parameter<std::string>("camera_name", "left");
-  camera_yaw_ = this->declare_parameter("camera_yaw", 0.0);
-  camera_pitch_ = this->declare_parameter("camera_pitch", 0.0);
+  // TF2 实时获取相机朝向 (跟随云台旋转，不再使用静态 camera_yaw/camera_pitch 参数)
+  odom_frame_ = this->declare_parameter("target_frame", "odom");
+  tf2_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+  auto timer_interface = std::make_shared<tf2_ros::CreateTimerROS>(
+      this->get_node_base_interface(), this->get_node_timers_interface());
+  tf2_buffer_->setCreateTimerInterface(timer_interface);
+  tf2_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
 
   // FOV parameters for angle estimation (still from config)
   h_fov_ = this->declare_parameter("h_fov", 60.0);
   v_fov_ = this->declare_parameter("v_fov", 45.0);
 
   // Image dimensions (从配置文件中读取)
-  image_width_ = this->declare_parameter("image_width", 640);
-  image_height_ = this->declare_parameter("image_height", 480);
+  image_width_ = this->declare_parameter("blind_image_width", 640);
+  image_height_ = this->declare_parameter("blind_image_height", 480);
 
   // 初始化 Detector
   detector_ = initDetector();
 
-  // 构建话题名称
-  const std::string img_topic = camera_name_ + "_image_raw";
-  const std::string armors_topic = std::string("blind_detector/") + camera_name_ + "/blind";
+  // 构建话题名称 (相对话题名，在命名空间下解析)
+  const std::string img_topic = "image_raw";
+  const std::string blinds_topic = "blinds";
 
   //Targets Publisher
-  blind_pub_ = this->create_publisher<rm_interfaces::msg::Blind>(
-    armors_topic, rclcpp::SensorDataQoS());
+  blinds_pub_ = this->create_publisher<rm_interfaces::msg::Blinds>(
+    blinds_topic, rclcpp::SensorDataQoS());
 
   // Debug 参数
   debug_ = this->declare_parameter("debug", true);
@@ -74,9 +82,9 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
       rclcpp::SensorDataQoS(),
       std::bind(&ArmorDetectorNode::imageCallback, this, std::placeholders::_1));
 
-  // Set Mode 服务
+  // Set Mode 服务 (节点私有服务，在命名空间下解析)
   set_mode_srv_ = this->create_service<rm_interfaces::srv::SetMode>(
-      camera_name_+"/blind_detector/set_mode",
+      "~/blind_detector/set_mode",
       std::bind(&ArmorDetectorNode::setModeCallback, this,
                 std::placeholders::_1, std::placeholders::_2));
 
@@ -87,66 +95,53 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
 void ArmorDetectorNode::imageCallback(
     const sensor_msgs::msg::Image::ConstSharedPtr img_msg) {
 
+  // 从 TF 获取补盲相机当前的绝对朝向 (odom 坐标系)
+  double camera_yaw_current = 0.0;
+  double camera_pitch_current = 0.0;
+  try {
+    auto odom_to_camera = tf2_buffer_->lookupTransform(
+        odom_frame_, img_msg->header.frame_id, tf2::TimePointZero);
+    tf2::Quaternion q;
+    tf2::fromMsg(odom_to_camera.transform.rotation, q);
+    tf2::Matrix3x3 m(q);
+    double roll;
+    m.getRPY(roll, camera_pitch_current, camera_yaw_current);
+    camera_yaw_current = camera_yaw_current * 180.0 / M_PI;
+    camera_pitch_current = camera_pitch_current * 180.0 / M_PI;
+  } catch (tf2::TransformException &ex) {
+    FYT_ERROR("blind_detector", "TF error: {}", ex.what());
+    return;
+  }
+
   // Detect armors
   auto armors = detectArmors(img_msg);
 
-  // Init message
-  std::string best_number = "-1";
-  float best_yaw = 0.0;
-  float best_pitch = 0.0;
-  float best_confi = 0.0;
+  // 发布所有检测到的装甲板（无优先级比较，由下游 gimbal_pipeline 选目标）
+  blinds_msg_.header = img_msg->header;
+  blinds_msg_.blinds.clear();
+  blinds_msg_.blinds.reserve(armors.size());
 
   for (auto &armor : armors) {
     // 1. 计算目标在机器人坐标系中的yaw角
     // 公式：yaw = 相机中心yaw + (归一化位置 - 0.5) * 水平视场角
     float normalized_x = static_cast<double>(armor.center.x) / static_cast<double>(image_width_);
-    float yaw = camera_yaw_ - (normalized_x - 0.5) * h_fov_;
+    float yaw = camera_yaw_current - (normalized_x - 0.5) * h_fov_;
 
     // 2. 计算目标在机器人坐标系中的pitch角
     // 公式：pitch = 相机中心pitch + (归一化位置 - 0.5) * 垂直视场角
     // 注意：图像y轴向下，所以pitch向上为正
     float normalized_y = static_cast<double>(armor.center.y) / static_cast<double>(image_height_);
-    float pitch = camera_pitch_ - (normalized_y - 0.5) * v_fov_;
+    float pitch = camera_pitch_current - (normalized_y - 0.5) * v_fov_;
 
-    float abs_yaw = std::abs(yaw);
-
-    // 3. 优先级比较
-    bool is_better = false;
-    if (best_number == "-1") { // 首次有效目标
-      is_better = true;
-    } else {
-      bool current_is_priority1 = (armor.classfication_result == "1");
-      bool best_is_priority1 = (best_number == "1");
-
-      if (current_is_priority1 && !best_is_priority1) {
-        is_better = true; // 当前类型1 > 其他类型
-      } else if (!current_is_priority1 && best_is_priority1) {
-        is_better = false; // 当前类型非1 < 类型1
-      } else { // 同类优先级
-        if (abs_yaw < abs(best_yaw)) {
-          is_better = true;
-        } else if (abs_yaw == abs(best_yaw)) {
-          // 若yaw相同，可选比较置信度（假设armor.confidence存在）
-          is_better = (armor.confidence > best_confi);
-        }
-      }
-    }
-
-    // 4. 更新最佳目标
-    if (is_better) {
-      best_number = armor.classfication_result;
-      best_yaw = yaw;
-      best_pitch = pitch;
-      best_confi = armor.confidence; // 假设存在confidence字段
-    }
+    rm_interfaces::msg::Blind b;
+    b.number = armor.classfication_result;
+    b.yaw = yaw;
+    b.pitch = pitch;
+    b.confi = armor.confidence;
+    blinds_msg_.blinds.push_back(b);
   }
-  blind_msg_.header = img_msg->header;
-  blind_msg_.is_left = (camera_name_ == "left") ? true : false;
-  blind_msg_.number = best_number;
-  blind_msg_.yaw = best_yaw;
-  blind_msg_.pitch = best_pitch;
-  blind_msg_.confi = best_confi;
-  blind_pub_->publish(blind_msg_);
+
+  blinds_pub_->publish(blinds_msg_);
 }
 
 std::unique_ptr<Detector> ArmorDetectorNode::initDetector() {
@@ -294,22 +289,15 @@ ArmorDetectorNode::onSetParameters(std::vector<rclcpp::Parameter> parameters) {
 }
 
 void ArmorDetectorNode::createDebugPublishers() noexcept {
-  // 为每个 camera_name 动态构造 debug 话题
-  const std::string ns = std::string("blind_detector/") + camera_name_ + "/";
   lights_data_pub_ = this->create_publisher<rm_interfaces::msg::DebugLights>(
-      ns + "debug_lights", 10);
+      "~/debug_lights", 10);
   armors_data_pub_ = this->create_publisher<rm_interfaces::msg::DebugArmors>(
-      ns + "debug_armors", 10);
+      "~/debug_armors", 10);
 
-  this->declare_parameter(ns + "result_img.jpeg_quality", 50);
-  //this->declare_parameter(ns + "binary_img.jpeg_quality", 50);
+  this->declare_parameter("result_img.jpeg_quality", 50);
 
-  //binary_img_pub_ =
-  //    image_transport::create_publisher(this, ns + "binary_img");
-  //number_img_pub_ =
-  //    image_transport::create_publisher(this, ns + "number_img");
   result_img_pub_ =
-      image_transport::create_publisher(this, ns + "result_img");
+      image_transport::create_publisher(this, "~/result_img");
 }
 
 

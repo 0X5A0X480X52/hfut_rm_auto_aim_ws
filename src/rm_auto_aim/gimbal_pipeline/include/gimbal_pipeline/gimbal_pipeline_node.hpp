@@ -29,6 +29,7 @@
 #include <rm_interfaces/msg/armor.hpp>
 #include <rm_interfaces/msg/armors.hpp>
 #include <rm_interfaces/msg/blind.hpp>
+#include <rm_interfaces/msg/blinds.hpp>
 #include <rm_interfaces/msg/delay_audit.hpp>
 #include <rm_interfaces/msg/gimbal_cmd.hpp>
 #include <rm_interfaces/msg/maneuver_state.hpp>
@@ -114,7 +115,7 @@ class GimbalPipelineNode : public rclcpp::Node {
   void initGimbalStrategies();
   void jointStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg);
   void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg);
-  void blindCallback(const rm_interfaces::msg::Blind::SharedPtr msg,
+  void blindCallback(const rm_interfaces::msg::Blinds::SharedPtr msg,
                       const std::string &topic);
   void updateGimbalState();
   void buildControlContextFromCache(
@@ -227,6 +228,8 @@ class GimbalPipelineNode : public rclcpp::Node {
       gimbal_strategies_;
   std::string current_gimbal_strategy_name_{"current"};
 
+  bool enable_blind_{true};
+
   double current_yaw_{0.0};
   double current_pitch_{0.0};
   double bullet_speed_{20.0};
@@ -269,9 +272,9 @@ class GimbalPipelineNode : public rclcpp::Node {
   // Blind detector subscriptions — supports multi-camera (one sub per configured topic)
   std::vector<std::string> blind_topics_;
   double blind_sync_timeout_{0.05};
-  std::vector<rclcpp::Subscription<rm_interfaces::msg::Blind>::SharedPtr> blind_subs_;
+  std::vector<rclcpp::Subscription<rm_interfaces::msg::Blinds>::SharedPtr> blind_subs_;
   // Per-topic latest message buffer (protected by blind_buffer_mutex_)
-  std::unordered_map<std::string, rm_interfaces::msg::Blind::SharedPtr> blind_latest_per_topic_;
+  std::unordered_map<std::string, rm_interfaces::msg::Blinds::SharedPtr> blind_latest_per_topic_;
   std::mutex blind_buffer_mutex_;
   // Best candidate selected each control cycle (used by buildBlindGuidanceCommand)
   rm_interfaces::msg::Blind::SharedPtr latest_blind_msg_;

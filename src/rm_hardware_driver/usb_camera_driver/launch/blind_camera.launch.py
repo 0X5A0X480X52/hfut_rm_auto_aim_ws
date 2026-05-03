@@ -16,7 +16,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
-from launch_ros.actions import ComposableNodeContainer, Node
+from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
 
 
@@ -56,8 +56,8 @@ def generate_launch_description():
     )
 
     # Blind detector node (light detection, no PnP)
-    # Subscribes to: <namespace>/image_raw
-    # Publishes to:  /blind_detector/blind (after remap)
+    # Subscribes to: <namespace>/image_raw  (relative topic, resolved by namespace)
+    # Publishes to:  <namespace>/blinds     (relative topic, resolved by namespace)
     blind_detector_node = ComposableNode(
         package="blind_detector",
         plugin="fyt::auto_aim::ArmorDetectorNode",
@@ -66,17 +66,10 @@ def generate_launch_description():
         parameters=[
             os.path.join(bringup_pkg, "config", "node_params", "armor_detector_params.yaml"),
             {
-                "camera_name": LaunchConfiguration("camera_name"),
-                "camera_yaw": 180.0,
-                "camera_pitch": 8.0,
                 "h_fov": 60.0,
                 "v_fov": 45.0,
                 "debug": LaunchConfiguration("debug"),
             },
-        ],
-        remappings=[
-            ([LaunchConfiguration("camera_name"), "_image_raw"], "image_raw"),
-            (["blind_detector/", LaunchConfiguration("camera_name"), "/blind"], "/blind_detector/blind"),
         ],
         extra_arguments=[{"use_intra_process_comms": True}],
     )
@@ -92,25 +85,11 @@ def generate_launch_description():
         emulate_tty=True,
     )
 
-    # image_transport republish: adds compressed topic for foxglove visualization
-    republish_node = Node(
-        package="image_transport",
-        executable="republish",
-        name="image_republish",
-        namespace=LaunchConfiguration("namespace"),
-        arguments=["raw", "compressed"],
-        remappings=[
-            ("in/raw", "image_raw"),
-            ("out", "image_raw"),
-        ],
-    )
-
     return LaunchDescription(
         [
             declare_camera_name,
             declare_namespace,
             declare_debug,
             blind_camera_container,
-            republish_node,
         ]
     )

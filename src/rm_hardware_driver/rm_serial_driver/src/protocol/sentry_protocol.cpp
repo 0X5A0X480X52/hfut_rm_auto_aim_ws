@@ -49,34 +49,27 @@ void ProtocolSentry::send(const rm_interfaces::msg::GimbalCmd &data) {
 
 
 void ProtocolSentry::send(const rm_interfaces::msg::Blind &data) {
-  if (data.is_left && data.yaw>0){
-    try{
-      packet.loadData<int>(static_cast<int>(std::stoi(data.number.substr(0,1))), 18);
-      packet.loadData<float>(static_cast<float>(data.yaw),22);
-    }
-    catch(const std::invalid_argument &e){
-      FYT_ERROR("serial_driver","left_blind_invalid_argument");
-      packet.loadData<int>(static_cast<int>(-1), 18);
-    }
-  }
-  else if (data.is_left){
-    packet.loadData<int>(static_cast<int>(-1), 18);
-  }
-  if (!data.is_left && data.yaw<0)
-  {
-    try{
-      packet.loadData<int>(static_cast<int>(std::stoi(data.number.substr(0,1))), 26);
-      packet.loadData<float>(static_cast<float>(data.yaw),30);
-    }
-    catch(const std::invalid_argument &e){
-      FYT_ERROR("serial_driver","right_blind_invalid_argument");
-      packet.loadData<int>(static_cast<int>(-1), 26);
+  // 单补盲相机（朝后）：按 yaw 正负分别填入下位机协议的左/右槽位
+  // 左槽位: number@18, yaw@22；右槽位: number@26, yaw@30
+  // 无目标时两槽位均填 -1
+  packet.loadData<int>(static_cast<int>(-1), 18);
+  packet.loadData<int>(static_cast<int>(-1), 26);
+
+  if (data.number != "-1") {
+    try {
+      int num = std::stoi(data.number.substr(0, 1));
+      if (data.yaw > 0) {
+        packet.loadData<int>(num, 18);
+        packet.loadData<float>(static_cast<float>(data.yaw), 22);
+      } else if (data.yaw < 0) {
+        packet.loadData<int>(num, 26);
+        packet.loadData<float>(static_cast<float>(data.yaw), 30);
+      }
+    } catch (const std::invalid_argument &e) {
+      FYT_ERROR("serial_driver", "blind_invalid_argument");
     }
   }
-  else if (!data.is_left){
-    packet.loadData<int>(static_cast<int>(-1), 26);
-  }
-  
+
   packet_tool_->sendPacket(packet);
 }
 
@@ -213,7 +206,7 @@ std::vector<rclcpp::Client<rm_interfaces::srv::SetMode>::SharedPtr> ProtocolSent
                                                                   rmw_qos_profile_services_default);
   auto client2 = node->create_client<rm_interfaces::srv::SetMode>("gimbal_pipeline/set_mode",
                                                                   rmw_qos_profile_services_default);
-  auto client3 = node->create_client<rm_interfaces::srv::SetMode>("left/blind_detector/set_mode", rmw_qos_profile_services_default);  //补盲
+  auto client3 = node->create_client<rm_interfaces::srv::SetMode>("/blind_camera_1/blind_detector/set_mode", rmw_qos_profile_services_default);  //补盲
   //auto client4 = node->create_client<rm_interfaces::srv::SetMode>("right/blind_detector/set_mode", rmw_qos_profile_services_default);  //补盲
   //return {client1, client2};
   return {client1, client2};  //补盲

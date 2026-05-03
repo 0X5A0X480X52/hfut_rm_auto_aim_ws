@@ -191,6 +191,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
 
   RCLCPP_INFO(get_logger(), "Parameters declared, now loading...");
 
+  enable_blind_ = declare_parameter("enable_blind", true);
+
   // ── 2. Read common / tracker params ──
   target_frame_ = get_parameter("target_frame").as_string();
   source_frame_ = get_parameter("source_frame").as_string();
@@ -562,15 +564,15 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   // Supports multiple blind cameras — each topic gets its own subscription.
   // Topic names are configured via the "blind.topics" string-array parameter.
   blind_topics_ = declare_parameter("blind.topics",
-      std::vector<std::string>{"/blind_detector/blind"});
+      std::vector<std::string>{"/blind_camera_1/blinds"});
   blind_sync_timeout_ = declare_parameter("blind.sync_timeout", 0.05);
   blind_selection_strategy_name_ = declare_parameter("blind.selector.strategy", "min_yaw");
 
   for (const auto &topic : blind_topics_) {
     if (topic.empty()) continue;
-    auto sub = create_subscription<rm_interfaces::msg::Blind>(
+    auto sub = create_subscription<rm_interfaces::msg::Blinds>(
       topic, rclcpp::SensorDataQoS(),
-      [this, topic](const rm_interfaces::msg::Blind::SharedPtr msg) {
+      [this, topic](const rm_interfaces::msg::Blinds::SharedPtr msg) {
         blindCallback(msg, topic);
       });
     blind_subs_.push_back(std::move(sub));
@@ -2287,31 +2289,39 @@ void GimbalPipelineNode::initBlindSelectionStrategies() {
 }
 
 rm_interfaces::msg::Blind::SharedPtr GimbalPipelineNode::collectBlindCandidates() {
-  std::vector<rm_interfaces::msg::Blind::SharedPtr> fresh_blinds;
+  // 第一步：收集每个相机最新的非空 Blinds（按 Blinds.header.stamp 同步过滤）
+  std::vector<rm_interfaces::msg::Blinds::SharedPtr> fresh_blinds_msgs;
   {
     std::lock_guard<std::mutex> lock(blind_buffer_mutex_);
     for (const auto &[topic, msg] : blind_latest_per_topic_) {
-      if (!msg || msg->number == "-1") continue;
-      fresh_blinds.push_back(msg);
+      if (!msg || msg->blinds.empty()) continue;
+      fresh_blinds_msgs.push_back(msg);
     }
   }
 
-  // 多相机同步过滤：仅当配置了多个补盲相机时，才用 blind_sync_timeout_ 过滤时间戳不一致的目标
-  if (blind_topics_.size() > 1 && fresh_blinds.size() > 1) {
-    // 以最新时间戳为基准，舍弃时间差超过阈值的消息
-    auto newest = std::max_element(fresh_blinds.begin(), fresh_blinds.end(),
-      [](const rm_interfaces::msg::Blind::SharedPtr &a,
-         const rm_interfaces::msg::Blind::SharedPtr &b) {
+  // 多相机同步过滤：仅当配置了多个补盲相机时，才用 blind_sync_timeout_ 过滤时间戳不一致的帧
+  if (blind_topics_.size() > 1 && fresh_blinds_msgs.size() > 1) {
+    auto newest = std::max_element(fresh_blinds_msgs.begin(), fresh_blinds_msgs.end(),
+      [](const rm_interfaces::msg::Blinds::SharedPtr &a,
+         const rm_interfaces::msg::Blinds::SharedPtr &b) {
         return rclcpp::Time(a->header.stamp) < rclcpp::Time(b->header.stamp);
       });
     const auto newest_stamp = rclcpp::Time((*newest)->header.stamp);
-    fresh_blinds.erase(
-      std::remove_if(fresh_blinds.begin(), fresh_blinds.end(),
-        [&](const rm_interfaces::msg::Blind::SharedPtr &msg) {
+    fresh_blinds_msgs.erase(
+      std::remove_if(fresh_blinds_msgs.begin(), fresh_blinds_msgs.end(),
+        [&](const rm_interfaces::msg::Blinds::SharedPtr &msg) {
           return std::abs((newest_stamp - rclcpp::Time(msg->header.stamp)).seconds()) >
                  blind_sync_timeout_;
         }),
-      fresh_blinds.end());
+      fresh_blinds_msgs.end());
+  }
+
+  // 第二步：把所有相机的所有装甲板平铺成候选列表
+  std::vector<rm_interfaces::msg::Blind::SharedPtr> fresh_blinds;
+  for (const auto &msg : fresh_blinds_msgs) {
+    for (const auto &b : msg->blinds) {
+      fresh_blinds.push_back(std::make_shared<rm_interfaces::msg::Blind>(b));
+    }
   }
 
   if (fresh_blinds.empty()) return nullptr;
@@ -2417,7 +2427,7 @@ rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildBlindGuidanceCommand() {
   cmd.pitch = target_pitch_rad * 180.0 / M_PI;
   cmd.pitch_diff = pitch_diff_rad * 180.0 / M_PI;
   cmd.target_id = latest_blind_msg_ ? latest_blind_msg_->number : current_target_id_;
-  cmd.distance = -2.0;  // 补盲引导模式哨兵值，告知下位机响应引导指令
+  cmd.distance = enable_blind_ ? -2 : -1;  // -2 为补盲引导模式哨兵值，告知下位机响应引导指令
   cmd.fire_advice = false;
   cmd.is_guiding = true;
   cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_BLIND_CAMERA_RESULT;  // -2
@@ -2493,7 +2503,7 @@ void GimbalPipelineNode::applyGuidanceVelocitySmoothing(
 }
 
 void GimbalPipelineNode::blindCallback(
-    const rm_interfaces::msg::Blind::SharedPtr msg,
+    const rm_interfaces::msg::Blinds::SharedPtr msg,
     const std::string &topic) {
   std::lock_guard<std::mutex> lock(blind_buffer_mutex_);
   blind_latest_per_topic_[topic] = msg;

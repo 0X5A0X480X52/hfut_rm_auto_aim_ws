@@ -38,6 +38,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/GimbalState.msg"
   "msg/GimbalTrajectory.msg"
   "msg/Blind.msg"
+  "msg/Blinds.msg"
   # Track history and prediction window messages
   "msg/TrackWindowState.msg"
   "msg/TrackHistoryWindow.msg"

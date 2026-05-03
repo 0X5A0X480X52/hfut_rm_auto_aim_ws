@@ -191,8 +191,7 @@ gimbal_pipeline:
     selector.sticky_lock_frames: 3
     selector.sticky_lost_frames: 3
 
-    # 补盲相机配置
-    blind.topics: ["/blind_detector/blind"]
+    # 补盲相机话题由 launch 文件统一配置
     blind.sync_timeout: 0.05
     # 补盲目标选择策略: "min_yaw" — 选择 yaw 偏差绝对值最小的目标
     blind.selector.strategy: "min_yaw"

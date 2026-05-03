@@ -15,13 +15,13 @@ Topic naming:
     - /camera_info
     - /armor_detector/armors
 
-  Blind detector:
-    - Subscribes to: /blind_camera_1/image_raw
-    - Publishes to:  /blind_detector/blind
+  Blind detector (namespace blind_camera_1):
+    - Subscribes to: image_raw → /blind_camera_1/image_raw
+    - Publishes to:  blinds   → /blind_camera_1/blinds
 
 gimbal_pipeline subscribes to:
   - armors -> /armor_detector/armors  (main camera with PnP)
-  - blind  -> /blind_detector/blind   (blind camera, no PnP)
+  - blinds -> /blind_camera_1/blinds  (blind camera, no PnP, via blind.topics param)
 """
 
 import os
@@ -102,6 +102,11 @@ def generate_launch_description():
         default_value='true',
         description='Enable debug mode for all nodes'
     )
+    declare_enable_blind = DeclareLaunchArgument(
+        'enable_blind',
+        default_value='true',
+        description='下位机补盲功能开关 (true=启用, false=关闭). gimbal_pipeline 据此填 cmd.distance 哨兵值.'
+    )
     declare_namespace = DeclareLaunchArgument(
         'namespace',
         default_value=launch_params.get('namespace', ''),
@@ -156,10 +161,11 @@ def generate_launch_description():
         emulate_tty=True,
         parameters=[
             get_pkg_params('gimbal_pipeline', 'gimbal_pipeline.yaml'),
-            {'debug_mode': LaunchConfiguration('debug')},
-            # 补盲相机话题列表 — 如需多个补盲相机，在此追加:
-            # {'blind.topics': ['/blind_detector/blind_camera_1/blind',
-            #                   '/blind_detector/blind_camera_2/blind']},
+            {
+                'debug_mode': LaunchConfiguration('debug'),
+                'enable_blind': LaunchConfiguration('enable_blind'),
+                'blind.topics': ['/blind_camera_1/blinds'],
+            },
         ],
         remappings=[
             ('cmd_gimbal', '/armor_solver/cmd_gimbal'),
@@ -245,17 +251,10 @@ def generate_launch_description():
             parameters=[
                 get_bringup_params('armor_detector'),
                 {
-                    'camera_name': 'blind_camera_1',
-                    'camera_yaw': 180.0,  # blind camera faces backward
-                    'camera_pitch': 0.0,
                     'h_fov': 25.07,
                     'v_fov': 18.85,
                     'debug': debug_enabled,
                 },
-            ],
-            remappings=[
-                ('blind_camera_1_image_raw', 'image_raw'),
-                ('blind_detector/blind_camera_1/blind', '/blind_detector/blind'),
             ],
             extra_arguments=[{'use_intra_process_comms': True}],
         )
@@ -315,23 +314,6 @@ def generate_launch_description():
         actions=[gimbal_pipeline_node],
     )
 
-    # ==================== 盲区图像压缩传输 (供 foxglove 订阅) ====================
-    blind_republish_node = Node(
-        package="image_transport",
-        executable="republish",
-        name="blind_image_republish",
-        namespace="blind_camera_1",
-        arguments=["raw", "compressed"],
-        remappings=[
-            ("in/raw", "image_raw"),
-            ("out", "image_raw"),
-        ],
-    )
-    delay_blind_republish = TimerAction(
-        period=2.0,
-        actions=[blind_republish_node],
-    )
-
     # ==================== 命名空间 ====================
     push_namespace = PushRosNamespace(LaunchConfiguration('namespace'))
 
@@ -340,6 +322,7 @@ def generate_launch_description():
         declare_image_source,
         declare_virtual_serial,
         declare_debug,
+        declare_enable_blind,
         declare_namespace,
 
         robot_state_publisher,
@@ -350,5 +333,4 @@ def generate_launch_description():
         delay_camera_detector,
         delay_blind_camera_detector,
         delay_gimbal_pipeline,
-        delay_blind_republish,
     ])
