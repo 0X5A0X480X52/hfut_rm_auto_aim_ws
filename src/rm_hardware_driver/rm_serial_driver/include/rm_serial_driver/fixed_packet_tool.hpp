@@ -20,6 +20,7 @@
 #define SERIAL_DRIVER_FIXED_PACKET_TOOL_HPP_
 
 #include <iostream>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -57,7 +58,7 @@ public:
   void enbaleRealtimeSend(bool enable);
   void enbaleDataPrint(bool enable) { use_data_print_ = enable; }
   bool sendPacket(const FixedPacket<capacity> &packet);
-  bool recvPacket(FixedPacket<capacity> &packet);
+  bool recvPacket(FixedPacket<capacity> &packet, int64_t *receipt_time_ns = nullptr);
 
   std::string getErrorMessage() { return transporter_->errorMessage(); }
 
@@ -181,9 +182,13 @@ bool FixedPacketTool<capacity>::sendPacket(const FixedPacket<capacity> &packet) 
 }
 
 template <int capacity>
-bool FixedPacketTool<capacity>::recvPacket(FixedPacket<capacity> &packet) {
+bool FixedPacketTool<capacity>::recvPacket(
+  FixedPacket<capacity> &packet, int64_t *receipt_time_ns) {
   int recv_len = transporter_->read(tmp_buffer_, capacity);
   if (recv_len > 0) {
+    const auto receipt_time_ns_value =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
     if (use_data_print_) {
       for (int i = 0; i < recv_len; i++) {
         std::cout << std::hex << static_cast<int>(tmp_buffer_[i]) << " ";
@@ -193,6 +198,9 @@ bool FixedPacketTool<capacity>::recvPacket(FixedPacket<capacity> &packet) {
 
     if (checkPacket(tmp_buffer_, recv_len)) {
       packet.copyFrom(tmp_buffer_);
+      if (receipt_time_ns != nullptr) {
+        *receipt_time_ns = receipt_time_ns_value;
+      }
       return true;
     }
 
@@ -206,6 +214,9 @@ bool FixedPacketTool<capacity>::recvPacket(FixedPacket<capacity> &packet) {
     for (int i = 0; (i + capacity) <= recv_buf_len_; i++) {
       if (checkPacket(recv_buffer_ + i, capacity)) {
         packet.copyFrom(recv_buffer_ + i);
+        if (receipt_time_ns != nullptr) {
+          *receipt_time_ns = receipt_time_ns_value;
+        }
         int k = 0;
         for (int j = i + capacity; j < recv_buf_len_; j++, k++) {
           recv_buffer_[k] = recv_buffer_[j];

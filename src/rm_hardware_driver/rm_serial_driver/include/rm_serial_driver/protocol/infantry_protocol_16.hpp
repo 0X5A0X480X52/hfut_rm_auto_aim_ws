@@ -34,7 +34,9 @@ public:
 
   void send(const rm_interfaces::msg::GimbalCmd &data) override;
 
-  bool receive(rm_interfaces::msg::SerialReceiveData &data) override;
+  bool receive(
+    rm_interfaces::msg::SerialReceiveData &data,
+    int64_t *receipt_time_ns = nullptr) override;
 
   std::vector<rclcpp::SubscriptionBase::SharedPtr> getSubscriptions(
     rclcpp::Node::SharedPtr node) override;

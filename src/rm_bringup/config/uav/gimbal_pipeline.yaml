@@ -9,7 +9,7 @@ gimbal_pipeline:
     default_r1: 0.15
     default_r2: 0.20
     default_dza: 0.0
-    tracker_timeout: 0.10
+    tracker_timeout: 0.50
     debug_mode: true
     enable_oscillation_detection: false
     visualization_frame: "odom"
@@ -18,11 +18,9 @@ gimbal_pipeline:
     ukf.alpha: 0.001
     ukf.beta: 2.0
     ukf.kappa: 0.0
-    ukf.obs_noise_pos: 0.08
-    ukf.obs_noise_pos: 0.08
+    ukf.obs_noise_pos: 0.001
     ukf.obs_noise_yaw: 0.05
-    ukf.dual_obs_noise_pos: 0.01
-    ukf.dual_obs_noise_pos: 0.01
+    ukf.dual_obs_noise_pos: 0.001
     ukf.dual_obs_noise_yaw: 0.03
     ukf.dual_obs_geometry_noise_scale: 0.02
     ukf.single_obs_update_weight_pos: 5.0
@@ -54,8 +52,8 @@ gimbal_pipeline:
     tracker.tracking_thres: 2
     tracker.lost_thres: 8
     tracker.temp_lost_thres: 3
-    tracker.max_match_distance: 2.0
-    tracker.max_match_yaw_diff: 1.0
+    tracker.max_match_distance: 1.0
+    tracker.max_match_yaw_diff: 0.10
     tracker.n_panels: 4
     tracker.panel_angle_step: 1.5707963267948966
 
@@ -64,6 +62,66 @@ gimbal_pipeline:
     constraints.max_radius: 0.3
     constraints.min_dz: -1.0
     constraints.max_dz: 1.0
+    
+    # Outpost tracker (known 3-armor geometry + max-entropy mode switch)
+    outpost.translation_model: "CA"   # "CV" | "CA" | "Singer"
+    outpost.rotation_model: "CA"      # "CV" | "CA"
+    # Outpost state machine thresholds (independent from tracker.* used by adaptive)
+    outpost.tracking_thres: 2
+    outpost.lost_thres: 45
+    outpost.temp_lost_thres: 3
+    outpost.max_match_distance: 2.0
+    outpost.max_match_yaw_diff: 1.0
+    outpost.singer_alpha: 0.0          # <=0: fallback to motion.singer_alpha
+    outpost.singer_sigma: 0.0          # <=0: fallback to motion.singer_sigma
+    outpost.spin_process_noise_theta_rate: 1.0  # <=0: fallback to spin.spin_process_noise_delta_rate
+    outpost.spin_process_noise_theta_acc: 1.0   # <=0: fallback to spin.spin_process_noise_delta_acc
+    outpost.radius: 0.275
+    # 语义约定:
+    #   id0=最高, id1=中间, id2=最低
+    # 俯视顺时针角序:
+    #   0deg(id0) -> 120deg(id2) -> 240deg(id1)
+    outpost.z_offset_0: 0.102
+    outpost.z_offset_1: 0.00
+    outpost.z_offset_2: -0.102
+    outpost.panel_angle_step: 2.0943951023931953
+    outpost.softmax_temperature: 1.5
+    outpost.weight_yaw: 1.0
+    outpost.weight_z_state: 6.0
+    outpost.weight_z_history: 2.0
+    outpost.weight_xy_residual: 2.5
+    outpost.weight_switch_penalty: 0.05
+    outpost.entropy_enter: 0.75
+    outpost.entropy_exit: 0.60
+    outpost.max_prob_enter: 0.60
+    outpost.max_prob_exit: 0.75
+    outpost.stable_frames: 4
+    outpost.z_history_window: 15
+    outpost.single_mode_confidence_scale: 0.70
+    outpost.binding_enable_multi_obs: true
+    outpost.binding_transition_confirm_frames: 3
+    outpost.binding_same_panel_yaw_gate: 0.35
+    outpost.binding_same_panel_z_gate: 0.08
+    outpost.binding_same_panel_xy_gate: 0.18
+    outpost.binding_min_candidate_prob: 0.40
+    outpost.binding_min_candidate_margin: 0.12
+    outpost.binding_switch_strong_score: 0.60
+    outpost.binding_period_window: 12
+    outpost.binding_period_weight: 0.60
+    outpost.binding_period_min_spin_rate: 0.8
+    outpost.binding_period_update_min_confidence: 0.55
+    outpost.binding_period_update_min_jump: 0.015
+    outpost.binding_dz_ema_alpha: 0.20
+    outpost.binding_confidence_floor: 0.15
+    outpost.alpha_pos: 0.65
+    outpost.beta_vel: 0.30
+    outpost.alpha_yaw: 0.60
+    outpost.beta_yaw_rate: 0.25
+    outpost.assume_static_center: true
+    outpost.linear_velocity_damping: 0.90
+    outpost.yaw_rate_damping: 0.98
+    outpost.max_center_speed: 1.00
+    outpost.max_yaw_rate: 12.0
 
     # Panel mismatch detection
     panel_mismatch.enable: true
@@ -131,60 +189,84 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     # Gimbal controller parameters
     # ═══════════════════════════════════════════════════════════════
-    controller.bullet_speed: 22.60
+    controller.bullet_speed: 23.0
     controller.control_rate: 250.0
     controller.strategy: "mpc"    # "current" | "predicted" | "mpc" | "state_machine"
     controller.ballistic_mode: "local"  # "service" | "local"
 
-    controller.solver.shooting_range_width: 0.135
-    controller.solver.shooting_range_height: 0.135
-    controller.solver.side_angle: 15.0
-    controller.solver.min_switching_v_yaw: 0.0
-    controller.solver.prediction_delay: 0.100
-    controller.solver.max_prediction_time: 0.500
     controller.solver.max_tracking_v_yaw: 12.0
     controller.solver.transfer_thresh: 5
     controller.solver.gravity: 9.8
     controller.solver.resistance: 0.001
     controller.solver.iteration_times: 20
-    controller.solver.pitch_offset: 0.0
+    controller.solver.pitch_offset: -0.30
     controller.solver.yaw_offset: 0.0
-    controller.solver.facing_enter_angle: 55.0  # 55.0
-    controller.solver.facing_exit_angle: 65.0  # 85.0
-    # 径向选板动态阈值（仅对 min_movement_with_radial 生效）
-    # 角度单位: 度；角速度单位: rad/s
-    # |v_yaw| 越大，径向过滤阈值越小：
-    #   th_dyn = max(th_base * (1 - shrink_ratio * clamp(|v_yaw|/v_yaw_ref,0,1)), min_angle_deg)
-    controller.solver.radial_dynamic.enable: true
-    controller.solver.radial_dynamic.v_yaw_ref: 60.0
-    controller.solver.radial_dynamic.shrink_ratio: 60.0
-    controller.solver.radial_dynamic.min_angle_deg: 5.0
-    # 角平分线偏移（度）：|v_yaw| 越大，中心线偏移越大，且受上限约束。
-    # 约定: v_yaw > 0 向左(逆时针, +yaw)偏移；v_yaw < 0 向右偏移。
-    # bias_deg = sign(v_yaw) * min(bias_gain_deg * clamp(|v_yaw|/v_yaw_ref,0,1), max_bias_deg)
-    controller.solver.radial_dynamic.bias_gain_deg: 60.0
-    controller.solver.radial_dynamic.max_bias_deg: 50.0
+
     # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
     # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
     # 若启用自适应 delay（adaptive_delay.enable=true），本值作为 delay 初始值。
     controller.solver.controller_delay: 0.00
 
-    # ── 自适应 controller_delay（AIMD 策略）────────────────────────
-    # 启用后根据目标线速度/角速度及连续未开火帧数动态调整 controller_delay：
-    #   开火成功  →  delay -= add_step                       (线性减小, AD)
-    #   连续未开火超 fire_wait_threshold 帧
-    #           →  delay *= 1 + (mul_factor-1) * speed_factor (加权乘性增大, MI)
-    #     speed_factor = max(min(|v_xyz|/max_linear_speed, 1),
-    #                        min(|v_yaw|/max_angular_speed, 1))
-    # enable=false 时退化为静态 controller_delay，行为与原版完全一致。
+    controller.solver.resistance: 0.001
+    ontroller.solver.iteration_times: 20
+    controller.solver.pitch_offset: -0.30
+    controller.solver.yaw_offset: 0.0
+
+    # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
+    # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
+    # 若启用自适应 delay（adaptive_delay.enable=true），本值作为 delay 初始值。
+    #controller.solver.controller_delay: 0.00
+
+    # 自适应 controller_delay（AIMD）
     # controller.solver.adaptive_delay.enable: true
-    # controller.solver.adaptive_delay.fire_wait_threshold: 10   # 连续未开火多少帧后开始增大
-    # controller.solver.adaptive_delay.mul_factor: 1.2           # 乘性增幅因子(>1)
-    # controller.solver.adaptive_delay.add_step: 0.005           # 开火成功时每帧减小量 (秒)
-    # controller.solver.adaptive_delay.max_delay: 0.10           # delay 上限 (秒)
-    # controller.solver.adaptive_delay.min_delay: 0.0            # delay 下限 (秒)
-    # controller.solver.adaptive_delay.max_linear_speed: 3.0     # 线速度归一化参考 (m/s)
-    # controller.solver.adaptive_delay.max_angular_speed: 10.0   # 角速度归一化参考 (rad/s)
+    # controller.solver.adaptive_delay.fire_wait_threshold: 10
+    # controller.solver.adaptive_delay.mul_factor: 1.2
+    # controller.solver.adaptive_delay.add_step: 0.005
+    # controller.solver.adaptive_delay.max_delay: 0.10
+    # controller.solver.adaptive_delay.min_delay: 0.0
+    # controller.solver.adaptive_delay.max_linear_speed: 3.0
+    # controller.solver.adaptive_delay.max_angular_speed: 10.0
+
+    # FireAdvice 参数
+    controller.fire.trigger_to_muzzle_s: 0.0
+    controller.fire.decision_policy: "axis_threshold"
+    controller.fire.flight_time_iters: 2
+    controller.fire.use_gimbal_kinematics: true
+    controller.fire.target_visibility_policy: "facing_only"
+    controller.fire.facing_filter_opening_angle_deg: 160.0
+
+        # 选板算法参数
+    # selection_method: 选板算法
+    #   min_movement_with_facing  — 最小运动量 + 正面朝向 Hysteresis 过滤（默认）
+    #   min_movement_with_radial  — 过滤后按机器人中心径向夹角最小选板
+    #   min_movement              — 纯最小运动量，无朝向过滤
+    #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
+    #   virtual_pose              — 虚拟姿态选板
+    #   virtual_fixed_id          — 固定 ID 虚拟姿态选板
+    #   facing_or_virtual_pose    — 真实可打板优先；无可打板时退回 virtual_pose
+    #   facing_or_virtual_fixed_id — 固定 ID 真实可打时输出真实板，否则退回虚拟板
+    controller.solver.selection_method: "min_movement_with_facing"
+    # controller.solver.virtual_pose.fixed_id: 2
+
+    # controller.solver.selection_method: "virtual_pose"
+    # controller.solver.selection_method: "virtual_fixed_id"
+    controller.solver.virtual_pose.auto_switch.enable: false
+    controller.solver.virtual_pose.auto_switch.enter_vyaw: 1.0
+    controller.solver.virtual_pose.auto_switch.exit_vyaw: 16.0
+    controller.solver.virtual_pose.auto_switch.selection_method: "virtual_fixed_id"
+    controller.solver.virtual_pose.auto_switch.fixed_id: 0
+
+    # 面向选板状态机参数
+    controller.solver.facing_enter_angle: 10.0
+    controller.solver.facing_exit_angle: 10.0
+
+    # 径向选板动态阈值（仅对 min_movement_with_radial 生效）
+    controller.solver.radial_dynamic.enable: false
+    controller.solver.radial_dynamic.v_yaw_ref: 15.0
+    controller.solver.radial_dynamic.shrink_ratio: 60.0
+    controller.solver.radial_dynamic.min_angle_deg: 5.0
+    controller.solver.radial_dynamic.bias_gain_deg: 60.0
+    controller.solver.radial_dynamic.max_bias_deg: 50.0
 
     # ── GimbalCmd 输出端保护滤波器 ──────────────────────────────────
     # 在 gimbal_cmd 发布前对 yaw_diff / pitch_diff 执行多级可配置保护：
@@ -228,12 +310,6 @@ gimbal_pipeline:
     # controller.output_filter.one_euro_beta: 0.1        # 速度灵敏度（越大高速时截止频率越高）
     # controller.output_filter.one_euro_d_cutoff: 0.01      # 导数截止频率 (Hz)
 
-    # selection_method: 选板算法
-    #   min_movement_with_facing  — 最小运动量 + 正面朝向 Hysteresis 过滤（默认）
-    #   min_movement_with_radial  — 过滤后按机器人中心径向夹角最小选板
-    #   min_movement              — 纯最小运动量，无朝向过滤
-    #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
-    controller.solver.selection_method: "min_movement_with_radial"
 
     # controller.state_machine.facing_enter_angle: 40.0
     # controller.state_machine.facing_exit_angle: 55.0
@@ -260,17 +336,17 @@ gimbal_pipeline:
     # controller.mpc.s_pitch: 0.001
     
     controller.mpc.N: 50
-    controller.mpc.dt: 0.004
-    controller.mpc.control_delay_s: 0.00
-    controller.mpc.max_accel: 12.0
-    controller.mpc.q_yaw: 100000.0 #追踪权重
-    controller.mpc.q_pitch: 800.0
-    controller.mpc.q_yaw_vel: 180.0 #角速度跟踪权重
-    controller.mpc.q_pitch_vel: 1.0
-    controller.mpc.r_yaw: 0.005 #控制惩罚越大越柔和
-    controller.mpc.r_pitch: 0.001
-    controller.mpc.s_yaw: 0.0001  #末端轨迹
-    controller.mpc.s_pitch: 0.0001
+    controller.mpc.dt: 0.05
+    controller.mpc.control_delay_s: 0.0
+    controller.mpc.max_accel: 18.0
+    controller.mpc.q_yaw: 80000.0 #追踪权重
+    controller.mpc.q_pitch: 1200.0
+    controller.mpc.q_yaw_vel: 90.0 #角速度跟踪权重
+    controller.mpc.q_pitch_vel: 2.0
+    controller.mpc.r_yaw: 0.0008 #控制惩罚越大越柔和
+    controller.mpc.r_pitch: 0.0015
+    controller.mpc.s_yaw: 0.0050  #末端轨迹
+    controller.mpc.s_pitch: 0.0010
 
     # MPC 命中概率权重加权（仅缩放 Q，默认关闭）
     # controller.mpc.weighting.enable: false
@@ -293,7 +369,7 @@ gimbal_pipeline:
     #   yaw_velocity:    直接 clamp 到 [-max_v_yaw, +max_v_yaw]
     # enable: false 时不做任何处理，行为与原版完全一致
     controller.mpc.vel_clamp.enable: true
-    controller.mpc.vel_clamp.max_linear_speed: 1.00   # 线速度标量上限 (m/s)
+    controller.mpc.vel_clamp.max_linear_speed: 1.50   # 线速度标量上限 (m/s)
     controller.mpc.vel_clamp.max_v_yaw: 10.0         # yaw 角速度上限 (rad/s)
 
     # MPC 延时补偿: 启用后参考轨迹生成考虑 processing_delay + controller_delay + prediction_delay
@@ -302,7 +378,7 @@ gimbal_pipeline:
     controller.mpc.enable_delay_compensation: true
     controller.mpc.prediction_delay_s: 0.0      # 额外预测延迟 (秒), 叠加在 processing_delay 之上
     controller.mpc.flight_time_iters: 2          # 飞行时间迭代补偿次数
-    controller.mpc.max_processing_delay_s: 0.5   # 最大处理延迟 clamp 上限 (秒)
+    controller.mpc.max_processing_delay_s: 0.3   # 最大处理延迟 clamp 上限 (秒)
     # yaw 速度前馈等效前瞻时间 (秒): yaw_ff ≈ target_yaw_velocity * k_s
     # k_s=0.0 时禁用，推荐从 0.02~0.08 逐步调参
     # controller.mpc.yaw_feedforward_k_s: 0.000

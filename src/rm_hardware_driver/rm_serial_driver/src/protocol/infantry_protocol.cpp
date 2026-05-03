@@ -35,9 +35,10 @@ void ProtocolInfantry::send(const rm_interfaces::msg::GimbalCmd &data) {
   packet_tool_->sendPacket(packet);
 }
 
-bool ProtocolInfantry::receive(rm_interfaces::msg::SerialReceiveData &data) {
+bool ProtocolInfantry::receive(
+  rm_interfaces::msg::SerialReceiveData &data, int64_t *receipt_time_ns) {
   FixedPacket<24> packet;
-  if (packet_tool_->recvPacket(packet)) {
+  if (packet_tool_->recvPacket(packet, receipt_time_ns)) {
     packet.unloadData(data.mode, 1);
     packet.unloadData(data.roll, 2);
     packet.unloadData(data.pitch, 6);

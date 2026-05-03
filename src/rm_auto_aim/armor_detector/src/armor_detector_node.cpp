@@ -155,10 +155,22 @@ void ArmorDetectorNode::imageCallback(
   // Get the transform from odom to gimbal
   FYT_DEBUG("armor_detector", "Image frame_id: {}, odom_frame: {}", img_msg->header.frame_id, odom_frame_);
   try {
-    // Use tf2::TimePointZero to get the latest available transform
-    // This avoids extrapolation errors when timestamps are not perfectly synchronized
-    auto odom_to_gimbal = tf2_buffer_->lookupTransform(
-        odom_frame_, img_msg->header.frame_id, tf2::TimePointZero);
+    geometry_msgs::msg::TransformStamped odom_to_gimbal;
+    try {
+      // Prefer the transform that matches the image timestamp so the detector
+      // does not combine an old frame with a newer gimbal pose while the camera is moving.
+      odom_to_gimbal = tf2_buffer_->lookupTransform(
+          odom_frame_, img_msg->header.frame_id, img_msg->header.stamp,
+          rclcpp::Duration::from_seconds(0.01));
+    } catch (const tf2::TransformException &ex_at_stamp) {
+      RCLCPP_WARN_THROTTLE(
+          this->get_logger(), *this->get_clock(), 1000,
+          "TF at image stamp unavailable for %s -> %s (stamp=%.6f): %s. Falling back to latest TF.",
+          img_msg->header.frame_id.c_str(), odom_frame_.c_str(),
+          rclcpp::Time(img_msg->header.stamp).seconds(), ex_at_stamp.what());
+      odom_to_gimbal = tf2_buffer_->lookupTransform(
+          odom_frame_, img_msg->header.frame_id, tf2::TimePointZero);
+    }
     auto msg_q = odom_to_gimbal.transform.rotation;
     tf2::Quaternion tf_q;
     tf2::fromMsg(msg_q, tf_q);

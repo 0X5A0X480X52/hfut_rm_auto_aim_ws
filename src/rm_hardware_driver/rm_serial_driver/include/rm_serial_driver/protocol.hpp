@@ -18,6 +18,7 @@
 
 // std
 #include <memory>
+#include <cstdint>
 #include <string>
 #include <string_view>
 // ros2
@@ -51,7 +52,9 @@ public:
   virtual void send(const rm_interfaces::msg::GimbalCmd &data) = 0;
 
   // Receive data from serial port
-  virtual bool receive(rm_interfaces::msg::SerialReceiveData &data) = 0;
+  virtual bool receive(
+    rm_interfaces::msg::SerialReceiveData &data,
+    int64_t *receipt_time_ns = nullptr) = 0;
 
   // Create subscriptions for SerialDriverNode
   virtual std::vector<rclcpp::SubscriptionBase::SharedPtr> getSubscriptions(

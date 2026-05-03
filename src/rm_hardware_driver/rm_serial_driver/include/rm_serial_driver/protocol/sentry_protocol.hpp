@@ -48,7 +48,9 @@ public:
   //发送攻击前哨站标志位
   void send1(const std_msgs::msg::Bool &data);
 
-  bool receive(rm_interfaces::msg::SerialReceiveData &data) override;
+  bool receive(
+    rm_interfaces::msg::SerialReceiveData &data,
+    int64_t *receipt_time_ns = nullptr) override;
 
   std::vector<rclcpp::SubscriptionBase::SharedPtr> getSubscriptions(
     rclcpp::Node::SharedPtr node) override;

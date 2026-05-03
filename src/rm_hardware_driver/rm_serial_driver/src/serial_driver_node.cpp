@@ -133,14 +133,20 @@ void SerialDriverNode::listenLoop() {
 
   rm_interfaces::msg::SerialReceiveData receive_data;
   while (rclcpp::ok()) {
-    if (protocol_->receive(receive_data)) {
-      auto time = this->now() + rclcpp::Duration::from_seconds(timestamp_offset_);
-      receive_data.header.stamp = time;
+    int64_t packet_receipt_time_ns = 0;
+    if (protocol_->receive(receive_data, &packet_receipt_time_ns)) {
+      timestamp_offset_ = this->get_parameter("timestamp_offset").as_double();
+      const auto packet_time_base = packet_receipt_time_ns > 0 ?
+        rclcpp::Time(packet_receipt_time_ns, RCL_SYSTEM_TIME) :
+        this->now();
+      const auto packet_time =
+        packet_time_base + rclcpp::Duration::from_seconds(timestamp_offset_);
+      receive_data.header.stamp = packet_time;
       receive_data.header.frame_id = target_frame_;
       serial_receive_data_pub_->publish(receive_data);
 
       geometry_msgs::msg::TwistStamped twist;
-      twist.header.stamp = time;
+      twist.header.stamp = packet_time;
       twist.header.frame_id = target_frame_;
       twist.twist.linear.x = receive_data.chassis_vx;
       twist.twist.linear.y = receive_data.chassis_vy;
@@ -173,8 +179,7 @@ void SerialDriverNode::listenLoop() {
       }
 
       geometry_msgs::msg::TransformStamped t;
-      timestamp_offset_ = this->get_parameter("timestamp_offset").as_double();
-      t.header.stamp = this->now() + rclcpp::Duration::from_seconds(timestamp_offset_);
+      t.header.stamp = packet_time;
       t.header.frame_id = target_frame_;
       t.child_frame_id = "gimbal_link";
       auto roll = receive_data.roll * M_PI / 180.0;

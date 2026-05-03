@@ -20,3 +20,4 @@ screen.output
 InEKF/**
 rosbag2_*/**
 MvSdkLog/**
+**.patch

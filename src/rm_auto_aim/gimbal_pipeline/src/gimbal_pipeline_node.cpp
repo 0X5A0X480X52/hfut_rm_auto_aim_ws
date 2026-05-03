@@ -2341,11 +2341,15 @@ void GimbalPipelineNode::buildControlContextFromCache(
   // Read shared state (thread-safe)
   rm_interfaces::msg::TrackedRobots::SharedPtr robots;
   rclcpp::Time data_update_time{0, 0, RCL_ROS_TIME};
+  rclcpp::Time observation_stamp{0, 0, RCL_ROS_TIME};
   {
     std::lock_guard<std::mutex> lock(pipeline_mutex_);
     robots = latest_tracked_robots_;
     selected_id = latest_selected_target_id_;
     data_update_time = latest_update_time_;
+    if (robots) {
+      observation_stamp = rclcpp::Time(robots->header.stamp);
+    }
   }
 
   if (!robots || robots->robots.empty()) {
@@ -2381,7 +2385,9 @@ void GimbalPipelineNode::buildControlContextFromCache(
   }
 
   context.target_robot = *selected_robot;
-  context.target_stamp = data_update_time;
+  // Use the original observation timestamp for delay compensation.
+  // `data_update_time` is only the local cache-write time and is kept for freshness checks.
+  context.target_stamp = observation_stamp.nanoseconds() > 0 ? observation_stamp : data_update_time;
   context.is_tracking =
       (selected_robot->track_state == rm_interfaces::msg::TrackedRobot::TRACKING);
   context.is_temp_lost =
