@@ -152,61 +152,40 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
 
 void ArmorDetectorNode::imageCallback(
     const sensor_msgs::msg::Image::ConstSharedPtr img_msg) {
-  // Get the transform from odom to gimbal
   FYT_DEBUG("armor_detector", "Image frame_id: {}, odom_frame: {}", img_msg->header.frame_id, odom_frame_);
-  try {
-    // Use tf2::TimePointZero to get the latest available transform
-    // This avoids extrapolation errors when timestamps are not perfectly synchronized
-    auto odom_to_gimbal = tf2_buffer_->lookupTransform(
-        odom_frame_, img_msg->header.frame_id, tf2::TimePointZero);
-    auto msg_q = odom_to_gimbal.transform.rotation;
+
+  auto extract_rotation = [&](const geometry_msgs::msg::TransformStamped &t) {
     tf2::Quaternion tf_q;
-    tf2::fromMsg(msg_q, tf_q);
-    tf2::Matrix3x3 tf2_matrix = tf2::Matrix3x3(tf_q);
+    tf2::fromMsg(t.transform.rotation, tf_q);
+    tf2::Matrix3x3 tf2_matrix(tf_q);
     imu_to_camera_ << tf2_matrix.getRow(0)[0], tf2_matrix.getRow(0)[1],
         tf2_matrix.getRow(0)[2], tf2_matrix.getRow(1)[0],
         tf2_matrix.getRow(1)[1], tf2_matrix.getRow(1)[2],
         tf2_matrix.getRow(2)[0], tf2_matrix.getRow(2)[1],
         tf2_matrix.getRow(2)[2];
+  };
+
+  try {
+    rclcpp::Time target_time = img_msg->header.stamp;
+    auto odom_to_gimbal = tf2_buffer_->lookupTransform(
+        odom_frame_, img_msg->header.frame_id, target_time,
+        tf2::durationFromSec(0.01));
+    extract_rotation(odom_to_gimbal);
+  } catch (tf2::ExtrapolationException &ex) {
+    FYT_WARN("armor_detector",
+             "TF at image stamp not cached, falling back to latest: {}", ex.what());
+    try {
+      auto odom_to_gimbal = tf2_buffer_->lookupTransform(
+          odom_frame_, img_msg->header.frame_id, tf2::TimePointZero);
+      extract_rotation(odom_to_gimbal);
+    } catch (tf2::TransformException &ex2) {
+      FYT_ERROR("armor_detector", "Fallback transform error: {}", ex2.what());
+      return;
+    }
   } catch (tf2::TransformException &ex) {
     FYT_ERROR("armor_detector", "Transform error: {}", ex.what());
     return;
   }
-  // try {
-  //   rclcpp::Time target_time = img_msg->header.stamp;
-  //   auto odom_to_gimbal = tf2_buffer_->lookupTransform(
-  //       odom_frame_, img_msg->header.frame_id, target_time,
-  //       rclcpp::Duration::from_seconds(0.01));
-  //   auto msg_q = odom_to_gimbal.transform.rotation;
-  //   tf2::Quaternion tf_q;
-  //   tf2::fromMsg(msg_q, tf_q);
-
-  //   // 1. 提取odom->gimbal欧拉角
-  //   double roll_g, pitch_g, yaw_g;
-  //   tf2::Matrix3x3(tf_q).getRPY(roll_g, pitch_g, yaw_g);
-
-  //   // 2. gimbal->camera的静态偏移，假设rpy/xyz均为0
-  //   double roll_offset = 0;   // 或者你的实际偏移
-  //   // double pitch_offset = 0;  // 或者你的实际偏移
-  //   double yaw_offset = 0;    // 或者你的实际偏移
-
-  //   // 3. 构造新的欧拉角
-  //   double new_roll = roll_g + roll_offset;
-  //   double new_pitch = /* 直接用odom->gimbal的pitch，不加偏移 */ pitch_g;
-  //   double new_yaw = yaw_g + yaw_offset;
-
-  //   // 4. 转为旋转矩阵
-  //   tf2::Quaternion q_new;
-  //   q_new.setRPY(new_roll, new_pitch, new_yaw);
-  //   tf2::Matrix3x3 tf2_matrix(q_new);
-
-  //   imu_to_camera_ << tf2_matrix.getRow(0)[0], tf2_matrix.getRow(0)[1], tf2_matrix.getRow(0)[2],
-  //                     tf2_matrix.getRow(1)[0], tf2_matrix.getRow(1)[1], tf2_matrix.getRow(1)[2],
-  //                     tf2_matrix.getRow(2)[0], tf2_matrix.getRow(2)[1], tf2_matrix.getRow(2)[2];
-// } catch (...) {
-//     FYT_ERROR("armor_detector", "Something Wrong when lookUpTransform");
-//     return;
-//   }
 
   // Detect armors
   auto armors = detectArmors(img_msg);
