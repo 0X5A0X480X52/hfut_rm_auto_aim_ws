@@ -31,10 +31,11 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
-#include <tf2_ros/buffer.h>
-#include <tf2_ros/transform_listener.h>
-#include <tf2_ros/message_filter.h>
-#include <message_filters/subscriber.h>
+#include <atomic>
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tf2_msgs/msg/tf_message.hpp>
 // project
 #include "armor_detector/armor_detector.hpp"
 #include "armor_detector/number_classifier.hpp"
@@ -97,10 +98,16 @@ private:
   cv::Point2f cam_center_;
   std::shared_ptr<sensor_msgs::msg::CameraInfo> cam_info_;
 
-  // TF2 for real-time camera orientation (follows gimbal rotation)
+  void tfCallback(const tf2_msgs::msg::TFMessage::SharedPtr msg);
+
+  rclcpp::Subscription<tf2_msgs::msg::TFMessage>::SharedPtr tf_sub_;
+  tf2::Quaternion q_mounting_;
+  std::string gimbal_frame_;
   std::string odom_frame_;
-  std::shared_ptr<tf2_ros::Buffer> tf2_buffer_;
-  std::shared_ptr<tf2_ros::TransformListener> tf2_listener_;
+
+  // Cached camera orientation — updated by tfCallback, read by imageCallback
+  std::atomic<double> camera_yaw_{0.0};
+  std::atomic<double> camera_pitch_{0.0};
 
   // Image and FOV parameters for angle estimation
   int image_width_;
@@ -108,11 +115,8 @@ private:
   float h_fov_;  // Horizontal field of view in degrees
   float v_fov_;  // Vertical field of view in degrees
 
-  // Image subscription — 通过 tf2_ros::MessageFilter 排队，
-  // 仅当 odom→camera_optical_frame 在 img_msg->header.stamp 时刻可解算时
-  // 才触发 imageCallback。与 gimbal_pipeline 中 tf2_armor_filter 同款思路。
-  message_filters::Subscriber<sensor_msgs::msg::Image> img_mf_sub_;
-  std::shared_ptr<tf2_ros::MessageFilter<sensor_msgs::msg::Image>> tf2_filter_;
+  // Image subscription
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr img_sub_;
 
   // Target subscription
   // rclcpp::Subscription<rm_interfaces::msg::Target>::SharedPtr target_sub_;

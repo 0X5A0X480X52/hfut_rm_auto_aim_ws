@@ -113,23 +113,11 @@ public:
   }
 
   void setMode(SetModeClient &client, const uint8_t mode) {
-    using namespace std::chrono_literals;
-
-    std::string service_name = client.ptr->get_service_name();
-    // Wait for service
-    while (!client.ptr->wait_for_service(1s)) {
-      if (!rclcpp::ok()) {
-        FYT_ERROR(
-          "serial_driver", "Interrupted while waiting for the service {}. Exiting.", service_name);
-        return;
-      }
-      FYT_INFO("serial_driver", "service {} not available, waiting again...", service_name);
-    }
+    // Non-blocking check — called from 1ms timer callback, must not block.
+    // If the service isn't ready yet, skip and retry on the next timer tick.
     if (!client.ptr->service_is_ready()) {
-      FYT_WARN("serial_driver", "Service: {} is not available!", service_name);
       return;
     }
-    // Send request
     auto req = std::make_shared<rm_interfaces::srv::SetMode::Request>();
     req->mode = mode;
     client.on_waiting.store(true);

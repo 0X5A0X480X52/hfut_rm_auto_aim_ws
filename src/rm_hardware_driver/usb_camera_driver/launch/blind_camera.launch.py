@@ -41,6 +41,16 @@ def generate_launch_description():
         default_value="true",
         description="Enable debug mode for blind_detector",
     )
+    declare_mounting_yaw = DeclareLaunchArgument(
+        "blind_mounting_yaw",
+        default_value="3.14159",
+        description="补盲相机安装 yaw 偏移 (rad)，对应 URDF rpy 第三分量",
+    )
+    declare_mounting_pitch = DeclareLaunchArgument(
+        "blind_mounting_pitch",
+        default_value="0.14",
+        description="补盲相机安装 pitch 偏移 (rad)，对应 URDF rpy 第二分量",
+    )
 
     def get_camera_config(name):
         return PathJoinSubstitution([pkg_dir, "config", [name, "_params.yaml"]])
@@ -66,6 +76,8 @@ def generate_launch_description():
         parameters=[
             os.path.join(bringup_pkg, "config", "node_params", "armor_detector_params.yaml"),
             {
+                "blind_mounting_yaw": LaunchConfiguration("blind_mounting_yaw"),
+                "blind_mounting_pitch": LaunchConfiguration("blind_mounting_pitch"),
                 "h_fov": 60.0,
                 "v_fov": 45.0,
                 "debug": LaunchConfiguration("debug"),
@@ -90,6 +102,8 @@ def generate_launch_description():
             declare_camera_name,
             declare_namespace,
             declare_debug,
+            declare_mounting_yaw,
+            declare_mounting_pitch,
             blind_camera_container,
         ]
     )

@@ -55,23 +55,16 @@ def generate_launch_description():
             }
         }
 
-    # Load blind camera params
-    blind_camera_params_path = os.path.join(
-        get_package_share_directory('usb_camera_driver'), 'config', 'blind_camera_1_params.yaml')
-    try:
-        with open(blind_camera_params_path, 'r', encoding='utf-8') as f:
-            blind_camera_params_yaml = yaml.safe_load(f)
-        blind_camera_params = blind_camera_params_yaml.get('/**', {}).get('ros__parameters', {})
-    except Exception:
-        blind_camera_params = {
-            'xyz': '0.05 0.1 0.05',
-            'rpy': '0.0 0.0 0.0'
-        }
+    # ── 补盲相机在 gimbal_link 坐标系中的安装位姿 ──
+    # 直接定义在 launch.py 中，不再从 blind_camera_1_params.yaml 读取，
+    # 保证与 BlindDetector 中的偏移参数同源一致。
+    blind_camera_xyz_default = '-0.175 0.0 0.086'
+    blind_camera_rpy_default = '0.0 0.14 3.14159'
 
     main_camera_xyz = launch_params.get('odom2camera', {}).get('xyz', '0.174275 0.000 0.086463')
     main_camera_rpy = launch_params.get('odom2camera', {}).get('rpy', '0.0 0.1396 -0.00')
-    blind_camera_xyz = blind_camera_params.get('xyz', '0.05 0.1 0.05').strip('"')
-    blind_camera_rpy = blind_camera_params.get('rpy', '0.0 0.0 0.0').strip('"')
+    blind_camera_xyz = blind_camera_xyz_default
+    blind_camera_rpy = blind_camera_rpy_default
 
     def get_bringup_params(name):
         return os.path.join(
@@ -107,6 +100,16 @@ def generate_launch_description():
         default_value='true',
         description='下位机补盲功能开关 (true=启用, false=关闭). gimbal_pipeline 据此填 cmd.distance 哨兵值.'
     )
+    declare_blind_camera_xyz = DeclareLaunchArgument(
+        'blind_camera_xyz',
+        default_value=blind_camera_xyz_default,
+        description='补盲相机在 gimbal_link 坐标系中的安装位置 (xyz, m)'
+    )
+    declare_blind_camera_rpy = DeclareLaunchArgument(
+        'blind_camera_rpy',
+        default_value=blind_camera_rpy_default,
+        description='补盲相机在 gimbal_link 坐标系中的安装姿态 (rpy, rad)'
+    )
     declare_namespace = DeclareLaunchArgument(
         'namespace',
         default_value=launch_params.get('namespace', ''),
@@ -114,9 +117,7 @@ def generate_launch_description():
     )
 
     # ── URDF 机器人描述 (含补盲相机) ──
-    # 注意: launch_params_decoupled.yaml 中 main_camera 参数使用了 YAML 转义引号
-    # (如 xyz: "\"0.174 ...\""), 解析后自带 shell 保护引号。
-    # blind_camera_1_params.yaml 是纯字符串, 需要在 Command 中手动加引号。
+    # main_camera 参数来自 YAML 包含转义引号, blind_camera 参数为纯 Python 字符串。
     robot_gimbal_description = Command(['xacro ', os.path.join(
         get_package_share_directory('rm_robot_description'), 'urdf', 'rm_gimbal_with_blind_camera.urdf.xacro'),
         ' main_camera_xyz:=', main_camera_xyz,
@@ -232,6 +233,14 @@ def generate_launch_description():
     def create_blind_camera_detector_container(context):
         debug_enabled = LaunchConfiguration('debug').perform(context).lower() == 'true'
 
+        # 解析补盲相机安装姿态 (rpy)，提取 yaw 和 pitch 偏移
+        blind_rpy_str = LaunchConfiguration('blind_camera_rpy').perform(context).strip('"')
+        blind_rpy_parts = [float(x) for x in blind_rpy_str.split()]
+        if len(blind_rpy_parts) < 3:
+            raise RuntimeError(f"blind_camera_rpy must have 3 values, got: {blind_rpy_str}")
+        blind_mounting_pitch = blind_rpy_parts[1]  # rpy 第二分量
+        blind_mounting_yaw = blind_rpy_parts[2]    # rpy 第三分量
+
         blind_camera_node = ComposableNode(
             package='usb_camera_driver',
             plugin='blind_vision::USBCameraNode',
@@ -251,6 +260,9 @@ def generate_launch_description():
             parameters=[
                 get_bringup_params('armor_detector'),
                 {
+                    'camera_frame_id': 'blind_camera_1_optical_frame',
+                    'blind_mounting_yaw': blind_mounting_yaw,
+                    'blind_mounting_pitch': blind_mounting_pitch,
                     'h_fov': 25.07,
                     'v_fov': 18.85,
                     'debug': debug_enabled,
@@ -323,6 +335,8 @@ def generate_launch_description():
         declare_virtual_serial,
         declare_debug,
         declare_enable_blind,
+        declare_blind_camera_xyz,
+        declare_blind_camera_rpy,
         declare_namespace,
 
         robot_state_publisher,

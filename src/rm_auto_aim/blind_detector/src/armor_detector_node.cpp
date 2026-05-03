@@ -13,9 +13,6 @@
 #include <rclcpp/qos.hpp>
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
-#include <tf2/exceptions.h>
-#include <tf2_ros/buffer.h>
-#include <tf2_ros/create_timer_ros.h>
 // third party
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
@@ -36,13 +33,18 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
   FYT_REGISTER_LOGGER("blind_detector", "~/fyt2024-log", INFO);
   FYT_INFO("blind_detector", "Starting BlindArmorDetectorNode!");
 
-  // TF2 实时获取相机朝向 (跟随云台旋转，不再使用静态 camera_yaw/camera_pitch 参数)
+  // 解析 odom→gimbal_link 变换，组合安装偏移得到相机朝向
   odom_frame_ = this->declare_parameter("target_frame", "odom");
-  tf2_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
-  auto timer_interface = std::make_shared<tf2_ros::CreateTimerROS>(
-      this->get_node_base_interface(), this->get_node_timers_interface());
-  tf2_buffer_->setCreateTimerInterface(timer_interface);
-  tf2_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
+  gimbal_frame_ = this->declare_parameter("gimbal_frame", "gimbal_link");
+
+  // 预计算安装偏移四元数: optical_frame → gimbal_link
+  // URDF: gimbal→link rpy=(0, 0.14, π) + link→optical rpy=(-π/2, 0, -π/2)
+  double mount_yaw = this->declare_parameter("blind_mounting_yaw", 3.14159);
+  double mount_pitch = this->declare_parameter("blind_mounting_pitch", 0.14);
+  tf2::Quaternion q_link_in_gimbal, q_optical_in_link;
+  q_link_in_gimbal.setRPY(0.0, mount_pitch, mount_yaw);
+  q_optical_in_link.setRPY(-M_PI_2, 0.0, -M_PI_2);
+  q_mounting_ = q_link_in_gimbal * q_optical_in_link;
 
   // FOV parameters for angle estimation (still from config)
   h_fov_ = this->declare_parameter("h_fov", 60.0);
@@ -76,20 +78,19 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
         debug_ ? createDebugPublishers() : destroyDebugPublishers();
       });
 
-  // Image Subscription via tf2_ros::MessageFilter — 当且仅当
-  // odom→camera_optical_frame 在 img_msg->header.stamp 时刻可解算时
-  // 才触发 imageCallback；TF 滞后的图像会被排队等候，超出 queue/tolerance 的丢弃。
-  img_mf_sub_.subscribe(this, img_topic, rmw_qos_profile_sensor_data);
-  tf2_filter_ = std::make_shared<tf2_ros::MessageFilter<sensor_msgs::msg::Image>>(
-      img_mf_sub_, *tf2_buffer_, odom_frame_,
-      /*queue_size=*/10,
-      get_node_logging_interface(), get_node_clock_interface(),
-      std::chrono::duration<int>(1));
-  tf2_filter_->registerCallback(&ArmorDetectorNode::imageCallback, this);
+  // Image subscription (direct, no MessageFilter)
+  img_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
+      img_topic, rclcpp::SensorDataQoS(),
+      std::bind(&ArmorDetectorNode::imageCallback, this, std::placeholders::_1));
+
+  // /tf subscription — 解析 odom→gimbal_link 变换，无需 lookupTransform
+  tf_sub_ = this->create_subscription<tf2_msgs::msg::TFMessage>(
+      "/tf", rclcpp::SensorDataQoS(),
+      std::bind(&ArmorDetectorNode::tfCallback, this, std::placeholders::_1));
 
   // Set Mode 服务 (节点私有服务，在命名空间下解析)
   set_mode_srv_ = this->create_service<rm_interfaces::srv::SetMode>(
-      "~/blind_detector/set_mode",
+      "~/set_mode",
       std::bind(&ArmorDetectorNode::setModeCallback, this,
                 std::placeholders::_1, std::placeholders::_2));
 
@@ -97,26 +98,35 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
   heartbeat_ = HeartBeatPublisher::create(this);
 }
 
+void ArmorDetectorNode::tfCallback(
+    const tf2_msgs::msg::TFMessage::SharedPtr msg) {
+  for (const auto &transform : msg->transforms) {
+    if (transform.header.frame_id == odom_frame_ &&
+        transform.child_frame_id == gimbal_frame_) {
+      // 获取 gimbal_link 在 odom 坐标系中的朝向
+      tf2::Quaternion q_gimbal;
+      tf2::fromMsg(transform.transform.rotation, q_gimbal);
+      // 组合: optical →(q_mounting_)→ gimbal →(q_gimbal)→ odom
+      tf2::Quaternion q_camera = q_gimbal * q_mounting_;
+      // 直接计算光轴 (+Z) 在 odom 中的方向，避免 getRPY 在大角度下的分解问题
+      tf2::Vector3 optical_axis(0, 0, 1);
+      tf2::Vector3 axis_odom = tf2::quatRotate(q_camera, optical_axis);
+      double yaw = std::atan2(axis_odom.y(), axis_odom.x());
+      double pitch = std::atan2(axis_odom.z(),
+          std::sqrt(axis_odom.x() * axis_odom.x() + axis_odom.y() * axis_odom.y()));
+      camera_yaw_.store(yaw * 180.0 / M_PI, std::memory_order_relaxed);
+      camera_pitch_.store(pitch * 180.0 / M_PI, std::memory_order_relaxed);
+      return;
+    }
+  }
+}
+
 void ArmorDetectorNode::imageCallback(
     const sensor_msgs::msg::Image::ConstSharedPtr img_msg) {
 
-  // 从 TF 获取补盲相机当前的绝对朝向 (odom 坐标系)
-  double camera_yaw_current = 0.0;
-  double camera_pitch_current = 0.0;
-  try {
-    auto odom_to_camera = tf2_buffer_->lookupTransform(
-        odom_frame_, img_msg->header.frame_id, img_msg->header.stamp);
-    tf2::Quaternion q;
-    tf2::fromMsg(odom_to_camera.transform.rotation, q);
-    tf2::Matrix3x3 m(q);
-    double roll;
-    m.getRPY(roll, camera_pitch_current, camera_yaw_current);
-    camera_yaw_current = camera_yaw_current * 180.0 / M_PI;
-    camera_pitch_current = camera_pitch_current * 180.0 / M_PI;
-  } catch (tf2::TransformException &ex) {
-    FYT_ERROR("blind_detector", "TF error: {}", ex.what());
-    return;
-  }
+  // 从缓存读取相机朝向（由 tfCallback 独立更新）
+  double camera_yaw_current = camera_yaw_.load(std::memory_order_relaxed);
+  double camera_pitch_current = camera_pitch_.load(std::memory_order_relaxed);
 
   // Detect armors
   auto armors = detectArmors(img_msg);
@@ -211,10 +221,6 @@ std::vector<Armor> ArmorDetectorNode::detectArmors(
 
   // Publish debug info
   if (debug_) {
-    /* binary_img_pub_.publish(
-        cv_bridge::CvImage(img_msg->header, "mono8", detector_->binary_img)
-            .toImageMsg()); */
-
     // Sort lights and armors data by x coordinate
     std::sort(detector_->debug_lights.data.begin(),
               detector_->debug_lights.data.end(),
@@ -229,15 +235,6 @@ std::vector<Armor> ArmorDetectorNode::detectArmors(
 
     lights_data_pub_->publish(detector_->debug_lights);
     armors_data_pub_->publish(detector_->debug_armors);
-
-    /*
-    if (!armors.empty()) {
-      auto all_num_img = detector_->getAllNumbersImage();
-      number_img_pub_.publish(
-          *cv_bridge::CvImage(img_msg->header, "mono8", all_num_img)
-               .toImageMsg());
-    }
-    */
 
     detector_->drawResults(img);
 
@@ -329,7 +326,12 @@ void ArmorDetectorNode::setModeCallback(
   }
 
   auto createImageSub = [this]() {
-    img_mf_sub_.subscribe(this, "image_raw", rmw_qos_profile_sensor_data);
+    if (img_sub_ == nullptr) {
+      img_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
+          "image_raw", rclcpp::SensorDataQoS(),
+          std::bind(&ArmorDetectorNode::imageCallback, this,
+                    std::placeholders::_1));
+    }
   };
 
   switch (mode) {
@@ -344,7 +346,7 @@ void ArmorDetectorNode::setModeCallback(
     break;
   }
   default: {
-    img_mf_sub_.unsubscribe();
+    img_sub_.reset();
   }
   }
 
