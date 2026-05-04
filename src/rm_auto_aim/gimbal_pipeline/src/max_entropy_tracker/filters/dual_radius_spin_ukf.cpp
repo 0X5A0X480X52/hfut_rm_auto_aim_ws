@@ -238,44 +238,34 @@ bool DualRadiusSpinUKF::update_single(
   std::string armor_layer =
       armor_layer_in.empty() ? infer_armor_layer(obs.z) : armor_layer_in;
 
-  // Observation noise R — 来源选择（方向二）
   Eigen::Matrix4d R;
 
   if (config_.ukf.r_source == "PNP_COVARIANCE" && obs.pos_covariance.has_value() && obs.yaw_variance.has_value()) {
     // 从 PnP 协方差传播结果构建 R
     const Eigen::Matrix3d &cov_xyz = obs.pos_covariance.value();
     double cov_yaw = obs.yaw_variance.value();
-
     // 对协方差施加最小限幅，防止数值退化
     constexpr double min_pos_var = 1e-6;
     constexpr double min_yaw_var = 1e-6;
-
     R = Eigen::Vector4d(
         std::max(cov_xyz(0,0), min_pos_var),
         std::max(cov_xyz(1,1), min_pos_var),
         std::max(cov_xyz(2,2), min_pos_var),
         std::max(cov_yaw * config_.ukf.pnp_cov_yaw_inflation, min_yaw_var)
     ).asDiagonal();
-
-    // 协方差传播可能低估了极端角度观测的不确定性，保留 height/position 置信度缩放
-    if (height_confidence < 0.3) R(2, 2) *= 100.0;
-    if (position_confidence < 0.8) {
-      double scale = 100.0 / std::max(position_confidence, 0.1);
-      R(0, 0) *= scale;
-      R(1, 1) *= scale;
-    }
   } else {
     // CONFIG 模式（原行为）：使用 YAML 静态噪声参数
     double np_ = config_.ukf.obs_noise_pos;
     double ny = config_.ukf.obs_noise_yaw;
     R = Eigen::Vector4d(np_ * np_, np_ * np_, np_ * np_, ny * ny).asDiagonal();
+  }
 
-    if (height_confidence < 0.3) R(2, 2) *= 100.0;
-    if (position_confidence < 0.8) {
-      double scale = 100.0 / std::max(position_confidence, 0.1);
-      R(0, 0) *= scale;
-      R(1, 1) *= scale;
-    }
+  // Apply confidence-based scaling (common to both R sources)
+  if (height_confidence < 0.3) R(2, 2) *= 100.0;
+  if (position_confidence < 0.8) {
+    double scale = 100.0 / std::max(position_confidence, 0.1);
+    R(0, 0) *= scale;
+    R(1, 1) *= scale;
   }
 
   // Sigma points
@@ -327,19 +317,10 @@ bool DualRadiusSpinUKF::update_single(
   if (!K_opt) return false;
   Eigen::MatrixXd K = K_opt.value();
 
-  // 结构参数更新控制（方向一：BINARY vs SOFT）
-  if (config_.ukf.freeze_mode == "SOFT") {
-    double delta = x_(idx.DELTA());
-    double w = weight_from_delta_angle(delta);
-    K.row(idx.R1()) *= w;
-    K.row(idx.R2()) *= w;
-    K.row(idx.DZA()) *= w;
-  } else {
-    // BINARY 模式（原行为）：单观测时几何参数行完全置零
-    K.row(idx.R1()).setZero();
-    K.row(idx.R2()).setZero();
-    K.row(idx.DZA()).setZero();
-  }
+  // 单观测时几何参数不可观测，完全冻结
+  K.row(idx.R1()).setZero();
+  K.row(idx.R2()).setZero();
+  K.row(idx.DZA()).setZero();
 
   // Apply update
   apply_kalman_update(K, innov, Pzz);
@@ -452,7 +433,7 @@ bool DualRadiusSpinUKF::update_dual(
     x_(idx.R1()), x_(idx.R2()), x_(idx.DZA()),
     layer_1.c_str(), layer_2.c_str(), height_confidence);
 
-  // Geometry noise — 来源选择（方向二）
+  // Geometry noise — 来源选择
   Eigen::VectorXd r_diag(6);
 
   if (config_.ukf.r_source == "PNP_COVARIANCE" &&
@@ -674,18 +655,6 @@ bool DualRadiusSpinUKF::check_innovation_gate(
   bool pos_pass = (chi2_pos <= threshold * 3.0);
 
   return yaw_pass || pos_pass;
-}
-
-double DualRadiusSpinUKF::weight_from_delta_angle(double delta) const {
-  const double threshold_rad = config_.ukf.soft_freeze_threshold_deg * M_PI / 180.0;
-
-  // |delta| 超过阈值 → 完全冻结
-  if (std::abs(delta) >= threshold_rad) return 0.0;
-
-  // w = cos²(π/2 * |delta| / threshold)，在 [0, threshold] 上从 1.0 平滑降至 0.0
-  double ratio = std::abs(delta) / threshold_rad;
-  double cos_val = std::cos(M_PI / 2.0 * ratio);
-  return cos_val * cos_val;
 }
 
 }  // namespace fyt::auto_aim

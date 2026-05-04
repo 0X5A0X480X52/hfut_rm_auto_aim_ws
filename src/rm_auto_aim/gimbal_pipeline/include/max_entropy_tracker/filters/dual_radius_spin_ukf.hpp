@@ -124,9 +124,6 @@ class DualRadiusSpinUKF : public BaseUKF, public SpinFilterInterface {
                              const Eigen::MatrixXd &R,
                              const Eigen::VectorXd &Wc) const;
 
-  // 方向一：根据 delta_angle 计算几何参数更新权重 (0=完全冻结, 1=完全开放)
-  double weight_from_delta_angle(double delta) const;
-
   std::shared_ptr<CompositeProcessModel> motion_model_;
   DynamicStateIndex state_idx_;
 
