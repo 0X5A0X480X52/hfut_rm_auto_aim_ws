@@ -12,9 +12,11 @@
   <xacro:arg name="main_camera_xyz" default="0.174275 0.000 0.086463" />
   <xacro:arg name="main_camera_rpy" default="0.0 0.1396 -0.00" />
 
-  <!-- Blind camera pose (symmetric with main camera, from usb_camera_driver config) -->
+  <!-- Blind camera pose (from usb_camera_driver config) -->
   <xacro:arg name="blind_camera_1_xyz" default="-0.175 0.0 0.086" />
   <xacro:arg name="blind_camera_1_rpy" default="0.0 0.14 ${pi}" />
+  <xacro:arg name="blind_camera_2_xyz" default="-0.1 -0.1 0.05" />
+  <xacro:arg name="blind_camera_2_rpy" default="0.0 0.14 ${pi/2}" />
 
   <link name="odom" />
 
@@ -60,6 +62,21 @@
     <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}" />
     <parent link="blind_camera_1_link" />
     <child link="blind_camera_1_optical_frame" />
+  </joint>
+
+  <!-- Blind camera 2 -->
+  <link name="blind_camera_2_link" />
+  <joint name="blind_camera_2_joint" type="fixed">
+    <origin xyz="$(arg blind_camera_2_xyz)" rpy="$(arg blind_camera_2_rpy)" />
+    <parent link="gimbal_link" />
+    <child link="blind_camera_2_link" />
+  </joint>
+
+  <link name="blind_camera_2_optical_frame" />
+  <joint name="blind_camera_2_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}" />
+    <parent link="blind_camera_2_link" />
+    <child link="blind_camera_2_optical_frame" />
   </joint>
 
 </robot>

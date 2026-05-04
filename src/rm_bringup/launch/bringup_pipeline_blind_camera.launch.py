@@ -2,12 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-GimbalPipeline with main camera and blind camera (no camera intrinsics).
+GimbalPipeline with main camera and blind cameras (no camera intrinsics).
 
 Pipeline:
   main_camera (hik/mindvision + armor_detector) --\
                                                      +--> gimbal_pipeline
-  blind_camera_1 (usb_camera + blind_detector) -----/
+  blind_camera_1 (usb_camera + blind_detector) ------/
+  blind_camera_2 (usb_camera + blind_detector) -----/
 
 Topic naming:
   Main camera (no namespace):
@@ -19,9 +20,13 @@ Topic naming:
     - Subscribes to: image_raw → /blind_camera_1/image_raw
     - Publishes to:  blinds   → /blind_camera_1/blinds
 
+  Blind detector (namespace blind_camera_2):
+    - Subscribes to: image_raw → /blind_camera_2/image_raw
+    - Publishes to:  blinds   → /blind_camera_2/blinds
+
 gimbal_pipeline subscribes to:
   - armors -> /armor_detector/armors  (main camera with PnP)
-  - blinds -> /blind_camera_1/blinds  (blind camera, no PnP, via blind.topics param)
+  - blinds -> list from blind.topics (blind cameras, no PnP)
 """
 
 import os
@@ -56,15 +61,19 @@ def generate_launch_description():
         }
 
     # ── 补盲相机在 gimbal_link 坐标系中的安装位姿 ──
-    # 直接定义在 launch.py 中，不再从 blind_camera_1_params.yaml 读取，
+    # 直接定义在 launch.py 中，不再从 blind_camera_*_params.yaml 读取，
     # 保证与 BlindDetector 中的偏移参数同源一致。
     blind_camera_xyz_default = '-0.175 0.0 0.086'
     blind_camera_rpy_default = '0.0 0.14 3.14159'
+    blind_camera_2_xyz_default = '-0.1 -0.1 0.05'
+    blind_camera_2_rpy_default = '0.0 0.14 1.5708'
 
     main_camera_xyz = launch_params.get('odom2camera', {}).get('xyz', '0.174275 0.000 0.086463')
     main_camera_rpy = launch_params.get('odom2camera', {}).get('rpy', '0.0 0.1396 -0.00')
     blind_camera_xyz = blind_camera_xyz_default
     blind_camera_rpy = blind_camera_rpy_default
+    blind_camera_2_xyz = blind_camera_2_xyz_default
+    blind_camera_2_rpy = blind_camera_2_rpy_default
 
     def get_bringup_params(name):
         return os.path.join(
@@ -108,7 +117,17 @@ def generate_launch_description():
     declare_blind_camera_rpy = DeclareLaunchArgument(
         'blind_camera_rpy',
         default_value=blind_camera_rpy_default,
-        description='补盲相机在 gimbal_link 坐标系中的安装姿态 (rpy, rad)'
+        description='补盲相机1在 gimbal_link 坐标系中的安装姿态 (rpy, rad)'
+    )
+    declare_blind_camera_2_xyz = DeclareLaunchArgument(
+        'blind_camera_2_xyz',
+        default_value=blind_camera_2_xyz_default,
+        description='补盲相机2在 gimbal_link 坐标系中的安装位置 (xyz, m)'
+    )
+    declare_blind_camera_2_rpy = DeclareLaunchArgument(
+        'blind_camera_2_rpy',
+        default_value=blind_camera_2_rpy_default,
+        description='补盲相机2在 gimbal_link 坐标系中的安装姿态 (rpy, rad)'
     )
     declare_namespace = DeclareLaunchArgument(
         'namespace',
@@ -123,7 +142,9 @@ def generate_launch_description():
         ' main_camera_xyz:=', main_camera_xyz,
         ' main_camera_rpy:=', main_camera_rpy,
         ' blind_camera_1_xyz:="', blind_camera_xyz, '"',
-        ' blind_camera_1_rpy:="', blind_camera_rpy, '"'])
+        ' blind_camera_1_rpy:="', blind_camera_rpy, '"',
+        ' blind_camera_2_xyz:="', blind_camera_2_xyz, '"',
+        ' blind_camera_2_rpy:="', blind_camera_2_rpy, '"'])
 
     robot_state_publisher = Node(
         package='robot_state_publisher',
@@ -165,7 +186,7 @@ def generate_launch_description():
             {
                 'debug_mode': LaunchConfiguration('debug'),
                 'enable_blind': LaunchConfiguration('enable_blind'),
-                'blind.topics': ['/blind_camera_1/blinds'],
+                'blind.topics': ['/blind_camera_1/blinds', '/blind_camera_2/blinds'],
             },
         ],
         remappings=[
@@ -230,57 +251,60 @@ def generate_launch_description():
         return [container]
 
     # ==================== 补盲相机 + 补盲检测器 容器 ====================
-    def create_blind_camera_detector_container(context):
-        debug_enabled = LaunchConfiguration('debug').perform(context).lower() == 'true'
+    # Factory function — 返回一个 OpaqueFunction 兼容的创建函数
+    def make_blind_camera_container_func(camera_prefix, rpy_launch_arg, container_name):
+        def _create(context):
+            debug_enabled = LaunchConfiguration('debug').perform(context).lower() == 'true'
 
-        # 解析补盲相机安装姿态 (rpy)，提取 yaw 和 pitch 偏移
-        blind_rpy_str = LaunchConfiguration('blind_camera_rpy').perform(context).strip('"')
-        blind_rpy_parts = [float(x) for x in blind_rpy_str.split()]
-        if len(blind_rpy_parts) < 3:
-            raise RuntimeError(f"blind_camera_rpy must have 3 values, got: {blind_rpy_str}")
-        blind_mounting_pitch = blind_rpy_parts[1]  # rpy 第二分量
-        blind_mounting_yaw = blind_rpy_parts[2]    # rpy 第三分量
+            # 解析补盲相机安装姿态 (rpy)，提取 yaw 和 pitch 偏移
+            blind_rpy_str = LaunchConfiguration(rpy_launch_arg).perform(context).strip('"')
+            blind_rpy_parts = [float(x) for x in blind_rpy_str.split()]
+            if len(blind_rpy_parts) < 3:
+                raise RuntimeError(f"{rpy_launch_arg} must have 3 values, got: {blind_rpy_str}")
+            blind_mounting_pitch = blind_rpy_parts[1]  # rpy 第二分量
+            blind_mounting_yaw = blind_rpy_parts[2]    # rpy 第三分量
 
-        blind_camera_node = ComposableNode(
-            package='usb_camera_driver',
-            plugin='blind_vision::USBCameraNode',
-            name='usb_camera_node',
-            namespace='blind_camera_1',
-            parameters=[get_usb_camera_params('blind_camera_1')],
-            extra_arguments=[{'use_intra_process_comms': True}],
-        )
+            blind_camera_node = ComposableNode(
+                package='usb_camera_driver',
+                plugin='blind_vision::USBCameraNode',
+                name='usb_camera_node',
+                namespace=camera_prefix,
+                parameters=[get_usb_camera_params(camera_prefix)],
+                extra_arguments=[{'use_intra_process_comms': True}],
+            )
 
-        # Blind detector (no PnP, only estimates yaw/pitch from pixel positions)
-        # Uses same detection params as armor_detector
-        blind_detector_node = ComposableNode(
-            package='blind_detector',
-            plugin='fyt::auto_aim::ArmorDetectorNode',
-            name='blind_detector',
-            namespace='blind_camera_1',
-            parameters=[
-                get_bringup_params('armor_detector'),
-                {
-                    'camera_frame_id': 'blind_camera_1_optical_frame',
-                    'blind_mounting_yaw': blind_mounting_yaw,
-                    'blind_mounting_pitch': blind_mounting_pitch,
-                    'h_fov': 25.07,
-                    'v_fov': 18.85,
-                    'debug': debug_enabled,
-                },
-            ],
-            extra_arguments=[{'use_intra_process_comms': True}],
-        )
+            # Blind detector (no PnP, only estimates yaw/pitch from pixel positions)
+            # Uses same detection params as armor_detector
+            blind_detector_node = ComposableNode(
+                package='blind_detector',
+                plugin='fyt::auto_aim::ArmorDetectorNode',
+                name='blind_detector',
+                namespace=camera_prefix,
+                parameters=[
+                    get_bringup_params('armor_detector'),
+                    {
+                        'camera_frame_id': f'{camera_prefix}_optical_frame',
+                        'blind_mounting_yaw': blind_mounting_yaw,
+                        'blind_mounting_pitch': blind_mounting_pitch,
+                        'h_fov': 25.07,
+                        'v_fov': 18.85,
+                        'debug': debug_enabled,
+                    },
+                ],
+                extra_arguments=[{'use_intra_process_comms': True}],
+            )
 
-        container = ComposableNodeContainer(
-            name='blind_camera_detector_container',
-            namespace='',
-            package='rclcpp_components',
-            executable='component_container_mt',
-            composable_node_descriptions=[blind_camera_node, blind_detector_node],
-            output='both',
-            emulate_tty=True,
-        )
-        return [container]
+            container = ComposableNodeContainer(
+                name=container_name,
+                namespace='',
+                package='rclcpp_components',
+                executable='component_container_mt',
+                composable_node_descriptions=[blind_camera_node, blind_detector_node],
+                output='both',
+                emulate_tty=True,
+            )
+            return [container]
+        return _create
 
     # ==================== 串口节点 ====================
     def create_serial_node_action(context):
@@ -319,7 +343,13 @@ def generate_launch_description():
     )
     delay_blind_camera_detector = TimerAction(
         period=2.0,
-        actions=[OpaqueFunction(function=create_blind_camera_detector_container)],
+        actions=[OpaqueFunction(function=make_blind_camera_container_func(
+            'blind_camera_1', 'blind_camera_rpy', 'blind_camera_detector_container'))],
+    )
+    delay_blind_camera_detector_2 = TimerAction(
+        period=2.5,
+        actions=[OpaqueFunction(function=make_blind_camera_container_func(
+            'blind_camera_2', 'blind_camera_2_rpy', 'blind_camera_detector_container_2'))],
     )
     delay_gimbal_pipeline = TimerAction(
         period=2.5,
@@ -337,6 +367,8 @@ def generate_launch_description():
         declare_enable_blind,
         declare_blind_camera_xyz,
         declare_blind_camera_rpy,
+        declare_blind_camera_2_xyz,
+        declare_blind_camera_2_rpy,
         declare_namespace,
 
         robot_state_publisher,
@@ -346,5 +378,6 @@ def generate_launch_description():
         delay_ballistic,
         delay_camera_detector,
         delay_blind_camera_detector,
+        delay_blind_camera_detector_2,
         delay_gimbal_pipeline,
     ])
