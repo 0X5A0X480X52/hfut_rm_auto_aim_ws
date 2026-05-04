@@ -65,7 +65,9 @@ std::vector<rclcpp::Client<rm_interfaces::srv::SetMode>::SharedPtr> ProtocolInfa
                                                                   rmw_qos_profile_services_default);
   auto client3 = node->create_client<rm_interfaces::srv::SetMode>("blind_camera_1/blind_detector/set_mode",
                                                                   rmw_qos_profile_services_default);
-  return {client1, client2, client3}; 
+  auto client4 = node->create_client<rm_interfaces::srv::SetMode>("blind_camera_2/blind_detector/set_mode",
+                                                                  rmw_qos_profile_services_default);
+  return {client1, client2, client3, client4};
 }
 
 }  // namespace fyt::serial_driver::protocol

@@ -68,10 +68,14 @@ public:
       this->create_client<rm_interfaces::srv::SetMode>("gimbal_pipeline/set_mode");
     set_mode_clients_.emplace(autoaim_set_mode_client_2->get_service_name(),
                               autoaim_set_mode_client_2);
-    auto blind_camera_1_set_mode = 
+    auto blind_camera_1_set_mode =
       this->create_client<rm_interfaces::srv::SetMode>("blind_camera_1/blind_detector/set_mode");
     set_mode_clients_.emplace(blind_camera_1_set_mode->get_service_name(),
                               blind_camera_1_set_mode);
+    auto blind_camera_2_set_mode =
+      this->create_client<rm_interfaces::srv::SetMode>("blind_camera_2/blind_detector/set_mode");
+    set_mode_clients_.emplace(blind_camera_2_set_mode->get_service_name(),
+                              blind_camera_2_set_mode);
     if (has_rune_) {
       auto client1 = this->create_client<rm_interfaces::srv::SetMode>("rune_detector/set_mode");
       set_mode_clients_.emplace(client1->get_service_name(), client1);

@@ -612,6 +612,11 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
             "~/maneuver_markers", 10);
   }
 
+  // Blind target debug publisher (always-on, publishes every control cycle)
+  debug_blind_target_pub_ =
+      create_publisher<rm_interfaces::msg::Blind>(
+          "~/debug_blind_target", rclcpp::SensorDataQoS());
+
   RCLCPP_INFO(get_logger(), "Subscribed to topics: /armor_detector/armors (with TF sync), /joint_states, camera_info");
 
   // Service: ~/set_mode
@@ -2260,6 +2265,21 @@ void GimbalPipelineNode::timerCallback() {
   // Step 5: 发布控制命令
   // ──────────────────────────────────────────────────────────────────────
   gimbal_cmd_pub_->publish(cmd);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Step 6: 发布补盲目标调试信息（每个控制周期持续发布）
+  // ──────────────────────────────────────────────────────────────────────
+  rm_interfaces::msg::Blind dbg;
+  if (guidance_target_locked_) {
+    dbg.number = current_target_id_;
+    dbg.yaw = static_cast<float>(guidance_locked_yaw_deg_.load());
+    dbg.pitch = static_cast<float>(guidance_locked_pitch_deg_.load());
+    dbg.confi = -1.0f;  // 锁定态标识
+  } else if (blind_guidance_active_ && latest_blind_msg_) {
+    dbg = *latest_blind_msg_;
+  }
+  // 无补盲目标时发布默认值 (number="", yaw=0, pitch=0, confi=0)
+  debug_blind_target_pub_->publish(dbg);
 }
 
 /* ================================================================ */

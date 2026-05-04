@@ -297,6 +297,10 @@ class GimbalPipelineNode : public rclcpp::Node {
   rclcpp::Publisher<rm_interfaces::msg::Target>::SharedPtr debug_target_pub_;
   rclcpp::Publisher<rm_interfaces::msg::DelayAudit>::SharedPtr
       debug_delay_audit_pub_;
+
+  // Blind target debug publisher (always-on)
+  rclcpp::Publisher<rm_interfaces::msg::Blind>::SharedPtr
+      debug_blind_target_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
       debug_tracker_marker_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
