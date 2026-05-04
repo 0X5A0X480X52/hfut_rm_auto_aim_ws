@@ -114,8 +114,16 @@ void ArmorDetectorNode::tfCallback(
       double yaw = std::atan2(axis_odom.y(), axis_odom.x());
       double pitch = std::atan2(axis_odom.z(),
           std::sqrt(axis_odom.x() * axis_odom.x() + axis_odom.y() * axis_odom.y()));
-      camera_yaw_.store(yaw * 180.0 / M_PI, std::memory_order_relaxed);
-      camera_pitch_.store(pitch * 180.0 / M_PI, std::memory_order_relaxed);
+      // 存储带时间戳的位姿样本
+      {
+        std::lock_guard<std::mutex> lock(pose_mutex_);
+        pose_history_.push_back({transform.header.stamp,
+                                 yaw * 180.0 / M_PI,
+                                 pitch * 180.0 / M_PI});
+        while (pose_history_.size() > kMaxPoseHistory) {
+          pose_history_.pop_front();
+        }
+      }
       return;
     }
   }
@@ -124,9 +132,40 @@ void ArmorDetectorNode::tfCallback(
 void ArmorDetectorNode::imageCallback(
     const sensor_msgs::msg::Image::ConstSharedPtr img_msg) {
 
-  // 从缓存读取相机朝向（由 tfCallback 独立更新）
-  double camera_yaw_current = camera_yaw_.load(std::memory_order_relaxed);
-  double camera_pitch_current = camera_pitch_.load(std::memory_order_relaxed);
+  // 从缓存查找与图像时间戳最近似的相机位姿
+  double camera_yaw_current = 0.0;
+  double camera_pitch_current = 0.0;
+  {
+    std::lock_guard<std::mutex> lock(pose_mutex_);
+    if (pose_history_.empty()) {
+      FYT_WARN("blind_detector", "No pose data available yet, skipping frame");
+      return;
+    }
+
+    rclcpp::Time img_stamp = img_msg->header.stamp;
+    if (img_stamp.nanoseconds() == 0) {
+      // 图像无时间戳，使用最新位姿
+      camera_yaw_current = pose_history_.back().yaw;
+      camera_pitch_current = pose_history_.back().pitch;
+    } else {
+      // 寻找时间戳最近似的位姿样本
+      auto closest = pose_history_.begin();
+      double min_diff = std::abs((closest->stamp - img_stamp).seconds());
+      for (auto it = pose_history_.begin(); it != pose_history_.end(); ++it) {
+        double diff = std::abs((it->stamp - img_stamp).seconds());
+        if (diff < min_diff) {
+          min_diff = diff;
+          closest = it;
+        }
+      }
+      if (min_diff > 0.5) {
+        FYT_WARN("blind_detector",
+                 "Closest pose is {:.1f}s away from image stamp", min_diff);
+      }
+      camera_yaw_current = closest->yaw;
+      camera_pitch_current = closest->pitch;
+    }
+  }
 
   // Detect armors
   auto armors = detectArmors(img_msg);

@@ -31,7 +31,8 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
-#include <atomic>
+#include <deque>
+#include <mutex>
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
@@ -105,9 +106,15 @@ private:
   std::string gimbal_frame_;
   std::string odom_frame_;
 
-  // Cached camera orientation — updated by tfCallback, read by imageCallback
-  std::atomic<double> camera_yaw_{0.0};
-  std::atomic<double> camera_pitch_{0.0};
+  // Timestamped camera orientation history
+  struct CameraPoseSample {
+    rclcpp::Time stamp;
+    double yaw;
+    double pitch;
+  };
+  std::deque<CameraPoseSample> pose_history_;
+  std::mutex pose_mutex_;
+  static constexpr size_t kMaxPoseHistory = 200;
 
   // Image and FOV parameters for angle estimation
   int image_width_;
