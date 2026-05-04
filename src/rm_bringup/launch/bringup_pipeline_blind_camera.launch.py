@@ -268,6 +268,10 @@ def generate_launch_description():
                     'debug': debug_enabled,
                 },
             ],
+            remappings=[
+                ('tf', '/tf'),
+                ('tf_static', '/tf_static'),
+            ],
             extra_arguments=[{'use_intra_process_comms': True}],
         )
 

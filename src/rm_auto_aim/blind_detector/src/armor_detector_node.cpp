@@ -33,18 +33,9 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
   FYT_REGISTER_LOGGER("blind_detector", "~/fyt2024-log", INFO);
   FYT_INFO("blind_detector", "Starting BlindArmorDetectorNode!");
 
-  // 解析 odom→gimbal_link 变换，组合安装偏移得到相机朝向
+  // 直接从 TF 查询 camera_optical_frame → odom 的变换
   odom_frame_ = this->declare_parameter("target_frame", "odom");
-  gimbal_frame_ = this->declare_parameter("gimbal_frame", "gimbal_link");
-
-  // 预计算安装偏移四元数: optical_frame → gimbal_link
-  // URDF: gimbal→link rpy=(0, 0.14, π) + link→optical rpy=(-π/2, 0, -π/2)
-  double mount_yaw = this->declare_parameter("blind_mounting_yaw", 3.14159);
-  double mount_pitch = this->declare_parameter("blind_mounting_pitch", 0.14);
-  tf2::Quaternion q_link_in_gimbal, q_optical_in_link;
-  q_link_in_gimbal.setRPY(0.0, mount_pitch, mount_yaw);
-  q_optical_in_link.setRPY(-M_PI_2, 0.0, -M_PI_2);
-  q_mounting_ = q_link_in_gimbal * q_optical_in_link;
+  camera_frame_id_ = this->declare_parameter("camera_frame_id", "blind_camera_1_optical_frame");
 
   // FOV parameters for angle estimation (still from config)
   h_fov_ = this->declare_parameter("h_fov", 60.0);
@@ -78,15 +69,21 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
         debug_ ? createDebugPublishers() : destroyDebugPublishers();
       });
 
-  // Image subscription (direct, no MessageFilter)
-  img_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
-      img_topic, rclcpp::SensorDataQoS(),
-      std::bind(&ArmorDetectorNode::imageCallback, this, std::placeholders::_1));
+  // tf2 buffer + listener
+  tf2_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+  auto timer_interface = std::make_shared<tf2_ros::CreateTimerROS>(
+      this->get_node_base_interface(), this->get_node_timers_interface());
+  tf2_buffer_->setCreateTimerInterface(timer_interface);
+  tf2_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
 
-  // /tf subscription — 解析 odom→gimbal_link 变换，无需 lookupTransform
-  tf_sub_ = this->create_subscription<tf2_msgs::msg::TFMessage>(
-      "/tf", rclcpp::SensorDataQoS(),
-      std::bind(&ArmorDetectorNode::tfCallback, this, std::placeholders::_1));
+  // Image subscription via tf2_ros::MessageFilter, synchronized with TF
+  img_mf_sub_.subscribe(this, img_topic, rmw_qos_profile_sensor_data);
+  tf2_filter_ = std::make_shared<tf2_ros::MessageFilter<sensor_msgs::msg::Image>>(
+      img_mf_sub_, *tf2_buffer_, odom_frame_,
+      /*queue_size=*/10,
+      get_node_logging_interface(), get_node_clock_interface(),
+      std::chrono::duration<int>(1));
+  tf2_filter_->registerCallback(&ArmorDetectorNode::imageCallback, this);
 
   // Set Mode 服务 (节点私有服务，在命名空间下解析)
   set_mode_srv_ = this->create_service<rm_interfaces::srv::SetMode>(
@@ -98,55 +95,52 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
   heartbeat_ = HeartBeatPublisher::create(this);
 }
 
-void ArmorDetectorNode::tfCallback(
-    const tf2_msgs::msg::TFMessage::SharedPtr msg) {
-  for (const auto &transform : msg->transforms) {
-    if (transform.header.frame_id == odom_frame_ &&
-        transform.child_frame_id == gimbal_frame_) {
-      // 获取 gimbal_link 在 odom 坐标系中的朝向
-      tf2::Quaternion q_gimbal;
-      tf2::fromMsg(transform.transform.rotation, q_gimbal);
-      // 组合: optical →(q_mounting_)→ gimbal →(q_gimbal)→ odom
-      tf2::Quaternion q_camera = q_gimbal * q_mounting_;
-      // 直接计算光轴 (+Z) 在 odom 中的方向，避免 getRPY 在大角度下的分解问题
-      tf2::Vector3 optical_axis(0, 0, 1);
-      tf2::Vector3 axis_odom = tf2::quatRotate(q_camera, optical_axis);
-      double yaw = std::atan2(axis_odom.y(), axis_odom.x());
-      double pitch = std::atan2(axis_odom.z(),
-          std::sqrt(axis_odom.x() * axis_odom.x() + axis_odom.y() * axis_odom.y()));
-      camera_yaw_.store(yaw * 180.0 / M_PI, std::memory_order_relaxed);
-      camera_pitch_.store(pitch * 180.0 / M_PI, std::memory_order_relaxed);
-      return;
-    }
-  }
-}
-
 void ArmorDetectorNode::imageCallback(
     const sensor_msgs::msg::Image::ConstSharedPtr img_msg) {
 
-  // 从缓存读取相机朝向（由 tfCallback 独立更新）
-  double camera_yaw_current = camera_yaw_.load(std::memory_order_relaxed);
-  double camera_pitch_current = camera_pitch_.load(std::memory_order_relaxed);
+  geometry_msgs::msg::TransformStamped odom_to_camera;
+  if (tf2_buffer_->canTransform(
+          odom_frame_, camera_frame_id_, img_msg->header.stamp,
+          tf2::durationFromSec(0.02))) {
+    odom_to_camera = tf2_buffer_->lookupTransform(
+        odom_frame_, camera_frame_id_, img_msg->header.stamp);
+  } else {
+    FYT_WARN("blind_detector", "TF at image timestamp {}.{}s not available, "
+             "fallback to latest transform",
+             img_msg->header.stamp.sec, img_msg->header.stamp.nanosec);
+    try {
+      odom_to_camera = tf2_buffer_->lookupTransform(
+          odom_frame_, camera_frame_id_, tf2::TimePointZero);
+    } catch (const tf2::TransformException &ex) {
+      FYT_WARN("blind_detector", "TF lookup failed: {}", ex.what());
+      return;
+    }
+  }
+  // odom_to_camera 已经包含 URDF 中的安装偏移 + 光学帧变换，
+  // 其表示的旋转就是 camera_optical_frame 在 odom 中的朝向。
+  tf2::Quaternion q;
+  tf2::fromMsg(odom_to_camera.transform.rotation, q);
+  // 将光学帧光轴 (+Z) 旋转到 odom 坐标系，计算 yaw/pitch
+  tf2::Vector3 optical_axis(0, 0, 1);
+  tf2::Vector3 axis_odom = tf2::quatRotate(q, optical_axis);
+  double camera_yaw = std::atan2(axis_odom.y(), axis_odom.x()) * 180.0 / M_PI;
+  double camera_pitch = std::atan2(axis_odom.z(),
+      std::sqrt(axis_odom.x() * axis_odom.x() + axis_odom.y() * axis_odom.y())) * 180.0 / M_PI;
 
   // Detect armors
   auto armors = detectArmors(img_msg);
 
-  // 发布所有检测到的装甲板（无优先级比较，由下游 gimbal_pipeline 选目标）
+  // 发布结果，由下游 gimbal_pipeline 选择目标
   blinds_msg_.header = img_msg->header;
   blinds_msg_.blinds.clear();
   blinds_msg_.blinds.reserve(armors.size());
 
   for (auto &armor : armors) {
-    // 1. 计算目标在机器人坐标系中的yaw角
-    // 公式：yaw = 相机中心yaw + (归一化位置 - 0.5) * 水平视场角
     float normalized_x = static_cast<double>(armor.center.x) / static_cast<double>(image_width_);
-    float yaw = camera_yaw_current - (normalized_x - 0.5) * h_fov_;
+    float yaw = camera_yaw - (normalized_x - 0.5) * h_fov_;
 
-    // 2. 计算目标在机器人坐标系中的pitch角
-    // 公式：pitch = 相机中心pitch + (归一化位置 - 0.5) * 垂直视场角
-    // 注意：图像y轴向下，所以pitch向上为正
     float normalized_y = static_cast<double>(armor.center.y) / static_cast<double>(image_height_);
-    float pitch = camera_pitch_current - (normalized_y - 0.5) * v_fov_;
+    float pitch = camera_pitch - (normalized_y - 0.5) * v_fov_;
 
     rm_interfaces::msg::Blind b;
     b.number = armor.classfication_result;
@@ -326,12 +320,7 @@ void ArmorDetectorNode::setModeCallback(
   }
 
   auto createImageSub = [this]() {
-    if (img_sub_ == nullptr) {
-      img_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
-          "image_raw", rclcpp::SensorDataQoS(),
-          std::bind(&ArmorDetectorNode::imageCallback, this,
-                    std::placeholders::_1));
-    }
+    img_mf_sub_.subscribe(this, "image_raw", rmw_qos_profile_sensor_data);
   };
 
   switch (mode) {
@@ -346,7 +335,7 @@ void ArmorDetectorNode::setModeCallback(
     break;
   }
   default: {
-    img_sub_.reset();
+    img_mf_sub_.unsubscribe();
   }
   }
 
