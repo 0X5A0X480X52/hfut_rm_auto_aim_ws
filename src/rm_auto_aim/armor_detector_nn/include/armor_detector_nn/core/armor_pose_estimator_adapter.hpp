@@ -7,6 +7,7 @@
 
 #include <Eigen/Dense>
 #include <opencv2/core.hpp>
+#include <rclcpp/time.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 
 #include "armor_detector_nn/core/detection_types.hpp"
@@ -38,6 +39,9 @@ struct PoseEstimate {
   double reproj_error_refined{0.0};
   double quality_score{0.0};
   int track_id{-1};
+  rclcpp::Time observation_stamp{};
+  std::string publish_number;
+  Eigen::Matrix3d R_imu_camera{Eigen::Matrix3d::Identity()};
 };
 
 class IPoseRefiner;
@@ -56,11 +60,13 @@ public:
 
   PoseEstimate estimate(
     const ArmorDetection& detection,
-    const sensor_msgs::msg::CameraInfo& camera_info);
+    const sensor_msgs::msg::CameraInfo& camera_info,
+    const Eigen::Matrix3d& R_imu_camera = Eigen::Matrix3d::Identity());
 
   std::vector<PoseEstimate> estimateBatch(
     const std::vector<ArmorDetection>& detections,
-    const sensor_msgs::msg::CameraInfo& camera_info);
+    const sensor_msgs::msg::CameraInfo& camera_info,
+    const Eigen::Matrix3d& R_imu_camera = Eigen::Matrix3d::Identity());
 
   static std::vector<cv::Point3f>
   getObjectPoints(const std::string& publish_type,
@@ -78,7 +84,8 @@ private:
     const std::vector<cv::Point2f>& image_points,
     const std::vector<cv::Point3f>& object_points,
     const cv::Mat& camera_matrix,
-    const cv::Mat& dist_coeffs);
+    const cv::Mat& dist_coeffs,
+    const std::string& publish_number = "");
 
   PoseConfig config_;
   std::unique_ptr<IBundleAdjuster> ba_adjuster_;

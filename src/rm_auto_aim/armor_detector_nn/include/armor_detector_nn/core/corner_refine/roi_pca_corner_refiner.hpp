@@ -33,7 +33,8 @@ private:
   };
 
   // Extract left and right light-bar ROIs from the 4 keypoints.
-  // Order: [0]=top-left, [1]=top-right, [2]=bottom-right, [3]=bottom-left.
+  // Canonical keypoint order in this package:
+  // [0]=left_bottom, [1]=left_top, [2]=right_top, [3]=right_bottom.
   std::pair<cv::Rect2f, cv::Rect2f> extractLightBarROIs(
     const std::array<cv::Point2f, 4>& corners);
 

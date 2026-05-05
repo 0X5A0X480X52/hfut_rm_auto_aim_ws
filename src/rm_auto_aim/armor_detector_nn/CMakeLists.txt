@@ -37,6 +37,8 @@ set(CORE_SOURCES
   src/core/number_classifier_adapter.cpp
   # Phase 1 — pose refinement
   src/core/pose_refine/single_yaw_refiner.cpp
+  # Phase 4 — sliding window BA
+  src/core/pose_refine/sliding_window_refiner.cpp
   # Phase 2 — tracker
   src/core/tracker/internal_iou_tracker_strategy.cpp
   # Phase 3 — corner refinement

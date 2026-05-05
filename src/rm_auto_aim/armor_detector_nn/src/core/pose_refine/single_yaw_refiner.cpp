@@ -1,7 +1,7 @@
 #include "armor_detector_nn/core/pose_refine/pose_refiner.hpp"
 
+#include <algorithm>
 #include <cmath>
-#include <limits>
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/eigen.hpp>
@@ -11,24 +11,36 @@ namespace fyt::auto_aim {
 
 namespace {
 
-// Convert yaw/pitch/roll (rad) to a 3×3 rotation matrix.
-// R = Rz(yaw) * Ry(pitch) * Rx(roll)
-// X forward, Y left, Z up (ROS camera frame convention).
-cv::Mat yawPitchRollToMatrix(double yaw, double pitch, double roll) {
-  double cy = std::cos(yaw), sy = std::sin(yaw);
-  double cp = std::cos(pitch), sp = std::sin(pitch);
-  double cr = std::cos(roll), sr = std::sin(roll);
+inline Eigen::Matrix3d yawPitchRollToGimbalMatrix(
+    double yaw, double pitch, double roll) {
+  const double cy = std::cos(yaw), sy = std::sin(yaw);
+  const double cp = std::cos(pitch), sp = std::sin(pitch);
+  const double cr = std::cos(roll), sr = std::sin(roll);
+  Eigen::Matrix3d R_gimbal_armor;
+  R_gimbal_armor <<
+    cy * cp,  cy * sp * sr - sy * cr,  cy * sp * cr + sy * sr,
+    sy * cp,  sy * sp * sr + cy * cr,  sy * sp * cr - cy * sr,
+    -sp,      cp * sr,                 cp * cr;
+  return R_gimbal_armor;
+}
 
-  cv::Mat R = (cv::Mat_<double>(3, 3)
-    << cy * cp,  cy * sp * sr - sy * cr,  cy * sp * cr + sy * sr,
-       sy * cp,  sy * sp * sr + cy * cr,  sy * sp * cr - cy * sr,
-       -sp,      cp * sr,                 cp * cr);
+// Build camera-frame rotation using BaSolver-consistent semantics:
+// R_gimbal_armor = Rz(yaw_imu) * Ry(pitch_imu) * Rx(roll_imu)
+// R_camera_armor = R_gimbal_camera^T * R_gimbal_armor
+cv::Mat yawPitchRollToMatrix(
+    double yaw, double pitch, double roll, const Eigen::Matrix3d& R_imu_camera) {
+  const Eigen::Matrix3d R_imu_armor = yawPitchRollToGimbalMatrix(yaw, pitch, roll);
+  const Eigen::Matrix3d R_camera_armor = R_imu_camera.transpose() * R_imu_armor;
+
+  cv::Mat R;
+  cv::eigen2cv(R_camera_armor, R);
   return R;
 }
 
 // Convert yaw/pitch/roll to a Rodrigues rotation vector.
-cv::Mat yawPitchRollToRvec(double yaw, double pitch, double roll) {
-  cv::Mat R = yawPitchRollToMatrix(yaw, pitch, roll);
+cv::Mat yawPitchRollToRvec(
+    double yaw, double pitch, double roll, const Eigen::Matrix3d& R_imu_camera) {
+  cv::Mat R = yawPitchRollToMatrix(yaw, pitch, roll, R_imu_camera);
   cv::Mat rvec;
   cv::Rodrigues(R, rvec);
   return rvec;
@@ -40,6 +52,25 @@ inline cv::Point2d projectPoint(const cv::Vec3d& P_cam, double fx, double fy,
   double inv_z = 1.0 / P_cam[2];
   return {fx * P_cam[0] * inv_z + cx,
           fy * P_cam[1] * inv_z + cy};
+}
+
+double initialYawFromRotationLikeArmorDetector(
+    const cv::Mat& rvec, const Eigen::Matrix3d& R_imu_camera) {
+  cv::Mat R_cv;
+  cv::Rodrigues(rvec, R_cv);
+  Eigen::Matrix3d R_camera_armor;
+  cv::cv2eigen(R_cv, R_camera_armor);
+  Eigen::Matrix3d R_imu_armor = R_imu_camera * R_camera_armor;
+
+  double yaw = 0.0;
+  auto theta_by_sin = std::asin(-R_imu_armor(0, 1));
+  auto theta_by_cos = std::acos(std::clamp(R_imu_armor(1, 1), -1.0, 1.0));
+  if (std::abs(theta_by_sin) > 1e-5) {
+    yaw = theta_by_sin > 0 ? theta_by_cos : -theta_by_cos;
+  } else {
+    yaw = R_imu_armor(1, 1) > 0 ? 0.0 : CV_PI;
+  }
+  return yaw;
 }
 
 }  // namespace
@@ -61,6 +92,7 @@ double SingleYawRefiner::computeReprojError(
     const cv::Vec3d& tvec,
     double pitch,
     double roll,
+    const Eigen::Matrix3d& R_imu_camera,
     const std::array<cv::Point2f, 4>& image_points,
     const std::array<cv::Point3f, 4>& object_points,
     const cv::Mat& K)
@@ -70,7 +102,7 @@ double SingleYawRefiner::computeReprojError(
   double cx = K.at<double>(0, 2);
   double cy = K.at<double>(1, 2);
 
-  cv::Mat R_wc = yawPitchRollToMatrix(yaw, pitch, roll);
+  cv::Mat R_wc = yawPitchRollToMatrix(yaw, pitch, roll, R_imu_camera);
   double total = 0.0;
 
   for (int i = 0; i < 4; ++i) {
@@ -101,6 +133,7 @@ bool SingleYawRefiner::optimizeYaw(
     const cv::Vec3d& tvec,
     double pitch,
     double roll,
+    const Eigen::Matrix3d& R_imu_camera,
     const std::array<cv::Point2f, 4>& image_points,
     const std::array<cv::Point3f, 4>& object_points,
     const cv::Mat& K)
@@ -115,7 +148,12 @@ bool SingleYawRefiner::optimizeYaw(
     double b_sum = 0.0;
     double cost = 0.0;
 
-    cv::Mat R_wc = yawPitchRollToMatrix(yaw, pitch, roll);
+    cv::Mat R_wc = yawPitchRollToMatrix(yaw, pitch, roll, R_imu_camera);
+    constexpr double kYawDiffEps = 1e-5;
+    cv::Mat R_plus =
+      yawPitchRollToMatrix(yaw + kYawDiffEps, pitch, roll, R_imu_camera);
+    cv::Mat R_minus =
+      yawPitchRollToMatrix(yaw - kYawDiffEps, pitch, roll, R_imu_camera);
 
     for (int i = 0; i < 4; ++i) {
       cv::Vec3d P_obj(object_points[i].x, object_points[i].y, object_points[i].z);
@@ -139,15 +177,21 @@ bool SingleYawRefiner::optimizeYaw(
       }
       cost += rho * r2;
 
-      // Jacobian: dP_cam / dyaw.
-      // dR/dyaw = Rz'(yaw) * Ry * Rx = skew([0,0,1]) * R(yaw,pitch,roll)
-      // So dP_cam/dyaw = [-P_cam.y, P_cam.x, 0]^T  in camera frame
-      double dX_dyaw = -P_cam[1];
-      double dY_dyaw =  P_cam[0];
-      double dZ_dyaw = 0.0;
-
-      double du_dyaw = fx * inv_z * (dX_dyaw - P_cam[0] * inv_z * dZ_dyaw);
-      double dv_dyaw = fy * inv_z * (dY_dyaw - P_cam[1] * inv_z * dZ_dyaw);
+      // Numerical Jacobian on yaw to keep consistency with the full
+      // R_camera_armor = R_imu_camera^T * Rz(yaw)*Ry(pitch)*Rx(roll) chain.
+      cv::Mat P_plus_mat = R_plus * cv::Mat(P_obj) + cv::Mat(tvec);
+      cv::Mat P_minus_mat = R_minus * cv::Mat(P_obj) + cv::Mat(tvec);
+      cv::Vec3d P_plus(P_plus_mat.at<double>(0),
+                       P_plus_mat.at<double>(1),
+                       P_plus_mat.at<double>(2));
+      cv::Vec3d P_minus(P_minus_mat.at<double>(0),
+                        P_minus_mat.at<double>(1),
+                        P_minus_mat.at<double>(2));
+      if (P_plus[2] <= 1e-6 || P_minus[2] <= 1e-6) return false;
+      cv::Point2d uv_plus = projectPoint(P_plus, fx, fy, cx, cy);
+      cv::Point2d uv_minus = projectPoint(P_minus, fx, fy, cx, cy);
+      double du_dyaw = (uv_plus.x - uv_minus.x) / (2.0 * kYawDiffEps);
+      double dv_dyaw = (uv_plus.y - uv_minus.y) / (2.0 * kYawDiffEps);
 
       J_sum += rho * (du_dyaw * du_dyaw + dv_dyaw * dv_dyaw);
       b_sum += rho * (du_dyaw * du + dv_dyaw * dv);
@@ -160,9 +204,10 @@ bool SingleYawRefiner::optimizeYaw(
     // Line search with step decay
     double alpha = 1.0;
     for (int ls = 0; ls < 10; ++ls) {
-      double yaw_try = yaw - alpha * delta;
+      double yaw_try = yaw + alpha * delta;
       double cost_try = computeReprojError(yaw_try, tvec, pitch, roll,
-                                           image_points, object_points, K);
+                                           R_imu_camera, image_points,
+                                           object_points, K);
       if (cost_try < cost) {
         yaw = yaw_try;
         break;
@@ -186,24 +231,23 @@ PoseEstimate SingleYawRefiner::refine(
   PoseEstimate result = pnp_result;
 
   // Step 1: determine pitch / roll
-  double pitch = pnp_result.pitch;
-  double roll  = pnp_result.roll;
-  if (std::isnan(pitch) || std::abs(pitch) < 1e-4) {
-    pitch = config_.pitch_deg_default * M_PI / 180.0;
+  double pitch = config_.pitch_deg_default * M_PI / 180.0;
+  if (config_.outpost_pitch_sign && pnp_result.publish_number == "outpost") {
+    pitch = -pitch;
   }
-  if (std::isnan(roll) || std::abs(roll) < 1e-4) {
-    roll = config_.roll_deg_default * M_PI / 180.0;
-  }
+  double roll  = config_.roll_deg_default * M_PI / 180.0;
 
-  // Step 2: yaw initial value from PnP
-  double yaw_init = pnp_result.yaw;
+  // Step 2: yaw initial value from PnP rotation matrix using the
+  // same extraction logic as armor_detector::BaSolver.
+  double yaw_init = initialYawFromRotationLikeArmorDetector(
+    pnp_result.rvec, pnp_result.R_imu_camera);
   double yaw_opt  = yaw_init;
 
   // Step 3: 1-D yaw optimization
   cv::Vec3d tvec(pnp_result.tvec.at<double>(0),
                  pnp_result.tvec.at<double>(1),
                  pnp_result.tvec.at<double>(2));
-  bool ok = optimizeYaw(yaw_opt, tvec, pitch, roll,
+  bool ok = optimizeYaw(yaw_opt, tvec, pitch, roll, pnp_result.R_imu_camera,
                         image_points, object_points, K);
 
   // Step 4: validity checks
@@ -230,29 +274,34 @@ PoseEstimate SingleYawRefiner::refine(
 
   // Step 6: quality gate
   double refined_error = computeReprojError(yaw_opt, tvec, pitch, roll,
+                                             pnp_result.R_imu_camera,
                                              image_points, object_points, K);
+  const double refined_error_per_point = refined_error / 4.0;
   if (gate_.require_finite && !std::isfinite(refined_error)) {
     result.mode = EstimateMode::PNP_VALID;
     result.quality_score = 0.5;
     result.reproj_error_refined = result.reproj_error_raw;
     return result;
   }
-  if (refined_error > gate_.max_reproj_error) {
+  if (refined_error_per_point > gate_.max_reproj_error) {
     result.mode = EstimateMode::PNP_VALID;
     result.quality_score =
-      std::max(0.0, 1.0 - refined_error / gate_.max_reproj_error);
+      std::max(0.0, 1.0 - refined_error_per_point / gate_.max_reproj_error);
     result.reproj_error_refined = result.reproj_error_raw;
     return result;
   }
 
   // Step 7: success — update result
   result.yaw = yaw_opt;
-  result.rvec = yawPitchRollToRvec(yaw_opt, pitch, roll);
+  result.pitch = pitch;
+  result.roll = roll;
+  result.rvec = yawPitchRollToRvec(
+    yaw_opt, pitch, roll, pnp_result.R_imu_camera);
   result.mode = EstimateMode::SINGLE_BA_VALID;
-  result.reproj_error_refined = refined_error / 4.0;  // per-point
+  result.reproj_error_refined = refined_error_per_point;
   result.reproj_error_raw = pnp_result.reproj_error_raw;  // preserve
   result.quality_score =
-    std::max(0.0, 1.0 - refined_error / (4.0 * gate_.max_reproj_error));
+    std::max(0.0, 1.0 - refined_error_per_point / gate_.max_reproj_error);
 
   // Recompute rotation quaternion and translation
   result.translation = Eigen::Vector3d(tvec[0], tvec[1], tvec[2]);

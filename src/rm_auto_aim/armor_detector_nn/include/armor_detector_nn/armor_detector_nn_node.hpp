@@ -10,6 +10,8 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <image_transport/publisher.hpp>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
 
 #include "rm_interfaces/msg/armors.hpp"
 #include "rm_interfaces/srv/set_mode.hpp"
@@ -88,8 +90,11 @@ private:
   std::unique_ptr<ArmorDetectorNN> detector_;
   std::unique_ptr<FrameScheduler> frame_scheduler_;
   std::unique_ptr<ArmorPoseEstimatorAdapter> pose_estimator_adapter_;
+  std::unique_ptr<ArmorPoseEstimatorAdapter> pose_estimator_reference_adapter_;
   std::unique_ptr<DebugDrawer> debug_drawer_;
   std::unique_ptr<Profiler> profiler_;
+
+  bool debug_pose_compare_{false};
 
   // Phase 2 — tracker
   std::shared_ptr<ITrackerStrategy> tracker_;
@@ -99,6 +104,10 @@ private:
 
   // Recent detections (for future async phases)
   std::deque<FrameDetections> recent_detections_;
+
+  // TF: target_frame (e.g. odom) -> camera frame rotation
+  std::shared_ptr<tf2_ros::Buffer> tf2_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf2_listener_;
 };
 
 }  // namespace fyt::auto_aim

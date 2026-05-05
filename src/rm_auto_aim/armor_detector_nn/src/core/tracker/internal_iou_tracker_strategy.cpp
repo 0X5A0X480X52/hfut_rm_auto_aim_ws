@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
-#include <tuple>
 
 namespace fyt::auto_aim {
 
@@ -36,32 +35,59 @@ double InternalIoUTrackerStrategy::computeIoU(
 std::vector<cv::Point> InternalIoUTrackerStrategy::hungarianMatch(
     const cv::Mat& cost_matrix)
 {
-  int N = cost_matrix.rows;
+  // O(N^3) Hungarian (Kuhn-Munkres) for square dense cost matrix.
+  const int N = cost_matrix.rows;
+  const double INF = 1e18;
+  std::vector<double> u(N + 1, 0.0), v(N + 1, 0.0);
+  std::vector<int> p(N + 1, 0), way(N + 1, 0);
+
+  for (int i = 1; i <= N; ++i) {
+    p[0] = i;
+    int j0 = 0;
+    std::vector<double> minv(N + 1, INF);
+    std::vector<char> used(N + 1, false);
+    do {
+      used[j0] = true;
+      int i0 = p[j0];
+      double delta = INF;
+      int j1 = 0;
+      for (int j = 1; j <= N; ++j) {
+        if (used[j]) continue;
+        double cur = cost_matrix.at<double>(i0 - 1, j - 1) - u[i0] - v[j];
+        if (cur < minv[j]) {
+          minv[j] = cur;
+          way[j] = j0;
+        }
+        if (minv[j] < delta) {
+          delta = minv[j];
+          j1 = j;
+        }
+      }
+      for (int j = 0; j <= N; ++j) {
+        if (used[j]) {
+          u[p[j]] += delta;
+          v[j] -= delta;
+        } else {
+          minv[j] -= delta;
+        }
+      }
+      j0 = j1;
+    } while (p[j0] != 0);
+
+    do {
+      int j1 = way[j0];
+      p[j0] = p[j1];
+      j0 = j1;
+    } while (j0 != 0);
+  }
 
   std::vector<cv::Point> matches;
-  std::vector<bool> row_used(N, false);
-  std::vector<bool> col_used(N, false);
-
-  // Collect all admissible (cost, row, col) entries.
-  std::vector<std::tuple<double, int, int>> candidates;
-  for (int i = 0; i < N; ++i) {
-    for (int j = 0; j < N; ++j) {
-      double c = cost_matrix.at<double>(i, j);
-      if (c < 1e5) {
-        candidates.emplace_back(c, i, j);
-      }
+  matches.reserve(N);
+  for (int j = 1; j <= N; ++j) {
+    if (p[j] > 0) {
+      matches.emplace_back(p[j] - 1, j - 1);
     }
   }
-  std::sort(candidates.begin(), candidates.end());
-
-  for (const auto& [c, i, j] : candidates) {
-    if (!row_used[i] && !col_used[j]) {
-      matches.emplace_back(i, j);
-      row_used[i] = true;
-      col_used[j] = true;
-    }
-  }
-
   return matches;
 }
 
@@ -78,8 +104,23 @@ std::vector<TrackedDetection> InternalIoUTrackerStrategy::associate(
     results.push_back({det, -1, false});
   }
 
+  // No detections this frame: age tracks and return.
+  if (N_dets == 0) {
+    for (int ti = 0; ti < N_tracks; ++ti) {
+      tracks_[ti].missed++;
+    }
+    tracks_.erase(
+      std::remove_if(tracks_.begin(), tracks_.end(),
+        [this](const TrackState& t) {
+          return t.missed > config_.max_missed;
+        }),
+      tracks_.end()
+    );
+    return results;
+  }
+
   // No tracks yet — create new ones for all detections.
-  if (N_tracks == 0 || N_dets == 0) {
+  if (N_tracks == 0) {
     for (auto& td : results) {
       int new_id = next_id_++;
       td.track_id = new_id;
@@ -168,8 +209,8 @@ std::vector<TrackedDetection> InternalIoUTrackerStrategy::associate(
     results[dj].track_id = tracks_[ti].id;
     results[dj].matched = true;
     results[dj].det.track_id  = tracks_[ti].id;
-    results[dj].det.track_age = tracks_[ti].age;
-    results[dj].det.track_hits = tracks_[ti].hits;
+    results[dj].det.track_age = tracks_[ti].age + 1;
+    results[dj].det.track_hits = tracks_[ti].hits + 1;
 
     // Update velocity estimate.
     cv::Point2f new_center(
@@ -226,7 +267,6 @@ std::vector<TrackedDetection> InternalIoUTrackerStrategy::associate(
   for (int ti = 0; ti < N_tracks; ++ti) {
     if (!track_matched[ti]) {
       tracks_[ti].missed++;
-      tracks_[ti].hits = 0;
     }
   }
 

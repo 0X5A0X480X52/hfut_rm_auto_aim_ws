@@ -1,5 +1,6 @@
 #include "armor_detector_nn/armor_detector_nn_node.hpp"
 
+#include <cmath>
 #include <chrono>
 #include <iomanip>
 #include <memory>
@@ -9,6 +10,9 @@
 #include <image_transport/image_transport.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
+#include <tf2/exceptions.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tf2_ros/create_timer_ros.h>
 
 #include "rm_utils/assert.hpp"
 #include "rm_utils/logger/log.hpp"
@@ -38,13 +42,26 @@ ArmorDetectorNNNode::ArmorDetectorNNNode(const rclcpp::NodeOptions& options)
 
   // --- pose estimator ---
   pose_estimator_adapter_ = std::make_unique<ArmorPoseEstimatorAdapter>(config_.pose);
+  // Reference estimator: aligned with armor_detector-like baseline
+  // (PnP + IPPE disambiguation, no pose refiner).
+  {
+    auto ref_pose_cfg = config_.pose;
+    ref_pose_cfg.refiner.mode = "none";
+    pose_estimator_reference_adapter_ =
+      std::make_unique<ArmorPoseEstimatorAdapter>(ref_pose_cfg);
+  }
 
-  // --- Phase 1: pose refiner ---
-  if (config_.pose.refiner.mode != "none") {
+  // --- Phase 1 / Phase 4: pose refiner ---
+  if (config_.pose.refiner.mode == "sliding_window") {
+    auto refiner = std::make_shared<SlidingWindowRefiner>(
+      config_.pose.sliding, config_.pose.single_yaw, config_.pose.gate);
+    pose_estimator_adapter_->setRefiner(refiner);
+    FYT_INFO("armor_detector", "Pose refiner initialized: mode=sliding_window");
+  } else if (config_.pose.refiner.mode == "single_yaw") {
     auto refiner = std::make_shared<SingleYawRefiner>(
       config_.pose.single_yaw, config_.pose.gate);
     pose_estimator_adapter_->setRefiner(refiner);
-    FYT_INFO("armor_detector", "Pose refiner initialized: mode={}", config_.pose.refiner.mode);
+    FYT_INFO("armor_detector", "Pose refiner initialized: mode=single_yaw");
   }
 
   // --- Phase 2: tracker ---
@@ -61,6 +78,13 @@ ArmorDetectorNNNode::ArmorDetectorNNNode(const rclcpp::NodeOptions& options)
 
   // --- debug drawer ---
   debug_drawer_ = std::make_unique<DebugDrawer>();
+
+  // --- tf ---
+  tf2_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+  auto timer_interface = std::make_shared<tf2_ros::CreateTimerROS>(
+      this->get_node_base_interface(), this->get_node_timers_interface());
+  tf2_buffer_->setCreateTimerInterface(timer_interface);
+  tf2_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
 
   // --- subscriptions ---
   img_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
@@ -107,6 +131,7 @@ ArmorDetectorNNNode::ArmorDetectorNNNode(const rclcpp::NodeOptions& options)
 
 void ArmorDetectorNNNode::initializeParameters() {
   debug_ = this->declare_parameter("debug", true);
+  debug_pose_compare_ = this->declare_parameter("debug_pose_compare", false);
   config_.target_frame = this->declare_parameter("target_frame", "odom");
 
   // backend
@@ -234,6 +259,21 @@ void ArmorDetectorNNNode::initializeParameters() {
     config_.pose.single_yaw.roll_deg_default = this->declare_parameter("pose.single_yaw.roll_deg_default", 0.0);
     config_.pose.single_yaw.outpost_pitch_sign = this->declare_parameter("pose.single_yaw.outpost_pitch_sign", true);
 
+    // Phase 4 — sliding-window refiner
+    config_.pose.sliding.window_size = this->declare_parameter("pose.sliding.window_size", 8);
+    config_.pose.sliding.min_frames = this->declare_parameter("pose.sliding.min_frames", 4);
+    config_.pose.sliding.max_time_span_ms = this->declare_parameter("pose.sliding.max_time_span_ms", 300.0);
+    config_.pose.sliding.max_opt_iters = this->declare_parameter("pose.sliding.max_opt_iters", 20);
+    config_.pose.sliding.sigma_prior_xy = this->declare_parameter("pose.sliding.sigma_prior_xy", 0.08);
+    config_.pose.sliding.sigma_prior_z = this->declare_parameter("pose.sliding.sigma_prior_z", 0.15);
+    config_.pose.sliding.sigma_prior_yaw = this->declare_parameter("pose.sliding.sigma_prior_yaw", 0.35);
+    config_.pose.sliding.sigma_smooth_xy = this->declare_parameter("pose.sliding.sigma_smooth_xy", 0.05);
+    config_.pose.sliding.sigma_smooth_z = this->declare_parameter("pose.sliding.sigma_smooth_z", 0.10);
+    config_.pose.sliding.sigma_smooth_yaw = this->declare_parameter("pose.sliding.sigma_smooth_yaw", 0.10);
+    config_.pose.sliding.sigma_kp_min = this->declare_parameter("pose.sliding.sigma_kp_min", 1.0);
+    config_.pose.sliding.sigma_kp_scale = this->declare_parameter("pose.sliding.sigma_kp_scale", 5.0);
+    config_.pose.sliding.huber_delta = this->declare_parameter("pose.sliding.huber_delta", 3.0);
+
     config_.pose.gate.max_reproj_error = this->declare_parameter("pose.gate.max_reproj_error", 3.0);
     config_.pose.gate.max_pose_delta_m = this->declare_parameter("pose.gate.max_pose_delta_m", 0.20);
     config_.pose.gate.max_yaw_delta_deg = this->declare_parameter("pose.gate.max_yaw_delta_deg", 20.0);
@@ -257,6 +297,9 @@ void ArmorDetectorNNNode::initializeParameters() {
     config_.corner_refine.time_budget_ms = this->declare_parameter("corner_refine.time_budget_ms", 2.0);
     config_.corner_refine.roi_expand_ratio = this->declare_parameter("corner_refine.roi_expand_ratio", 1.2);
     config_.corner_refine.min_bright_points = this->declare_parameter("corner_refine.min_bright_points", 30);
+    config_.corner_refine.pca_stability_threshold = this->declare_parameter("corner_refine.pca_stability_threshold", 0.7);
+    config_.corner_refine.max_aspect_ratio = this->declare_parameter("corner_refine.max_aspect_ratio", 5.0);
+    config_.corner_refine.min_aspect_ratio = this->declare_parameter("corner_refine.min_aspect_ratio", 1.5);
   }
 
   // async (Phase 6, placeholder)
@@ -355,6 +398,37 @@ void ArmorDetectorNNNode::imageCallback(
 
   auto t_preprocess_end = std::chrono::steady_clock::now();
 
+  Eigen::Matrix3d R_imu_camera = Eigen::Matrix3d::Identity();
+  auto extract_rotation = [&](const geometry_msgs::msg::TransformStamped &t) {
+    tf2::Quaternion tf_q;
+    tf2::fromMsg(t.transform.rotation, tf_q);
+    tf2::Matrix3x3 tf2_matrix(tf_q);
+    R_imu_camera << tf2_matrix.getRow(0)[0], tf2_matrix.getRow(0)[1], tf2_matrix.getRow(0)[2],
+                    tf2_matrix.getRow(1)[0], tf2_matrix.getRow(1)[1], tf2_matrix.getRow(1)[2],
+                    tf2_matrix.getRow(2)[0], tf2_matrix.getRow(2)[1], tf2_matrix.getRow(2)[2];
+  };
+  try {
+    const rclcpp::Time target_time = img_msg->header.stamp;
+    auto target_to_camera = tf2_buffer_->lookupTransform(
+        config_.target_frame, img_msg->header.frame_id, target_time,
+        tf2::durationFromSec(0.01));
+    extract_rotation(target_to_camera);
+  } catch (tf2::ExtrapolationException &ex) {
+    FYT_WARN("armor_detector",
+             "TF at image stamp not cached, fallback to latest: {}", ex.what());
+    try {
+      auto target_to_camera = tf2_buffer_->lookupTransform(
+          config_.target_frame, img_msg->header.frame_id, tf2::TimePointZero);
+      extract_rotation(target_to_camera);
+    } catch (tf2::TransformException &ex2) {
+      FYT_ERROR("armor_detector", "Fallback transform error: {}", ex2.what());
+      return;
+    }
+  } catch (tf2::TransformException &ex) {
+    FYT_ERROR("armor_detector", "Transform error: {}", ex.what());
+    return;
+  }
+
   // Detect
   auto results = detector_->detectBatch({frame}, {img_msg->header});
   if (results.empty()) {
@@ -365,6 +439,9 @@ void ArmorDetectorNNNode::imageCallback(
   }
 
   auto& fd = results[0];
+  for (auto& det : fd.detections) {
+    det.stamp = img_msg->header.stamp;
+  }
 
   auto t_detect_end = std::chrono::steady_clock::now();
 
@@ -396,10 +473,56 @@ void ArmorDetectorNNNode::imageCallback(
 
   // PnP pose estimation
   std::vector<PoseEstimate> poses;
+  std::vector<PoseEstimate> poses_ref;
   if (cam_info_ && pose_estimator_adapter_) {
-    poses = pose_estimator_adapter_->estimateBatch(fd.detections, *cam_info_);
+    poses = pose_estimator_adapter_->estimateBatch(
+      fd.detections, *cam_info_, R_imu_camera);
+    if (debug_pose_compare_ && pose_estimator_reference_adapter_) {
+      poses_ref =
+        pose_estimator_reference_adapter_->estimateBatch(
+          fd.detections, *cam_info_, R_imu_camera);
+    }
   } else {
     poses.resize(fd.detections.size());
+    if (debug_pose_compare_) {
+      poses_ref.resize(fd.detections.size());
+    }
+  }
+
+  if (debug_pose_compare_ && poses_ref.size() == poses.size()) {
+    auto rad2deg = [](double r) { return r * 180.0 / M_PI; };
+    auto wrapDeg = [&](double deg) {
+      while (deg > 180.0) deg -= 360.0;
+      while (deg < -180.0) deg += 360.0;
+      return deg;
+    };
+
+    for (size_t i = 0; i < poses.size(); ++i) {
+      const auto& d = fd.detections[i];
+      const auto& cur = poses[i];
+      const auto& ref = poses_ref[i];
+
+      if (!cur.valid || !ref.valid) {
+        FYT_INFO(
+          "armor_detector",
+          "[PoseCmp] id={} num={} type={} cur_valid={} ref_valid={}",
+          d.track_id, d.publish_number.c_str(), d.publish_type.c_str(),
+          static_cast<int>(cur.valid), static_cast<int>(ref.valid));
+        continue;
+      }
+
+      double cy = rad2deg(cur.yaw), cp = rad2deg(cur.pitch), cr = rad2deg(cur.roll);
+      double ry = rad2deg(ref.yaw), rp = rad2deg(ref.pitch), rr = rad2deg(ref.roll);
+      double dy = wrapDeg(cy - ry), dp = wrapDeg(cp - rp), dr = wrapDeg(cr - rr);
+
+      FYT_INFO(
+        "armor_detector",
+        "[PoseCmp] id={} num={} type={} mode={} ref_mode={}; cur(ypr)={:.2f}/{:.2f}/{:.2f} ref(ypr)={:.2f}/{:.2f}/{:.2f} d(ypr)={:.2f}/{:.2f}/{:.2f}; err(cur/ref)={:.3f}/{:.3f}",
+        d.track_id, d.publish_number.c_str(), d.publish_type.c_str(),
+        static_cast<int>(cur.mode), static_cast<int>(ref.mode),
+        cy, cp, cr, ry, rp, rr, dy, dp, dr,
+        cur.reproj_error_refined, ref.reproj_error_refined);
+    }
   }
 
   auto t_pose_end = std::chrono::steady_clock::now();
@@ -637,6 +760,8 @@ ArmorDetectorNNNode::onSetParameters(const std::vector<rclcpp::Parameter>& param
     if (p.get_name() == "debug") {
       debug_ = p.as_bool();
       debug_ ? createDebugPublishers() : destroyDebugPublishers();
+    } else if (p.get_name() == "debug_pose_compare") {
+      debug_pose_compare_ = p.as_bool();
     }
   }
 

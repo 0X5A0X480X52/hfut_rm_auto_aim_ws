@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <opencv2/core.hpp>
+#include <rclcpp/time.hpp>
 #include <std_msgs/msg/header.hpp>
 
 #include "rm_utils/common.hpp"
@@ -39,6 +40,9 @@ struct ArmorDetection {
 
   // Reserved for future: per-keypoint confidence
   std::array<float, 4> keypoint_conf{1.0f, 1.0f, 1.0f, 1.0f};
+
+  // Observation timestamp for downstream temporal modules (e.g., sliding BA)
+  rclcpp::Time stamp{};
 };
 
 struct FrameDetections {

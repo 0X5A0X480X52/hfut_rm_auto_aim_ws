@@ -20,6 +20,7 @@ struct TrackWindowFrame {
   std::array<float, 4> keypoint_conf{1.0f, 1.0f, 1.0f, 1.0f};
 
   Eigen::Vector3d t_init{Eigen::Vector3d::Zero()};
+  Eigen::Matrix3d R_imu_camera{Eigen::Matrix3d::Identity()};
   double yaw_init{0.0};
   double pitch{0.0};
   double roll{0.0};

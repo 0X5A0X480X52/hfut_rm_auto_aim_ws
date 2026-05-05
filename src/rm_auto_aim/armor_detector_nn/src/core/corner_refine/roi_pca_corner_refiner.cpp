@@ -34,18 +34,20 @@ std::pair<cv::Rect2f, cv::Rect2f>
 RoiPcaCornerRefiner::extractLightBarROIs(
     const std::array<cv::Point2f, 4>& corners)
 {
-  // Left bar: corners[0] (top-left) + corners[3] (bottom-left)
-  cv::Point2f lc = (corners[0] + corners[3]) * 0.5f;
-  float lh_half = cv::norm(corners[0] - corners[3]) * 0.5f * config_.roi_expand_ratio;
+  // Canonical order:
+  // [0]=left_bottom, [1]=left_top, [2]=right_top, [3]=right_bottom.
+  // Left light bar uses [0] and [1].
+  cv::Point2f lc = (corners[0] + corners[1]) * 0.5f;
+  float lh_half = cv::norm(corners[0] - corners[1]) * 0.5f * config_.roi_expand_ratio;
   float lw_half = lh_half * 0.4f;
 
   cv::Rect2f left_roi(
     lc.x - lw_half, lc.y - lh_half,
     lw_half * 2.0f, lh_half * 2.0f);
 
-  // Right bar: corners[1] (top-right) + corners[2] (bottom-right)
-  cv::Point2f rc = (corners[1] + corners[2]) * 0.5f;
-  float rh_half = cv::norm(corners[1] - corners[2]) * 0.5f * config_.roi_expand_ratio;
+  // Right light bar uses [2] and [3].
+  cv::Point2f rc = (corners[2] + corners[3]) * 0.5f;
+  float rh_half = cv::norm(corners[2] - corners[3]) * 0.5f * config_.roi_expand_ratio;
   float rw_half = rh_half * 0.4f;
 
   cv::Rect2f right_roi(
@@ -156,8 +158,10 @@ RoiPcaCornerRefiner::refineLightBar(
 
       int px = static_cast<int>(std::round(pt.x));
       int py = static_cast<int>(std::round(pt.y));
-      if (px < 1 || px >= frame.cols - 1 ||
-          py < 1 || py >= frame.rows - 1) continue;
+      int lpx = px - roi_int.x;
+      int lpy = py - roi_int.y;
+      if (lpx < 1 || lpx >= gray.cols - 1 ||
+          lpy < 1 || lpy >= gray.rows - 1) continue;
 
       // Gradient along perpendicular direction.
       cv::Point2f perp(-direction.y, direction.x);
@@ -165,10 +169,12 @@ RoiPcaCornerRefiner::refineLightBar(
       for (int t = -2; t <= 2; ++t) {
         int sx = static_cast<int>(std::round(pt.x + t * perp.x));
         int sy = static_cast<int>(std::round(pt.y + t * perp.y));
-        if (sx < 1 || sx >= frame.cols - 1 ||
-            sy < 1 || sy >= frame.rows - 1) continue;
-        float dx = static_cast<float>(frame.at<uchar>(sy, sx + 1)) -
-                   static_cast<float>(frame.at<uchar>(sy, sx - 1));
+        int lsx = sx - roi_int.x;
+        int lsy = sy - roi_int.y;
+        if (lsx < 1 || lsx >= gray.cols - 1 ||
+            lsy < 1 || lsy >= gray.rows - 1) continue;
+        float dx = static_cast<float>(gray.at<uchar>(lsy, lsx + 1)) -
+                   static_cast<float>(gray.at<uchar>(lsy, lsx - 1));
         grad += std::abs(dx);
       }
       if (grad > best_grad) {
@@ -203,11 +209,11 @@ bool RoiPcaCornerRefiner::validateGeometry(
     return false;
   }
 
-  // Aspect ratio check.
-  float w_top    = cv::norm(corners[0] - corners[1]);
-  float w_bottom = cv::norm(corners[3] - corners[2]);
-  float h_left   = cv::norm(corners[0] - corners[3]);
-  float h_right  = cv::norm(corners[1] - corners[2]);
+  // Aspect ratio check under canonical keypoint order.
+  float w_bottom = cv::norm(corners[0] - corners[3]);
+  float w_top    = cv::norm(corners[1] - corners[2]);
+  float h_left   = cv::norm(corners[0] - corners[1]);
+  float h_right  = cv::norm(corners[3] - corners[2]);
 
   float avg_w = (w_top + w_bottom) * 0.5f;
   float avg_h = (h_left + h_right) * 0.5f;
@@ -268,13 +274,13 @@ RefineResult RoiPcaCornerRefiner::refine(
     return result;
   }
 
-  // Step 5: assemble refined keypoints.
-  // Order: top-left[0], top-right[1], bottom-right[2], bottom-left[3]
+  // Step 5: assemble refined keypoints in canonical order:
+  // [0]=left_bottom, [1]=left_top, [2]=right_top, [3]=right_bottom
   std::array<cv::Point2f, 4> refined = {{
+    left_ep.bottom,
     left_ep.top,
     right_ep.top,
-    right_ep.bottom,
-    left_ep.bottom
+    right_ep.bottom
   }};
 
   // Step 6: geometry validation.
