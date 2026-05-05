@@ -31,6 +31,14 @@ struct ArmorDetection {
   cv::Rect2f bbox;
   std::array<cv::Point2f, 4> keypoints;
   cv::Point2f center;
+
+  // Tracker fields (Phase 2+)
+  int track_id{-1};
+  int track_age{0};
+  int track_hits{0};
+
+  // Reserved for future: per-keypoint confidence
+  std::array<float, 4> keypoint_conf{1.0f, 1.0f, 1.0f, 1.0f};
 };
 
 struct FrameDetections {

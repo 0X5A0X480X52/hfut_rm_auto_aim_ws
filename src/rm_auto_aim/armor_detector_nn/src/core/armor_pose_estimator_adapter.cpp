@@ -8,8 +8,33 @@
 #include <rm_utils/logger/log.hpp>
 
 #include "armor_detector_nn/core/ba_adjuster.hpp"
+#include "armor_detector_nn/core/pose_refine/pose_refiner.hpp"
 
 namespace fyt::auto_aim {
+
+namespace {
+
+// Extract yaw/pitch/roll from rvec (Rodrigues vector).
+// Uses the R = Rz(yaw)*Ry(pitch)*Rx(roll) decomposition.
+void rvecToEuler(const cv::Mat& rvec, double& yaw, double& pitch, double& roll) {
+  cv::Mat R;
+  cv::Rodrigues(rvec, R);
+
+  double sp = -R.at<double>(2, 0);
+  sp = std::clamp(sp, -1.0, 1.0);
+  pitch = std::asin(sp);
+
+  double cp = std::cos(pitch);
+  if (std::abs(cp) < 1e-8) {
+    roll = 0.0;
+    yaw = std::atan2(-R.at<double>(0, 1), R.at<double>(1, 1));
+  } else {
+    yaw  = std::atan2(R.at<double>(1, 0), R.at<double>(0, 0));
+    roll = std::atan2(R.at<double>(2, 1), R.at<double>(2, 2));
+  }
+}
+
+}  // namespace
 
 ArmorPoseEstimatorAdapter::ArmorPoseEstimatorAdapter(const PoseConfig& config)
   : config_(config)
@@ -21,6 +46,11 @@ ArmorPoseEstimatorAdapter::~ArmorPoseEstimatorAdapter() = default;
 void ArmorPoseEstimatorAdapter::setBundleAdjuster(
     std::unique_ptr<IBundleAdjuster> adjuster) {
   ba_adjuster_ = std::move(adjuster);
+}
+
+void ArmorPoseEstimatorAdapter::setRefiner(
+    std::shared_ptr<IPoseRefiner> refiner) {
+  refiner_ = std::move(refiner);
 }
 
 PoseEstimate ArmorPoseEstimatorAdapter::estimate(
@@ -50,7 +80,30 @@ PoseEstimate ArmorPoseEstimatorAdapter::estimate(
     D = cv::Mat::zeros(1, 5, CV_64F);
   }
 
-  return solvePnP(image_pts, object_pts, K, D);
+  auto result = solvePnP(image_pts, object_pts, K, D);
+
+  if (!result.valid) {
+    return result;
+  }
+
+  // Phase 1+: Run refiner (single_yaw or sliding_window) if configured
+  if (refiner_ && config_.refiner.mode != "none") {
+    std::array<cv::Point2f, 4> img_pts_arr;
+    std::copy_n(detection.keypoints.begin(), 4, img_pts_arr.begin());
+    auto refined = refiner_->refine(result, img_pts_arr,
+        {object_pts[0], object_pts[1], object_pts[2], object_pts[3]}, K, D);
+    if (refined.valid &&
+        refined.mode >= EstimateMode::SINGLE_BA_VALID) {
+      refined.track_id = detection.track_id;
+      return refined;
+    }
+  }
+
+  // Fallthrough: return PnP result
+  result.mode = EstimateMode::PNP_VALID;
+  result.quality_score = 0.5;
+  result.track_id = detection.track_id;
+  return result;
 }
 
 std::vector<PoseEstimate> ArmorPoseEstimatorAdapter::estimateBatch(
@@ -196,7 +249,15 @@ PoseEstimate ArmorPoseEstimatorAdapter::solvePnP(
     cv::cv2eigen(R, eigen_R);
     result.rotation = Eigen::Quaterniond(eigen_R);
 
-    // BA refinement
+    // Extract yaw/pitch/roll from rvec
+    rvecToEuler(result.rvec, result.yaw, result.pitch, result.roll);
+
+    // Per-point average reprojection error
+    result.reproj_error_raw = result.reprojection_error / 4.0;
+    result.reproj_error_refined = result.reproj_error_raw;
+    result.mode = EstimateMode::PNP_VALID;
+
+    // Legacy BA refinement path
     if (config_.use_ba && ba_adjuster_) {
       result = ba_adjuster_->refine(result, image_points, object_points,
                                      camera_matrix, dist_coeffs);

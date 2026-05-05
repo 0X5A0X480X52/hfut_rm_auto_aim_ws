@@ -35,6 +35,12 @@ set(CORE_SOURCES
   src/core/armor_pose_estimator_adapter.cpp
   src/core/armor_detector_nn.cpp
   src/core/number_classifier_adapter.cpp
+  # Phase 1 — pose refinement
+  src/core/pose_refine/single_yaw_refiner.cpp
+  # Phase 2 — tracker
+  src/core/tracker/internal_iou_tracker_strategy.cpp
+  # Phase 3 — corner refinement
+  src/core/corner_refine/roi_pca_corner_refiner.cpp
 )
 
 # --- backend sources ---

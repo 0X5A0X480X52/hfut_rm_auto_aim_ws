@@ -13,6 +13,10 @@
 #include "rm_utils/assert.hpp"
 #include "rm_utils/logger/log.hpp"
 
+#include "armor_detector_nn/core/pose_refine/pose_refiner.hpp"
+#include "armor_detector_nn/core/tracker/internal_iou_tracker_strategy.hpp"
+#include "armor_detector_nn/core/corner_refine/roi_pca_corner_refiner.hpp"
+
 namespace fyt::auto_aim {
 
 ArmorDetectorNNNode::ArmorDetectorNNNode(const rclcpp::NodeOptions& options)
@@ -34,6 +38,26 @@ ArmorDetectorNNNode::ArmorDetectorNNNode(const rclcpp::NodeOptions& options)
 
   // --- pose estimator ---
   pose_estimator_adapter_ = std::make_unique<ArmorPoseEstimatorAdapter>(config_.pose);
+
+  // --- Phase 1: pose refiner ---
+  if (config_.pose.refiner.mode != "none") {
+    auto refiner = std::make_shared<SingleYawRefiner>(
+      config_.pose.single_yaw, config_.pose.gate);
+    pose_estimator_adapter_->setRefiner(refiner);
+    FYT_INFO("armor_detector", "Pose refiner initialized: mode={}", config_.pose.refiner.mode);
+  }
+
+  // --- Phase 2: tracker ---
+  if (config_.tracker.strategy == "internal_iou") {
+    tracker_ = std::make_shared<InternalIoUTrackerStrategy>(config_.tracker);
+    FYT_INFO("armor_detector", "Tracker initialized: strategy=internal_iou");
+  }
+
+  // --- Phase 3: corner refiner ---
+  if (config_.corner_refine.enabled) {
+    corner_refiner_ = std::make_shared<RoiPcaCornerRefiner>(config_.corner_refine);
+    FYT_INFO("armor_detector", "Corner refiner initialized (enabled)");
+  }
 
   // --- debug drawer ---
   debug_drawer_ = std::make_unique<DebugDrawer>();
@@ -201,6 +225,46 @@ void ArmorDetectorNNNode::initializeParameters() {
     config_.pose.small_armor_height = this->declare_parameter("pose.small_armor_height", 0.050);
     config_.pose.large_armor_width  = this->declare_parameter("pose.large_armor_width", 0.225);
     config_.pose.large_armor_height = this->declare_parameter("pose.large_armor_height", 0.050);
+
+    // Phase 1 — refiner
+    config_.pose.refiner.mode = this->declare_parameter("pose.refiner.mode", "single_yaw");
+    config_.pose.single_yaw.max_iterations = this->declare_parameter("pose.single_yaw.max_iterations", 15);
+    config_.pose.single_yaw.huber_delta = this->declare_parameter("pose.single_yaw.huber_delta", 3.0);
+    config_.pose.single_yaw.pitch_deg_default = this->declare_parameter("pose.single_yaw.pitch_deg_default", 15.0);
+    config_.pose.single_yaw.roll_deg_default = this->declare_parameter("pose.single_yaw.roll_deg_default", 0.0);
+    config_.pose.single_yaw.outpost_pitch_sign = this->declare_parameter("pose.single_yaw.outpost_pitch_sign", true);
+
+    config_.pose.gate.max_reproj_error = this->declare_parameter("pose.gate.max_reproj_error", 3.0);
+    config_.pose.gate.max_pose_delta_m = this->declare_parameter("pose.gate.max_pose_delta_m", 0.20);
+    config_.pose.gate.max_yaw_delta_deg = this->declare_parameter("pose.gate.max_yaw_delta_deg", 20.0);
+    config_.pose.gate.require_finite = this->declare_parameter("pose.gate.require_finite", true);
+  }
+
+  // tracker (Phase 2)
+  {
+    config_.tracker.strategy = this->declare_parameter("tracker.strategy", "internal_iou");
+    config_.tracker.iou_threshold = this->declare_parameter("tracker.iou_threshold", 0.30);
+    config_.tracker.max_missed = this->declare_parameter("tracker.max_missed", 15);
+    config_.tracker.min_hits = this->declare_parameter("tracker.min_hits", 2);
+    config_.tracker.max_center_dist_px = this->declare_parameter("tracker.max_center_dist_px", 120);
+  }
+
+  // corner_refine (Phase 3)
+  {
+    config_.corner_refine.enabled = this->declare_parameter("corner_refine.enabled", false);
+    config_.corner_refine.apply_on_confirmed_only = this->declare_parameter("corner_refine.apply_on_confirmed_only", true);
+    config_.corner_refine.max_targets_per_frame = this->declare_parameter("corner_refine.max_targets_per_frame", 1);
+    config_.corner_refine.time_budget_ms = this->declare_parameter("corner_refine.time_budget_ms", 2.0);
+    config_.corner_refine.roi_expand_ratio = this->declare_parameter("corner_refine.roi_expand_ratio", 1.2);
+    config_.corner_refine.min_bright_points = this->declare_parameter("corner_refine.min_bright_points", 30);
+  }
+
+  // async (Phase 6, placeholder)
+  {
+    config_.async.enabled = this->declare_parameter("async.enabled", false);
+    config_.async.max_wait_ms = this->declare_parameter("async.max_wait_ms", 2.0);
+    config_.async.drop_if_busy = this->declare_parameter("async.drop_if_busy", true);
+    config_.async.max_observation_age_ms = this->declare_parameter("async.max_observation_age_ms", 100.0);
   }
 
   // runtime
@@ -303,6 +367,32 @@ void ArmorDetectorNNNode::imageCallback(
   auto& fd = results[0];
 
   auto t_detect_end = std::chrono::steady_clock::now();
+
+  // --- Phase 2: Tracker association ---
+  if (tracker_) {
+    auto tracked = tracker_->associate(fd.detections, img_msg->header.stamp);
+    fd.detections.clear();
+    fd.detections.reserve(tracked.size());
+    for (auto& td : tracked) {
+      fd.detections.push_back(std::move(td.det));
+    }
+  }
+
+  // --- Phase 3: Corner refinement (optional, only confirmed and limited) ---
+  if (corner_refiner_ && !fd.detections.empty()) {
+    int refined_count = 0;
+    for (auto& det : fd.detections) {
+      if (config_.corner_refine.apply_on_confirmed_only &&
+          det.track_hits < config_.tracker.min_hits) continue;
+      if (refined_count >= config_.corner_refine.max_targets_per_frame) break;
+
+      auto refine_res = corner_refiner_->refine(frame, det);
+      if (refine_res.ok) {
+        det.keypoints = refine_res.refined_keypoints;
+        refined_count++;
+      }
+    }
+  }
 
   // PnP pose estimation
   std::vector<PoseEstimate> poses;

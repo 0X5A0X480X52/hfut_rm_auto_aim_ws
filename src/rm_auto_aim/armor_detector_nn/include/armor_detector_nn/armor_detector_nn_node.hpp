@@ -17,9 +17,11 @@
 
 #include "armor_detector_nn/core/armor_detector_nn.hpp"
 #include "armor_detector_nn/core/armor_pose_estimator_adapter.hpp"
+#include "armor_detector_nn/core/corner_refine/icorner_refiner.hpp"
 #include "armor_detector_nn/core/detection_types.hpp"
 #include "armor_detector_nn/core/detector_config.hpp"
 #include "armor_detector_nn/core/frame_scheduler.hpp"
+#include "armor_detector_nn/core/tracker/itracker_strategy.hpp"
 #include "armor_detector_nn/debug/debug_drawer.hpp"
 #include "armor_detector_nn/debug/profiler.hpp"
 
@@ -88,6 +90,12 @@ private:
   std::unique_ptr<ArmorPoseEstimatorAdapter> pose_estimator_adapter_;
   std::unique_ptr<DebugDrawer> debug_drawer_;
   std::unique_ptr<Profiler> profiler_;
+
+  // Phase 2 — tracker
+  std::shared_ptr<ITrackerStrategy> tracker_;
+
+  // Phase 3 — corner refiner
+  std::shared_ptr<ICornerRefiner> corner_refiner_;
 
   // Recent detections (for future async phases)
   std::deque<FrameDetections> recent_detections_;

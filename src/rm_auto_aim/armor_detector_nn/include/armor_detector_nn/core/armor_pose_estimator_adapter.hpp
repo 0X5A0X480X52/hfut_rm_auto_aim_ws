@@ -16,14 +16,31 @@ namespace fyt::auto_aim {
 
 class IBundleAdjuster;
 
+enum class EstimateMode {
+  LOST,               // PnP failed
+  PNP_VALID,          // PnP only
+  SINGLE_BA_VALID,    // Single-frame yaw BA succeeded
+  SW_BA_VALID         // Sliding-window BA succeeded (Phase 4+)
+};
+
 struct PoseEstimate {
   bool valid{false};
+  EstimateMode mode{EstimateMode::LOST};
   Eigen::Vector3d translation{Eigen::Vector3d::Zero()};
   Eigen::Quaterniond rotation{Eigen::Quaterniond::Identity()};
   cv::Mat rvec;
   cv::Mat tvec;
+  double yaw{0.0};
+  double pitch{0.0};
+  double roll{0.0};
   double reprojection_error{0.0};
+  double reproj_error_raw{0.0};
+  double reproj_error_refined{0.0};
+  double quality_score{0.0};
+  int track_id{-1};
 };
+
+class IPoseRefiner;
 
 class ArmorPoseEstimatorAdapter {
 public:
@@ -33,6 +50,9 @@ public:
   // Set a custom BA adjuster. If not set and use_ba is true, a default
   // implementation (if available) is used. Takes ownership.
   void setBundleAdjuster(std::unique_ptr<IBundleAdjuster> adjuster);
+
+  // Set a pose refiner (Phase 1+: single_yaw / sliding_window).
+  void setRefiner(std::shared_ptr<IPoseRefiner> refiner);
 
   PoseEstimate estimate(
     const ArmorDetection& detection,
@@ -62,6 +82,7 @@ private:
 
   PoseConfig config_;
   std::unique_ptr<IBundleAdjuster> ba_adjuster_;
+  std::shared_ptr<IPoseRefiner> refiner_;
 };
 
 }  // namespace fyt::auto_aim
