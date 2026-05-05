@@ -29,7 +29,7 @@ class VirtualSerialNode : public rclcpp::Node {
   struct SetModeClient {
     SetModeClient(rclcpp::Client<rm_interfaces::srv::SetMode>::SharedPtr p) : ptr(p) {}
     std::atomic<bool> on_waiting = false;
-    std::atomic<int> mode = 0;
+    std::atomic<int> mode = -1;
     rclcpp::Client<rm_interfaces::srv::SetMode>::SharedPtr ptr;
   };
 

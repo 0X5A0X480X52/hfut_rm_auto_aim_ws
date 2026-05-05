@@ -77,6 +77,16 @@ def generate_launch_description():
         default_value=launch_params.get('namespace', ''),
         description='Namespace for all nodes'
     )
+    declare_detector_type = DeclareLaunchArgument(
+        'detector_type',
+        default_value=str(launch_params.get('detector_type', 'armor_detector')),
+        description='Detector type: armor_detector | armor_detector_nn'
+    )
+    declare_use_container = DeclareLaunchArgument(
+        'use_camera_detector_container',
+        default_value=str(launch_params.get('use_camera_detector_container', True)).lower(),
+        description='Put camera and detector in same container'
+    )
 
     # ── URDF 机器人描述 ──
     robot_gimbal_description = Command(['xacro ', os.path.join(
@@ -116,13 +126,24 @@ def generate_launch_description():
         return [default_path]
 
     # ==================== 装甲板检测节点 (ComposableNode) ====================
-    armor_detector_node = ComposableNode(
-        package='armor_detector',
-        plugin='fyt::auto_aim::ArmorDetectorNode',
-        name='armor_detector',
-        parameters=[get_bringup_params('armor_detector')],
-        extra_arguments=[{'use_intra_process_comms': True}]
-    )
+    detector_type = str(launch_params.get('detector_type', 'armor_detector'))
+
+    if detector_type == 'armor_detector_nn':
+        armor_detector_node = ComposableNode(
+            package='armor_detector_nn',
+            plugin='fyt::auto_aim::ArmorDetectorNNNode',
+            name='armor_detector',
+            parameters=[get_pkg_params('armor_detector_nn', 'armor_detector_nn.yaml')],
+            extra_arguments=[{'use_intra_process_comms': True}]
+        )
+    else:
+        armor_detector_node = ComposableNode(
+            package='armor_detector',
+            plugin='fyt::auto_aim::ArmorDetectorNode',
+            name='armor_detector',
+            parameters=[get_bringup_params('armor_detector')],
+            extra_arguments=[{'use_intra_process_comms': True}]
+        )
 
     # ==================== 弹道解算服务 ====================
     ballistic_solver_node = Node(
@@ -155,12 +176,62 @@ def generate_launch_description():
     )
 
     # ==================== 相机+检测器 容器 ====================
-    def create_camera_detector_container(context):
-        image_source = LaunchConfiguration('image_source').perform(context)
-        image_source = image_source.lower() if image_source else 'video'
+    use_container = str(launch_params.get('use_camera_detector_container', True)).lower() == 'true'
 
+    # 根据 image_source 获取相机节点的 (package, executable, parameters) 配置
+    def get_camera_node_config(image_source):
         if image_source == 'video':
-            image_node = ComposableNode(
+            return {
+                'package': 'video_player',
+                'executable': 'video_player_node',
+                'name': 'video_player',
+                'parameters': [get_bringup_params('video_player')],
+            }
+        elif image_source == 'mindvision':
+            return {
+                'package': 'mindvision_camera',
+                'executable': 'mindvision_camera_node',
+                'name': 'mv_camera',
+                'parameters': [get_bringup_params('mindvision_camera_driver')],
+            }
+        elif image_source == 'hik':
+            return {
+                'package': 'ros2_hik_camera',
+                'executable': 'ros2_hik_camera_node',
+                'name': 'hik_camera',
+                'parameters': [get_bringup_params('hik_camera_driver')],
+                'env': {'MVCAM_SDK_PATH': '/opt/MVS',
+                         'MVCAM_COMMON_RUNENV': '/opt/MVS/lib'},
+            }
+        else:
+            return {
+                'package': 'mindvision_camera',
+                'executable': 'mindvision_camera_node',
+                'name': 'camera_driver',
+                'parameters': [get_bringup_params('camera_driver')],
+            }
+
+    # 获取 detector 独立节点配置
+    def get_detector_node_config():
+        if detector_type == 'armor_detector_nn':
+            return {
+                'package': 'armor_detector_nn',
+                'executable': 'armor_detector_nn_node',
+                'name': 'armor_detector',
+                'parameters': [get_pkg_params('armor_detector_nn', 'armor_detector_nn.yaml')],
+            }
+        else:
+            return {
+                'package': 'armor_detector',
+                'executable': 'armor_detector_node',
+                'name': 'armor_detector',
+                'parameters': [get_bringup_params('armor_detector')],
+            }
+
+    # Build the ComposableNode for container mode (reuses original logic)
+    def _make_camera_composable_node(image_source):
+        if image_source == 'video':
+            return ComposableNode(
                 package='video_player',
                 plugin='video_player::VideoPlayerNode',
                 name='video_player',
@@ -168,7 +239,7 @@ def generate_launch_description():
                 extra_arguments=[{'use_intra_process_comms': True}]
             )
         elif image_source == 'mindvision':
-            image_node = ComposableNode(
+            return ComposableNode(
                 package='mindvision_camera',
                 plugin='mindvision_camera::MVCameraNode',
                 name='mv_camera',
@@ -176,7 +247,7 @@ def generate_launch_description():
                 extra_arguments=[{'use_intra_process_comms': True}]
             )
         elif image_source == 'hik':
-            image_node = ComposableNode(
+            return ComposableNode(
                 package='ros2_hik_camera',
                 plugin='ros2_hik_camera::HikCameraNode',
                 name='hik_camera',
@@ -189,7 +260,7 @@ def generate_launch_description():
                 ]
             )
         else:
-            image_node = ComposableNode(
+            return ComposableNode(
                 package='mindvision_camera',
                 plugin='mindvision_camera::MVCameraNode',
                 name='camera_driver',
@@ -197,16 +268,49 @@ def generate_launch_description():
                 extra_arguments=[{'use_intra_process_comms': True}]
             )
 
+    def create_camera_detector_container(context):
+        image_source = LaunchConfiguration('image_source').perform(context)
+        image_source = image_source.lower() if image_source else 'video'
+
+        image_node = _make_camera_composable_node(image_source)
+        composable_nodes = [image_node, armor_detector_node]
+
         container = ComposableNodeContainer(
             name='camera_detector_container',
             namespace='',
             package='rclcpp_components',
             executable='component_container_mt',
-            composable_node_descriptions=[image_node, armor_detector_node],
+            composable_node_descriptions=composable_nodes,
             output='both',
             emulate_tty=True,
         )
         return [container]
+
+    # 当不使用容器模式时，相机和检测节点均作为独立 Node 直接运行
+    def create_standalone_nodes(context):
+        image_source = LaunchConfiguration('image_source').perform(context)
+        image_source = image_source.lower() if image_source else 'video'
+
+        cam_cfg = get_camera_node_config(image_source)
+        det_cfg = get_detector_node_config()
+
+        camera_node = Node(
+            package=cam_cfg['package'],
+            executable=cam_cfg['executable'],
+            name=cam_cfg['name'],
+            parameters=cam_cfg.get('parameters', []),
+            output='both',
+            emulate_tty=True,
+        )
+        detector_node = Node(
+            package=det_cfg['package'],
+            executable=det_cfg['executable'],
+            name=det_cfg['name'],
+            parameters=det_cfg.get('parameters', []),
+            output='both',
+            emulate_tty=True,
+        )
+        return [camera_node, detector_node]
 
     # ==================== 串口节点 ====================
     def create_serial_node_action(context):
@@ -239,10 +343,20 @@ def generate_launch_description():
         period=2.0,
         actions=[ballistic_solver_node],
     )
-    delay_camera_detector = TimerAction(
-        period=2.0,
-        actions=[OpaqueFunction(function=create_camera_detector_container)],
-    )
+    # 相机+检测器 — 容器模式或独立节点模式
+    if use_container:
+        delay_camera_detector = TimerAction(
+            period=2.0,
+            actions=[OpaqueFunction(function=create_camera_detector_container)],
+        )
+        delay_standalone = None
+    else:
+        delay_camera_detector = None
+        delay_standalone = TimerAction(
+            period=2.0,
+            actions=[OpaqueFunction(function=create_standalone_nodes)],
+        )
+
     # 统一 pipeline 节点 — 替代原来 2.5s / 3.0s / 3.5s 三个节点
     delay_gimbal_pipeline = TimerAction(
         period=2.5,
@@ -253,17 +367,26 @@ def generate_launch_description():
     push_namespace = PushRosNamespace(LaunchConfiguration('namespace'))
 
     # ==================== 构建启动描述 ====================
-    return LaunchDescription([
+    launch_actions = [
         declare_image_source,
         declare_virtual_serial,
         declare_debug,
         declare_namespace,
+        declare_detector_type,
+        declare_use_container,
 
         robot_gimbal_publisher,
         push_namespace,
 
         delay_serial_node,
         delay_ballistic_solver,
-        delay_camera_detector,
-        delay_gimbal_pipeline,     # 单个 pipeline 节点替代三个独立节点
-    ])
+    ]
+
+    if use_container:
+        launch_actions.append(delay_camera_detector)
+    else:
+        launch_actions.append(delay_standalone)
+
+    launch_actions.append(delay_gimbal_pipeline)
+
+    return LaunchDescription(launch_actions)

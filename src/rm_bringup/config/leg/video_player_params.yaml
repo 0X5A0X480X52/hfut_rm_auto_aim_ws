@@ -9,7 +9,7 @@ video_player:
     loop_playback: true
     
     # Playback frame rate (fps)
-    fps: 60.0
+    fps: 120.0
     
     # Camera name for camera info manager
     camera_name: "camera"
@@ -21,7 +21,7 @@ video_player:
     image_topic: "image_raw"
     
     # Use sensor data QoS profile for image topic
-    use_sensor_data_qos: false
+    use_sensor_data_qos: true
     
     # Camera info URL (optional)
     # Example: "package://video_player/config/camera_info.yaml"
