@@ -109,6 +109,7 @@ struct SlidingWindowConfig {
   int window_size{8};
   int min_frames{4};
   double max_time_span_ms{300};
+  double max_solver_time_ms{2.0};
   int max_opt_iters{20};
   double sigma_prior_xy{0.08};
   double sigma_prior_z{0.15};

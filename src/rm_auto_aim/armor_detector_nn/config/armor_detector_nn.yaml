@@ -77,7 +77,7 @@ armor_detector:
         mode: "single_yaw"   # none | single_yaw | sliding_window
 
       single_yaw:
-        max_iterations: 15
+        max_iterations: 8
         huber_delta: 3.0
         pitch_deg_default: 15.0
         roll_deg_default: 0.0
@@ -86,8 +86,9 @@ armor_detector:
       sliding:
         window_size: 8
         min_frames: 4
-        max_time_span_ms: 30.0
-        max_opt_iters: 20
+        max_time_span_ms: 300.0
+        max_solver_time_ms: 2.0
+        max_opt_iters: 12
         sigma_prior_xy: 0.08
         sigma_prior_z: 0.15
         sigma_prior_yaw: 0.35

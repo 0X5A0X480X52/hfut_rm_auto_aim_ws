@@ -129,6 +129,9 @@ bool SlidingWindowRefiner::solveSlidingWindow(
     double& yaw_out,
     double& final_error)
 {
+  const auto solve_start = std::chrono::steady_clock::now();
+  const double max_solver_time_ms = std::max(0.1, sw_config_.max_solver_time_ms);
+  window.trimToMaxSpanMs(sw_config_.max_time_span_ms);
   const size_t N = window.size();
   if (N < static_cast<size_t>(sw_config_.min_frames)) {
     return false;
@@ -142,7 +145,7 @@ bool SlidingWindowRefiner::solveSlidingWindow(
   }
   if (span_ms > sw_config_.max_time_span_ms) {
     FYT_DEBUG("armor_detector_nn",
-              "SlidingWindowRefiner: time span too large (%.1f ms)", span_ms);
+              "SlidingWindowRefiner: time span too large ({:.1f} ms)", span_ms);
     return false;
   }
 
@@ -176,7 +179,18 @@ bool SlidingWindowRefiner::solveSlidingWindow(
 
   double huber_delta_sq = sw_config_.huber_delta * sw_config_.huber_delta;
 
+  int executed_iters = 0;
   for (int iter = 0; iter < sw_config_.max_opt_iters; ++iter) {
+    const auto now = std::chrono::steady_clock::now();
+    const double elapsed_ms = std::chrono::duration<double, std::milli>(now - solve_start).count();
+    if (elapsed_ms > max_solver_time_ms) {
+      FYT_DEBUG("armor_detector_nn",
+                "SlidingWindowRefiner: solver budget exceeded ({:.2f} ms), early stop at iter {}",
+                elapsed_ms, executed_iters);
+      break;
+    }
+    ++executed_iters;
+
     Eigen::MatrixXd H = Eigen::MatrixXd::Zero(state_dim, state_dim);
     Eigen::VectorXd b = Eigen::VectorXd::Zero(state_dim);
     double total_cost = 0.0;
@@ -369,6 +383,10 @@ bool SlidingWindowRefiner::solveSlidingWindow(
     if (dx.norm() < 1e-6) break;
   }
 
+  if (executed_iters == 0) {
+    return false;
+  }
+
   // Return latest frame result
   size_t last = N - 1;
   int li = 4 * static_cast<int>(last);
@@ -459,7 +477,7 @@ PoseEstimate SlidingWindowRefiner::refine(
   // --- Fallback chain ---
   if (!ok) {
     FYT_DEBUG("armor_detector_nn",
-              "SlidingWindowRefiner: BA failed for track %d, fallback to single_yaw",
+              "SlidingWindowRefiner: BA failed for track {}, fallback to single_yaw",
               track_id);
     return fallback_refiner_.refine(pnp_result, image_points,
                                     object_points, K, D);
@@ -468,7 +486,7 @@ PoseEstimate SlidingWindowRefiner::refine(
   // Quality gate
   if (final_error > gate_.max_reproj_error) {
     FYT_DEBUG("armor_detector_nn",
-              "SlidingWindowRefiner: reproj error %.2f > %.2f, falling back",
+              "SlidingWindowRefiner: reproj error {:.2f} > {:.2f}, falling back",
               final_error, gate_.max_reproj_error);
     return fallback_refiner_.refine(pnp_result, image_points,
                                     object_points, K, D);
@@ -480,7 +498,7 @@ PoseEstimate SlidingWindowRefiner::refine(
   double pose_delta = (t_ba - t_pnp).norm();
   if (pose_delta > gate_.max_pose_delta_m) {
     FYT_DEBUG("armor_detector_nn",
-              "SlidingWindowRefiner: pose delta %.3f m > %.3f m, falling back",
+              "SlidingWindowRefiner: pose delta {:.3f} m > {:.3f} m, falling back",
               pose_delta, gate_.max_pose_delta_m);
     return fallback_refiner_.refine(pnp_result, image_points,
                                     object_points, K, D);
@@ -489,7 +507,7 @@ PoseEstimate SlidingWindowRefiner::refine(
   double delta_yaw = std::abs(angleWrap(yaw_ba - frame.yaw_init));
   if (delta_yaw > gate_.max_yaw_delta_deg * M_PI / 180.0) {
     FYT_DEBUG("armor_detector_nn",
-              "SlidingWindowRefiner: yaw delta %.2f deg, falling back",
+              "SlidingWindowRefiner: yaw delta {:.2f} deg, falling back",
               delta_yaw * 180.0 / M_PI);
     return fallback_refiner_.refine(pnp_result, image_points,
                                     object_points, K, D);

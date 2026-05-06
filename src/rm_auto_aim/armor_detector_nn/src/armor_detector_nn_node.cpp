@@ -265,6 +265,7 @@ void ArmorDetectorNNNode::initializeParameters() {
     config_.pose.sliding.window_size = this->declare_parameter("pose.sliding.window_size", 8);
     config_.pose.sliding.min_frames = this->declare_parameter("pose.sliding.min_frames", 4);
     config_.pose.sliding.max_time_span_ms = this->declare_parameter("pose.sliding.max_time_span_ms", 300.0);
+    config_.pose.sliding.max_solver_time_ms = this->declare_parameter("pose.sliding.max_solver_time_ms", 2.0);
     config_.pose.sliding.max_opt_iters = this->declare_parameter("pose.sliding.max_opt_iters", 20);
     config_.pose.sliding.sigma_prior_xy = this->declare_parameter("pose.sliding.sigma_prior_xy", 0.08);
     config_.pose.sliding.sigma_prior_z = this->declare_parameter("pose.sliding.sigma_prior_z", 0.15);

@@ -51,6 +51,16 @@ public:
   void setMinFrames(size_t n) { min_frames_ = n; }
   const TrackWindowFrame& latest() const { return frames_.back(); }
 
+  // Keep the newest frames so that total time span stays within threshold.
+  void trimToMaxSpanMs(double max_span_ms) {
+    if (max_span_ms <= 0.0) return;
+    while (frames_.size() >= 2) {
+      double span_ms = (frames_.back().stamp - frames_.front().stamp).seconds() * 1000.0;
+      if (span_ms <= max_span_ms) break;
+      frames_.pop_front();
+    }
+  }
+
   double timeSpanMs() const {
     if (frames_.size() < 2) return 0.0;
     return (frames_.back().stamp - frames_.front().stamp).seconds() * 1000.0;
