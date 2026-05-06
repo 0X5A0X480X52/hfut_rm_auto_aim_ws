@@ -26,6 +26,10 @@ struct UKFParameters {
   // Single-observation noise
   double obs_noise_pos = 0.05;
   double obs_noise_yaw = 0.05;
+  bool enable_ypd_observation_noise = false;
+  double ypd_sigma_azi = 0.01;
+  double ypd_sigma_ele = 0.01;
+  double ypd_sigma_dist_coeff = 0.08;
 
   // Dual-observation noise
   double dual_obs_noise_pos = 0.01;

@@ -25,8 +25,14 @@ gimbal_pipeline:
     ukf.dual_obs_noise_yaw: 0.03
     ukf.dual_obs_geometry_noise_scale: 0.02
     ukf.single_obs_update_weight_pos: 5.0
+
     ukf.enable_innovation_gating: false
     ukf.innovation_gate_chi2_threshold: 9.49
+
+    ukf.enable_ypd_observation_noise: true
+    ukf.ypd_sigma_azi: 0.01
+    ukf.ypd_sigma_ele: 0.01
+    ukf.ypd_sigma_dist_coeff: 0.08
 
     # Motion model
     motion.translation_model: "Singer"  # "CV" | "Singer"

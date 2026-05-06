@@ -840,6 +840,10 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("ukf.kappa", 0.0);
   declare_parameter("ukf.obs_noise_pos", 0.05);
   declare_parameter("ukf.obs_noise_yaw", 0.05);
+  declare_parameter("ukf.enable_ypd_observation_noise", false);
+  declare_parameter("ukf.ypd_sigma_azi", 0.01);
+  declare_parameter("ukf.ypd_sigma_ele", 0.01);
+  declare_parameter("ukf.ypd_sigma_dist_coeff", 0.08);
   declare_parameter("ukf.dual_obs_noise_pos", 0.01);
   declare_parameter("ukf.dual_obs_noise_yaw", 0.03);
   declare_parameter("ukf.dual_obs_geometry_noise_scale", 0.2);
@@ -1267,6 +1271,12 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
   c.ukf.kappa = get_parameter("ukf.kappa").as_double();
   c.ukf.obs_noise_pos = get_parameter("ukf.obs_noise_pos").as_double();
   c.ukf.obs_noise_yaw = get_parameter("ukf.obs_noise_yaw").as_double();
+  c.ukf.enable_ypd_observation_noise =
+      get_parameter("ukf.enable_ypd_observation_noise").as_bool();
+  c.ukf.ypd_sigma_azi = get_parameter("ukf.ypd_sigma_azi").as_double();
+  c.ukf.ypd_sigma_ele = get_parameter("ukf.ypd_sigma_ele").as_double();
+  c.ukf.ypd_sigma_dist_coeff =
+      get_parameter("ukf.ypd_sigma_dist_coeff").as_double();
   c.ukf.dual_obs_noise_pos = get_parameter("ukf.dual_obs_noise_pos").as_double();
   c.ukf.dual_obs_noise_yaw = get_parameter("ukf.dual_obs_noise_yaw").as_double();
   c.ukf.dual_obs_geometry_noise_scale =

@@ -21,6 +21,10 @@ gimbal_pipeline:
     ukf.kappa: 0.0
     ukf.obs_noise_pos: 0.03
     ukf.obs_noise_yaw: 0.03
+    ukf.enable_ypd_observation_noise: false
+    ukf.ypd_sigma_azi: 0.01
+    ukf.ypd_sigma_ele: 0.01
+    ukf.ypd_sigma_dist_coeff: 0.08
     ukf.dual_obs_noise_pos: 0.01
     ukf.dual_obs_noise_yaw: 0.03
     ukf.dual_obs_geometry_noise_scale: 0.02
