@@ -25,7 +25,14 @@ def parse_args() -> argparse.Namespace:
 def _import_module(module_dir: str):
     if module_dir:
         sys.path.insert(0, module_dir)
-    import gimbal_pipeline_kf_opt as m  # type: ignore
+    try:
+        import gimbal_pipeline_kf_opt as m  # type: ignore
+    except Exception as e:
+        raise RuntimeError(
+            "Failed to import gimbal_pipeline_kf_opt. "
+            "If you built with ROS humble, use Python 3.10 and pass --module-dir install/gimbal_pipeline/lib. "
+            f"Original error: {e}"
+        ) from e
 
     return m
 
