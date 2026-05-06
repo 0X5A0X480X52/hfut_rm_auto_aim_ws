@@ -3,6 +3,7 @@ armor_detector:
     debug: true
     target_frame: "odom"
     debug_pose_compare: true
+    publish_in_target_frame: true
 
     backend:
       type: "onnxruntime"
@@ -46,7 +47,7 @@ armor_detector:
       class_offset: 4
       keypoint_offset: 18
       box_format: "cxcywh"
-      conf_threshold: 0.45
+      conf_threshold: 0.5
       nms_threshold: 0.7
       max_detections: 32
       class_agnostic_nms: false

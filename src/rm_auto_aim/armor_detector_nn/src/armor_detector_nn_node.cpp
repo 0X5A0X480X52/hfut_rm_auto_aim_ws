@@ -132,6 +132,8 @@ ArmorDetectorNNNode::ArmorDetectorNNNode(const rclcpp::NodeOptions& options)
 void ArmorDetectorNNNode::initializeParameters() {
   debug_ = this->declare_parameter("debug", true);
   debug_pose_compare_ = this->declare_parameter("debug_pose_compare", false);
+  publish_in_target_frame_ =
+    this->declare_parameter("publish_in_target_frame", false);
   config_.target_frame = this->declare_parameter("target_frame", "odom");
 
   // backend
@@ -399,6 +401,7 @@ void ArmorDetectorNNNode::imageCallback(
   auto t_preprocess_end = std::chrono::steady_clock::now();
 
   Eigen::Matrix3d R_imu_camera = Eigen::Matrix3d::Identity();
+  bool have_target_to_camera_tf = false;
   auto extract_rotation = [&](const geometry_msgs::msg::TransformStamped &t) {
     tf2::Quaternion tf_q;
     tf2::fromMsg(t.transform.rotation, tf_q);
@@ -412,6 +415,7 @@ void ArmorDetectorNNNode::imageCallback(
     auto target_to_camera = tf2_buffer_->lookupTransform(
         config_.target_frame, img_msg->header.frame_id, target_time,
         tf2::durationFromSec(0.01));
+    have_target_to_camera_tf = true;
     extract_rotation(target_to_camera);
   } catch (tf2::ExtrapolationException &ex) {
     FYT_WARN("armor_detector",
@@ -419,6 +423,7 @@ void ArmorDetectorNNNode::imageCallback(
     try {
       auto target_to_camera = tf2_buffer_->lookupTransform(
           config_.target_frame, img_msg->header.frame_id, tf2::TimePointZero);
+      have_target_to_camera_tf = true;
       extract_rotation(target_to_camera);
     } catch (tf2::TransformException &ex2) {
       FYT_ERROR("armor_detector", "Fallback transform error: {}", ex2.what());
@@ -531,6 +536,9 @@ void ArmorDetectorNNNode::imageCallback(
   {
     rm_interfaces::msg::Armors armors_msg;
     armors_msg.header = img_msg->header;
+    if (publish_in_target_frame_) {
+      armors_msg.header.frame_id = config_.target_frame;
+    }
 
     for (size_t i = 0; i < fd.detections.size(); ++i) {
       rm_interfaces::msg::Armor armor;
@@ -541,24 +549,47 @@ void ArmorDetectorNNNode::imageCallback(
           fd.detections[i].center, cam_center_);
 
       if (poses[i].valid) {
-        armor.pose.position.x = poses[i].translation.x();
-        armor.pose.position.y = poses[i].translation.y();
-        armor.pose.position.z = poses[i].translation.z();
-        armor.pose.orientation.x = poses[i].rotation.x();
-        armor.pose.orientation.y = poses[i].rotation.y();
-        armor.pose.orientation.z = poses[i].rotation.z();
-        armor.pose.orientation.w = poses[i].rotation.w();
+        geometry_msgs::msg::Pose pose_camera;
+        pose_camera.position.x = poses[i].translation.x();
+        pose_camera.position.y = poses[i].translation.y();
+        pose_camera.position.z = poses[i].translation.z();
+        pose_camera.orientation.x = poses[i].rotation.x();
+        pose_camera.orientation.y = poses[i].rotation.y();
+        pose_camera.orientation.z = poses[i].rotation.z();
+        pose_camera.orientation.w = poses[i].rotation.w();
+
+        if (publish_in_target_frame_) {
+          if (have_target_to_camera_tf) {
+            geometry_msgs::msg::PoseStamped in_pose;
+            geometry_msgs::msg::PoseStamped out_pose;
+            in_pose.header = img_msg->header;
+            in_pose.pose = pose_camera;
+            try {
+              out_pose = tf2_buffer_->transform(
+                in_pose, config_.target_frame, tf2::durationFromSec(0.005));
+              armor.pose = out_pose.pose;
+            } catch (const tf2::TransformException& ex) {
+              FYT_WARN("armor_detector",
+                       "Pose transform to target frame failed: {}", ex.what());
+              armor.pose = pose_camera;
+            }
+          } else {
+            armor.pose = pose_camera;
+          }
+        } else {
+          armor.pose = pose_camera;
+        }
       }
 
       armors_msg.armors.push_back(armor);
     }
 
     armors_pub_->publish(armors_msg);
-  }
 
-  // Markers
-  if (debug_ && marker_pub_) {
-    publishMarkers(fd.detections, poses, img_msg->header);
+    // Markers follow the same frame as published armors.
+    if (debug_ && marker_pub_) {
+      publishMarkers(fd.detections, poses, armors_msg.header);
+    }
   }
 
   // Debug image
@@ -762,6 +793,8 @@ ArmorDetectorNNNode::onSetParameters(const std::vector<rclcpp::Parameter>& param
       debug_ ? createDebugPublishers() : destroyDebugPublishers();
     } else if (p.get_name() == "debug_pose_compare") {
       debug_pose_compare_ = p.as_bool();
+    } else if (p.get_name() == "publish_in_target_frame") {
+      publish_in_target_frame_ = p.as_bool();
     }
   }
 

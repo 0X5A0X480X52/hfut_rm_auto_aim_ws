@@ -6,6 +6,7 @@
 #include <string>
 
 #include <rclcpp/rclcpp.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
@@ -95,6 +96,7 @@ private:
   std::unique_ptr<Profiler> profiler_;
 
   bool debug_pose_compare_{false};
+  bool publish_in_target_frame_{false};
 
   // Phase 2 — tracker
   std::shared_ptr<ITrackerStrategy> tracker_;
