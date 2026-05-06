@@ -24,6 +24,9 @@ public:
   void load(const std::string& yaml_path);
 
   const LabelEntry* lookup(int class_id) const;
+  const LabelEntry* lookupByPublishedLabel(
+    const std::string& publish_number,
+    fyt::EnemyColor color) const;
 
   std::vector<ArmorDetection>
   filterByColor(const std::vector<ArmorDetection>& detections,

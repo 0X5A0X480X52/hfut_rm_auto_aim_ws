@@ -184,6 +184,13 @@ std::vector<FrameDetections> ArmorDetectorNN::detectBatch(
         if (number_classifier_) {
           for (auto& det : fd.detections) {
             number_classifier_->classifyAndOverride(images[i], det);
+            const auto* corrected = label_map_->lookupByPublishedLabel(
+              det.publish_number, det.color);
+            if (corrected) {
+              det.publish_type = corrected->publish_type;
+              det.model_label = corrected->model_label;
+              det.color = corrected->color;
+            }
           }
         }
 

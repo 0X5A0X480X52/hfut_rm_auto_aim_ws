@@ -3,7 +3,7 @@ armor_detector:
     debug: true
     target_frame: "odom"
     debug_pose_compare: true
-    publish_in_target_frame: true
+    publish_in_target_frame: false
 
     backend:
       type: "onnxruntime"

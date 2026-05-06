@@ -106,6 +106,26 @@ const LabelEntry* LabelMap::lookup(int class_id) const {
   return &it->second;
 }
 
+const LabelEntry* LabelMap::lookupByPublishedLabel(
+    const std::string& publish_number,
+    EnemyColor color) const {
+  for (const auto& [cid, entry] : entries_) {
+    if (entry.publish_number == publish_number && entry.color == color) {
+      bool ignored = false;
+      for (int ignored_id : ignored_ids_) {
+        if (ignored_id == cid) {
+          ignored = true;
+          break;
+        }
+      }
+      if (!ignored) {
+        return &entry;
+      }
+    }
+  }
+  return nullptr;
+}
+
 std::vector<ArmorDetection>
 LabelMap::filterByColor(const std::vector<ArmorDetection>& detections,
                          EnemyColor target_color) const {

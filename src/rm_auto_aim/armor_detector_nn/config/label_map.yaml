@@ -5,12 +5,12 @@ model_labels:
     model_label: "B1"
     color: "blue"
     publish_number: "1"
-    publish_type: "small"
+    publish_type: "large"
   - class_id: 1
     model_label: "B2"
     color: "blue"
     publish_number: "2"
-    publish_type: "large"
+    publish_type: "small"
   - class_id: 2
     model_label: "B3"
     color: "blue"
@@ -30,7 +30,7 @@ model_labels:
     model_label: "BO"
     color: "blue"
     publish_number: "outpost"
-    publish_type: "large"
+    publish_type: "small"
   - class_id: 6
     model_label: "BS"
     color: "blue"
@@ -40,12 +40,12 @@ model_labels:
     model_label: "R1"
     color: "red"
     publish_number: "1"
-    publish_type: "small"
+    publish_type: "large"
   - class_id: 8
     model_label: "R2"
     color: "red"
     publish_number: "2"
-    publish_type: "large"
+    publish_type: "small"
   - class_id: 9
     model_label: "R3"
     color: "red"
@@ -65,7 +65,7 @@ model_labels:
     model_label: "RO"
     color: "red"
     publish_number: "outpost"
-    publish_type: "large"
+    publish_type: "small"
   - class_id: 13
     model_label: "RS"
     color: "red"
