@@ -30,7 +30,7 @@ template <typename T>
 struct TrtDeleter {
   void operator()(T* ptr) const {
     if (ptr) {
-      ptr->destroy();
+      delete ptr;
     }
   }
 };
@@ -48,10 +48,7 @@ std::string resolvePath(const std::string& raw_path) {
 
 std::vector<int64_t> dimsToShape(const nvinfer1::Dims& dims) {
   std::vector<int64_t> shape;
-  shape.reserve(dims.nbDims == 3 ? 4 : dims.nbDims);
-  if (dims.nbDims == 3) {
-    shape.push_back(1);  // implicit/legacy dims without N
-  }
+  shape.reserve(dims.nbDims);
   for (int i = 0; i < dims.nbDims; ++i) {
     shape.push_back(static_cast<int64_t>(dims.d[i]));
   }
@@ -70,15 +67,15 @@ TensorRTBackend::TensorRTBackend() {
 
 TensorRTBackend::~TensorRTBackend() {
   if (context_ != nullptr) {
-    context_->destroy();
+    delete context_;
     context_ = nullptr;
   }
   if (engine_ != nullptr) {
-    engine_->destroy();
+    delete engine_;
     engine_ = nullptr;
   }
   if (runtime_ != nullptr) {
-    runtime_->destroy();
+    delete runtime_;
     runtime_ = nullptr;
   }
 
@@ -154,7 +151,7 @@ void TensorRTBackend::load(const BackendConfig& config) {
     throw std::runtime_error("TensorRTBackend: cudaStreamCreate failed");
   }
 
-  const int nb = engine_->getNbBindings();
+  const int nb = engine_->getNbIOTensors();
   if (nb < 2) {
     throw std::runtime_error("TensorRTBackend: expected at least 1 input + 1 output binding");
   }
@@ -169,16 +166,25 @@ void TensorRTBackend::load(const BackendConfig& config) {
 
   bool has_int8_binding = false;
   for (int i = 0; i < nb; ++i) {
-    const char* bname = engine_->getBindingName(i);
+    const char* bname = engine_->getIOTensorName(i);
     if (!bname) continue;
     const std::string name = bname;
     binding_indices_[name] = i;
-    const auto dtype = engine_->getBindingDataType(i);
+    const auto dtype = engine_->getTensorDataType(bname);
     if (dtype == nvinfer1::DataType::kINT8) has_int8_binding = true;
 
-    const auto dims = context_->getBindingDimensions(i);
+    const auto dims = context_->getTensorShape(bname);
     auto shape = dimsToShape(dims);
-    if (engine_->bindingIsInput(i)) {
+
+    bool is_input = true;
+    // Heuristic: treat first I/O tensor or tensors with "input" in name as input
+    if (name.find("input") != std::string::npos || i == 0) {
+      is_input = true;
+    } else {
+      if (i != 0) is_input = false;
+    }
+
+    if (is_input) {
       input_name_ = name;
       input_shape_ = shape;
     } else {
@@ -227,7 +233,7 @@ void TensorRTBackend::load(const BackendConfig& config) {
   info_.precision = config.precision == Precision::FP32 ? "fp32" :
                     config.precision == Precision::FP16 ? "fp16" : "int8";
   loaded_ = true;
-  FYT_INFO("armor_detector_nn", "TensorRTBackend loaded: %s", engine_path.c_str());
+  FYT_INFO("armor_detector_nn", "TensorRTBackend loaded: {}", engine_path.c_str());
 }
 
 std::vector<TensorOutput> TensorRTBackend::infer(const TensorInput& input) {
@@ -255,7 +261,6 @@ std::vector<TensorOutput> TensorRTBackend::infer(const TensorInput& input) {
     throw std::runtime_error("TensorRTBackend::infer H2D copy failed");
   }
 
-  const int input_idx = binding_indices_.at(input_name_);
   nvinfer1::Dims input_dims{};
   if (input_shape_.size() == 4) {
     input_dims.nbDims = 4;
@@ -270,18 +275,21 @@ std::vector<TensorOutput> TensorRTBackend::infer(const TensorInput& input) {
     }
   }
 
-  if (!context_->setBindingDimensions(input_idx, input_dims)) {
-    throw std::runtime_error("TensorRTBackend::infer setBindingDimensions failed");
+  if (!context_->setInputShape(input_name_.c_str(), input_dims)) {
+    throw std::runtime_error("TensorRTBackend::infer setInputShape failed");
   }
 
-  std::vector<void*> bindings(engine_->getNbBindings(), nullptr);
-  bindings[input_idx] = input_device_;
+  if (!context_->setInputTensorAddress(input_name_.c_str(), input_device_)) {
+    throw std::runtime_error("TensorRTBackend::infer setInputTensorAddress failed");
+  }
   for (size_t i = 0; i < output_names_.size(); ++i) {
-    bindings[binding_indices_.at(output_names_[i])] = output_devices_[i];
+    if (!context_->setOutputTensorAddress(output_names_[i].c_str(), output_devices_[i])) {
+      throw std::runtime_error("TensorRTBackend::infer setOutputTensorAddress failed");
+    }
   }
 
-  if (!context_->enqueueV2(bindings.data(), cuda_stream_, nullptr)) {
-    throw std::runtime_error("TensorRTBackend::infer enqueueV2 failed");
+  if (!context_->enqueueV3(cuda_stream_)) {
+    throw std::runtime_error("TensorRTBackend::infer enqueueV3 failed");
   }
 
   std::vector<TensorOutput> results;
@@ -319,7 +327,7 @@ void TensorRTBackend::warmup(int iterations) {
   for (int i = 0; i < iterations; ++i) {
     (void)infer(dummy);
   }
-  FYT_INFO("armor_detector_nn", "TensorRTBackend: warmup complete (%d iters)", iterations);
+  FYT_INFO("armor_detector_nn", "TensorRTBackend: warmup complete ({} iters)", iterations);
 }
 
 BackendInfo TensorRTBackend::info() const {
@@ -332,7 +340,7 @@ void TensorRTBackend::validateModelIO(const BackendConfig& config) {
   }
   if (!config.input_name.empty() && config.input_name != input_name_) {
     FYT_WARN("armor_detector_nn",
-             "TensorRT input name mismatch. Config: %s, engine: %s",
+             "TensorRT input name mismatch. Config: {}, engine: {}",
              config.input_name.c_str(), input_name_.c_str());
   }
   if (!config.output_names.empty()) {
@@ -349,15 +357,14 @@ void TensorRTBackend::updateBatchCapability() {
   info_.max_batch_size = 1;
   info_.dynamic_batch = false;
 
-  const int input_idx = binding_indices_.at(input_name_);
-  const auto profile_dims_min = engine_->getProfileDimensions(
-    input_idx, 0, nvinfer1::OptProfileSelector::kMIN);
-  const auto profile_dims_max = engine_->getProfileDimensions(
-    input_idx, 0, nvinfer1::OptProfileSelector::kMAX);
+  const auto profile_dims_min = engine_->getProfileShape(
+    input_name_.c_str(), 0, nvinfer1::OptProfileSelector::kMIN);
+  const auto profile_dims_max = engine_->getProfileShape(
+    input_name_.c_str(), 0, nvinfer1::OptProfileSelector::kMAX);
 
   if (profile_dims_min.nbDims > 0 && profile_dims_max.nbDims > 0) {
-    info_.min_batch_size = std::max(1, profile_dims_min.d[0]);
-    info_.max_batch_size = std::max(1, profile_dims_max.d[0]);
+    info_.min_batch_size = std::max(1, static_cast<int>(profile_dims_min.d[0]));
+    info_.max_batch_size = std::max(1, static_cast<int>(profile_dims_max.d[0]));
     info_.dynamic_batch = info_.max_batch_size > info_.min_batch_size;
   }
 }

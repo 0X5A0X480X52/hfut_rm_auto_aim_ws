@@ -83,14 +83,14 @@ std::unique_ptr<IInferenceBackend> InferenceBackendFactory::createOne(
         backend->load(config);
         return backend;
       } catch (const std::exception& e) {
-        FYT_ERROR("armor_detector_nn", "TensorRT backend load failed: %s", e.what());
+        FYT_ERROR("armor_detector_nn", "TensorRT backend load failed: {}", e.what());
         return nullptr;
       }
     }
 #endif
     default:
       FYT_WARN("armor_detector_nn",
-               "Backend %s not compiled in or unsupported",
+               "Backend {} not compiled in or unsupported",
                backendTypeToString(type).c_str());
       return nullptr;
   }

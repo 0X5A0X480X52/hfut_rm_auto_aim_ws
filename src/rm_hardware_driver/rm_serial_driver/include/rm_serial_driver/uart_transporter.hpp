@@ -21,6 +21,8 @@
 
 // std
 #include <string>
+#include <poll.h>
+#include <cstdint>
 // project
 #include "rm_serial_driver/transporter_interface.hpp"
 

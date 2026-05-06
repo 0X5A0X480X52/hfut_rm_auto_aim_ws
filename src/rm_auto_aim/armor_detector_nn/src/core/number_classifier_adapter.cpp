@@ -52,7 +52,7 @@ NumberClassifierAdapter::NumberClassifierAdapter(
   }
 
   FYT_INFO("armor_detector_nn",
-           "NumberClassifierAdapter loaded: %zu classes, model=%s",
+           "NumberClassifierAdapter loaded: {} classes, model={}",
            class_names_.size(), model_path.c_str());
 }
 

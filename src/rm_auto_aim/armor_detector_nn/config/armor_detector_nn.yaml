@@ -6,11 +6,11 @@ armor_detector:
     publish_in_target_frame: false
 
     backend:
-      type: "onnxruntime"
+      type: "tensorrt"
       device: "cuda"
-      precision: "fp32"
+      precision: "fp16"
       model_path: "package://armor_detector_nn/model/demo01/best.onnx"
-      engine_path: ""
+      engine_path: "package://armor_detector_nn/model/demo01/armor_pose_fp16.engine"
       openvino_model_xml: ""
       openvino_model_bin: ""
       calibration_cache: ""

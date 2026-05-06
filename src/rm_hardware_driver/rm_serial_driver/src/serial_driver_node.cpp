@@ -142,6 +142,9 @@ void SerialDriverNode::listenLoop() {
       for (auto &[service_name, client] : set_mode_clients_) {
         if (client.mode.load() != receive_data.mode && !client.on_waiting.load()) {
           setMode(client, receive_data.mode);
+          FYT_INFO("serial_driver", "Received mode: {}, sending request to service: {}", receive_data.mode, service_name);
+        } else if (client.on_waiting.load()) {
+          FYT_INFO("serial_driver", "Waiting for service {} to set mode to {}", service_name, receive_data.mode);
         }
       }
 

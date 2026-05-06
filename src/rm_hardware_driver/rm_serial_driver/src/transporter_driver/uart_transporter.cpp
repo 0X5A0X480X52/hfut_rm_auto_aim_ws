@@ -183,9 +183,51 @@ void UartTransporter::close() {
 bool UartTransporter::isOpen() { return is_open_; }
 
 int UartTransporter::read(void *buffer, std::size_t len) {
-  int ret = ::read(fd_, buffer, len);
-  // tcflush(fd_, TCIFLUSH);
-  return ret;
+  auto *buf = static_cast<uint8_t *>(buffer);
+  std::size_t total = 0;
+
+  while (total < len) {
+    struct pollfd pfd;
+    pfd.fd = fd_;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+
+    // 等待串口可读，20ms 超时
+    int poll_ret = ::poll(&pfd, 1, 20);
+
+    if (poll_ret == 0) {
+      // 超时，返回当前已经读到的字节数
+      return static_cast<int>(total);
+    }
+
+    if (poll_ret < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      return -1;
+    }
+
+    if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+      return -1;
+    }
+
+    if (pfd.revents & POLLIN) {
+      ssize_t n = ::read(fd_, buf + total, len - total);
+
+      if (n > 0) {
+        total += static_cast<std::size_t>(n);
+      } else if (n == 0) {
+        return static_cast<int>(total);
+      } else {
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+          continue;
+        }
+        return -1;
+      }
+    }
+  }
+
+  return static_cast<int>(total);
 }
 
 int UartTransporter::write(const void *buffer, std::size_t len) {
