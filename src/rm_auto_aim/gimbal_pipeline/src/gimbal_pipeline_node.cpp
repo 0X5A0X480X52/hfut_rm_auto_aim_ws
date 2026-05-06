@@ -2262,12 +2262,18 @@ void GimbalPipelineNode::timerCallback() {
   }
 
   // ──────────────────────────────────────────────────────────────────────
-  // Step 5: 发布控制命令
+  // Step 5: 填充各相机目标检测状态掩码
+  // ──────────────────────────────────────────────────────────────────────
+  cmd.target_sources = computeTargetSources(
+      control_mode == SelectionResult::MODE_PRECISE_AIM);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Step 6: 发布控制命令
   // ──────────────────────────────────────────────────────────────────────
   gimbal_cmd_pub_->publish(cmd);
 
   // ──────────────────────────────────────────────────────────────────────
-  // Step 6: 发布补盲目标调试信息（每个控制周期持续发布）
+  // Step 7: 发布补盲目标调试信息（每个控制周期持续发布）
   // ──────────────────────────────────────────────────────────────────────
   rm_interfaces::msg::Blind dbg;
   if (guidance_target_locked_) {
@@ -2306,6 +2312,37 @@ void GimbalPipelineNode::initBlindSelectionStrategies() {
 
   RCLCPP_INFO(get_logger(),
     "Blind selection strategy: %s", blind_selection_strategy_name_.c_str());
+}
+
+uint8_t GimbalPipelineNode::computeTargetSources(bool main_camera_has_target) {
+  uint8_t sources = 0;
+
+  // Main camera (front) → Bit 3
+  if (main_camera_has_target) {
+    sources |= 0b1000;
+  }
+
+  // Blind cameras — check per-topic buffer for non-empty detections
+  std::lock_guard<std::mutex> lock(blind_buffer_mutex_);
+  for (const auto &[topic, msg] : blind_latest_per_topic_) {
+    if (!msg || msg->blinds.empty()) continue;
+
+    // Extract camera number from topic name: "blind_camera_X/blinds"
+    auto pos = topic.find("blind_camera_");
+    if (pos == std::string::npos) continue;
+    pos += 13;  // skip "blind_camera_"
+    if (pos >= topic.size()) continue;
+    int cam_num = topic[pos] - '0';
+    if (cam_num < 1 || cam_num > 3) continue;
+
+    switch (cam_num) {
+      case 1: sources |= 0b0100; break;  // rear  → Bit 2
+      case 2: sources |= 0b0010; break;  // left  → Bit 1
+      case 3: sources |= 0b0001; break;  // right → Bit 0 (future)
+    }
+  }
+
+  return sources;
 }
 
 rm_interfaces::msg::Blind::SharedPtr GimbalPipelineNode::collectBlindCandidates() {
@@ -2364,6 +2401,7 @@ void GimbalPipelineNode::publishIdleCommand() {
     context, current_gimbal_strategy_name_, std::string(), false);
   auto cmd = idle_result.cmd;
   cmd.is_guiding = false;
+  cmd.target_sources = computeTargetSources(false);
   gimbal_cmd_pub_->publish(cmd);
 }
 

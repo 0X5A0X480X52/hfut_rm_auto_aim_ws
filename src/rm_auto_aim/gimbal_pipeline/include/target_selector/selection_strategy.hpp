@@ -39,7 +39,6 @@ struct SelectionResult {
   enum ControlMode {
     MODE_NO_TARGET = 0,      // 无目标
     MODE_PRECISE_AIM = 1,    // 精确自瞄（主相机目标）
-    MODE_GUIDANCE = 2        // 引导模式（补盲相机目标）
   };
   ControlMode control_mode{MODE_NO_TARGET};
 

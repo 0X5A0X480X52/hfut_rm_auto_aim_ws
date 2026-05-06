@@ -31,6 +31,8 @@ void ProtocolInfantryBlind::send(const rm_interfaces::msg::GimbalCmd &data) {
   packet.loadData<float>(static_cast<float>(data.distance), 10);
   packet.loadData<float>(static_cast<float>(data.pitch_v), 14);
   packet.loadData<float>(static_cast<float>(data.yaw_v), 18);
+  // 各相机目标检测状态掩码（4-bit，低 4 位有效）
+  packet.loadData<unsigned char>(data.target_sources, 22);
   packet_tool_->sendPacket(packet);
 }
 

@@ -136,6 +136,7 @@ class GimbalPipelineNode : public rclcpp::Node {
   // ── timerCallback helper functions ─────────────────────────────────────
   void publishIdleCommand();
   rm_interfaces::msg::Blind::SharedPtr collectBlindCandidates();
+  uint8_t computeTargetSources(bool main_camera_has_target);
   rm_interfaces::msg::GimbalCmd buildBlindGuidanceCommand();
   void applyGuidanceVelocitySmoothing(
       double yaw_diff_rad, double pitch_diff_rad,
