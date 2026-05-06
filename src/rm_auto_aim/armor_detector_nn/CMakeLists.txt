@@ -81,6 +81,18 @@ if(BUILD_OPENVINO_BACKEND)
 endif()
 
 if(BUILD_TENSORRT_BACKEND)
+  find_package(CUDAToolkit REQUIRED)
+  find_path(TENSORRT_INCLUDE_DIR NvInfer.h
+    HINTS /usr/include /usr/local/include /usr/include/aarch64-linux-gnu)
+  find_library(TENSORRT_NVINFER_LIB nvinfer
+    HINTS /usr/lib /usr/local/lib /usr/lib/aarch64-linux-gnu)
+
+  if(NOT TENSORRT_INCLUDE_DIR OR NOT TENSORRT_NVINFER_LIB)
+    message(FATAL_ERROR
+      "BUILD_TENSORRT_BACKEND=ON but TensorRT headers/libs not found "
+      "(need NvInfer.h and libnvinfer)")
+  endif()
+
   list(APPEND BACKEND_SOURCES
     src/backend/tensorrt_backend.cpp
   )
@@ -154,6 +166,15 @@ if(BUILD_OPENVINO_BACKEND)
 endif()
 
 if(BUILD_TENSORRT_BACKEND)
+  target_include_directories(${PROJECT_NAME} PUBLIC
+    ${TENSORRT_INCLUDE_DIR}
+  )
+
+  target_link_libraries(${PROJECT_NAME}
+    ${TENSORRT_NVINFER_LIB}
+    CUDA::cudart
+  )
+
   target_compile_definitions(${PROJECT_NAME} PUBLIC
     ARMOR_DETECTOR_NN_HAS_TENSORRT=1
   )
