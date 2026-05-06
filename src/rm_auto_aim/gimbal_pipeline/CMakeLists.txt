@@ -40,6 +40,7 @@ file(GLOB_RECURSE ALL_SRCS CONFIGURE_DEPENDS
   "src/*.cpp"
   "src/**/*.cpp"
 )
+list(FILTER ALL_SRCS EXCLUDE REGEX "src/pybind/.*\\.cpp$")
 
 # ─── Shared library (component) ───────────────────────────────
 add_library(${PROJECT_NAME} SHARED ${ALL_SRCS})
@@ -149,5 +150,35 @@ ament_export_dependencies(
   message_filters
   angles
 )
+
+# ─── Optional pybind11 module for offline KF optimization ─────────
+option(GIMBAL_PIPELINE_BUILD_PYBIND_OPT "Build pybind11 offline optimization module" ON)
+if(GIMBAL_PIPELINE_BUILD_PYBIND_OPT)
+  set(PYBIND11_FINDPYTHON ON)
+  find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
+  find_package(pybind11 QUIET)
+  if(pybind11_FOUND)
+    pybind11_add_module(gimbal_pipeline_kf_opt
+      src/pybind/module.cpp
+      src/pybind/offline_tracker_replay.cpp
+    )
+    target_include_directories(gimbal_pipeline_kf_opt PRIVATE
+      include
+      ${EIGEN3_INCLUDE_DIRS}
+      ${qpOASES_INCLUDE_DIR}
+    )
+    target_link_libraries(gimbal_pipeline_kf_opt PRIVATE
+      ${PROJECT_NAME}
+      Eigen3::Eigen
+      ${qpOASES_LIBRARY}
+    )
+    install(TARGETS gimbal_pipeline_kf_opt
+      LIBRARY DESTINATION lib
+      RUNTIME DESTINATION lib
+    )
+  else()
+    message(WARNING "pybind11 not found, skip building gimbal_pipeline_kf_opt")
+  endif()
+endif()
 
 ament_package()
