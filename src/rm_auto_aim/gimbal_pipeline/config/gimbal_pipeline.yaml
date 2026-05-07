@@ -198,7 +198,7 @@ gimbal_pipeline:
     selector.main_camera_frame: "camera_optical_frame"
     selector.guidance_end_yaw_threshold: 5.0  # 引导结束的 yaw deviation 阈值（度），目标进入主相机视野中心时结束引导
     selector.enable_guidance_timeout: false   # 是否启用引导超时检测，默认关闭
-    selector.blind_target_timeout: 0.4        # 补盲目标消失超时（秒），默认 0.4s
+    selector.blind_target_timeout: 1.3        # 补盲目标消失超时（秒），默认 0.4s
 
     # ═══════════════════════════════════════════════════════════════
     # Gimbal controller parameters
