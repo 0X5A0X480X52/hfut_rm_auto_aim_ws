@@ -39,7 +39,7 @@ public:
   std::string getErrorMessage() override { return packet_tool_->getErrorMessage(); }
 
 private:
-  FixedPacketTool<24>::SharedPtr packet_tool_;
+  FixedPacketTool<25>::SharedPtr packet_tool_;
 };
 }  // namespace fyt::serial_driver::protocol
 
