@@ -408,6 +408,7 @@ std::vector<geometry_msgs::msg::Pose> TrackedRobotUsage::generateArmorsOffsetFro
   double d_za,
   double d_zc)
 {
+  constexpr double kDefaultArmorPitchUp = 0.2618;  // +15 deg
   std::vector<geometry_msgs::msg::Pose> offsets;
   offsets.reserve(static_cast<size_t>(std::max(0, num_armors)));
 
@@ -438,7 +439,7 @@ std::vector<geometry_msgs::msg::Pose> TrackedRobotUsage::generateArmorsOffsetFro
     pose.position.z = dz;
 
     tf2::Quaternion q;
-    q.setRPY(0.0, 0.0, angle + M_PI);
+    q.setRPY(0.0, kDefaultArmorPitchUp, angle + M_PI);
     pose.orientation = tf2::toMsg(q);
 
     offsets.push_back(pose);

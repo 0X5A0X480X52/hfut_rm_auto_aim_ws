@@ -2967,16 +2967,17 @@ void GimbalPipelineNode::publishGimbalMarkers(
           offset.position.x * sin_yaw + offset.position.y * cos_yaw;
       armor_marker.pose.position.z =
           center_position.z() + offset.position.z;
-        const bool is_outpost = (normalized_target.robot_id == "outpost");
-        const double armor_pitch = is_outpost ? -0.2618 : 0.2618;
-      tf2::Quaternion q;
-        q.setRPY(0, armor_pitch,
-               target_yaw +
-                   i * (2 * M_PI / normalized_target.num_armors));
-      armor_marker.pose.orientation.x = q.x();
-      armor_marker.pose.orientation.y = q.y();
-      armor_marker.pose.orientation.z = q.z();
-      armor_marker.pose.orientation.w = q.w();
+      tf2::Quaternion q_offset;
+      tf2::fromMsg(offset.orientation, q_offset);
+      if (q_offset.length2() <= 1e-12) {
+        q_offset.setRPY(0.0, 0.0, 0.0);
+      } else {
+        q_offset.normalize();
+      }
+      tf2::Quaternion q_world_yaw;
+      q_world_yaw.setRPY(0.0, 0.0, target_yaw);
+      const tf2::Quaternion q_world_armor = q_world_yaw * q_offset;
+      armor_marker.pose.orientation = tf2::toMsg(q_world_armor);
       marker_array.markers.push_back(armor_marker);
     }
   }

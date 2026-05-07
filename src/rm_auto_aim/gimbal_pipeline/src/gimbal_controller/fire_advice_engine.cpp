@@ -19,6 +19,8 @@
 #include <limits>
 
 #include <angles/angles.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include "gimbal_controller/armor_position_calculator.hpp"
 #include "gimbal_controller/ballistic_solver_client.hpp"
@@ -35,6 +37,55 @@ namespace
 constexpr double kMinDistance = 1e-3;
 constexpr double kMinBulletSpeed = 1e-3;
 constexpr double kDeg2Rad = M_PI / 180.0;
+
+Eigen::Vector3d fallbackArmorNormal(
+  const Eigen::Vector3d & armor_position,
+  const Eigen::Vector3d & center_position)
+{
+  Eigen::Vector3d normal = armor_position - center_position;
+  if (normal.norm() <= 1e-6) {
+    return Eigen::Vector3d::UnitX();
+  }
+  return normal.normalized();
+}
+
+Eigen::Vector3d computeArmorNormalFromPose(
+  const rm_interfaces::msg::TrackedRobot & normalized_robot,
+  int candidate_index,
+  double hit_dt_s,
+  const Eigen::Vector3d & armor_position,
+  const Eigen::Vector3d & center_position)
+{
+  if (candidate_index < 0) {
+    return fallbackArmorNormal(armor_position, center_position);
+  }
+
+  const auto predicted_robot = fyt::auto_aim::robot_description::TrackedRobotUsage::predict(
+    normalized_robot,
+    hit_dt_s,
+    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
+  if (candidate_index >= static_cast<int>(predicted_robot.armors_offset.size())) {
+    return fallbackArmorNormal(armor_position, center_position);
+  }
+
+  const auto & offset = predicted_robot.armors_offset[static_cast<size_t>(candidate_index)];
+  tf2::Quaternion q_offset;
+  tf2::fromMsg(offset.orientation, q_offset);
+  if (q_offset.length2() <= 1e-12) {
+    return fallbackArmorNormal(armor_position, center_position);
+  }
+  q_offset.normalize();
+
+  tf2::Quaternion q_world_yaw;
+  q_world_yaw.setRPY(0.0, 0.0, fyt::auto_aim::robot_description::TrackedRobotUsage::yaw(predicted_robot));
+  const tf2::Quaternion q_world_armor = q_world_yaw * q_offset;
+  const tf2::Vector3 n_world = tf2::quatRotate(q_world_armor, tf2::Vector3(1.0, 0.0, 0.0));
+  Eigen::Vector3d normal(n_world.x(), n_world.y(), n_world.z());
+  if (normal.norm() <= 1e-9) {
+    return fallbackArmorNormal(armor_position, center_position);
+  }
+  return normal.normalized();
+}
 
 double computeFacingCos(
   const Eigen::Vector3d & center_position,
@@ -316,6 +367,8 @@ FireAdviceEngineResult FireAdviceEngine::evaluate(const FireAdviceEngineRequest 
 
   const auto [muzzle_yaw, muzzle_pitch] =
     gimbal_pose_predictor_.predictMuzzlePose(request, result.timeline, use_gimbal_kinematics_);
+  const auto normalized_robot =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(request.target_robot);
 
   bool has_best = false;
   for (const auto & impact : impacts) {
@@ -341,13 +394,14 @@ FireAdviceEngineResult FireAdviceEngine::evaluate(const FireAdviceEngineRequest 
     candidate.facing_cos = impact.facing_cos;
     candidate.facing_ok = impact.facing_ok;
     candidate.armor_position = impact.armor_position;
-    Eigen::Vector3d normal = impact.armor_position - impact.center_position;
-    if (normal.norm() <= 1e-6) {
-      normal = Eigen::Vector3d::UnitX();
-    } else {
-      normal.normalize();
-    }
-    candidate.armor_normal = normal;
+    const double hit_dt_s =
+      std::max(result.timeline.target_prediction_base_s, 0.0) + std::max(impact.flight_time_s, 0.0);
+    candidate.armor_normal = computeArmorNormalFromPose(
+      normalized_robot,
+      impact.candidate_index,
+      hit_dt_s,
+      impact.armor_position,
+      impact.center_position);
     candidate.fire = eval.fire && impact.facing_ok;
     candidate.center_velocity = impact.center_velocity;
     candidate.armor_yaw_rate = impact.armor_yaw_rate;
