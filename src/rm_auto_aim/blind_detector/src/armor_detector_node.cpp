@@ -15,6 +15,7 @@
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
 // third party
+#include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
@@ -38,25 +39,10 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
   odom_frame_ = this->declare_parameter("target_frame", "odom");
   camera_frame_id_ = this->declare_parameter("camera_frame_id", "blind_camera_1_optical_frame");
 
-  // FOV parameters for angle estimation (still from config)
-  h_fov_ = this->declare_parameter("h_fov", 60.0);
-  v_fov_ = this->declare_parameter("v_fov", 45.0);
-
-  // Image dimensions (从配置文件中读取)
-  image_width_ = this->declare_parameter("blind_image_width", 640);
-  image_height_ = this->declare_parameter("blind_image_height", 480);
-
-  // 水平/垂直焦距（像素），用于距离估算
-  // 默认值从 FOV 推算：fx = (image_width/2) / tan(h_fov/2), fy = (image_height/2) / tan(v_fov/2)
-  // 若有标定值则优先从 launch.py 或配置文件传入
-  {
-    float fx_default = (image_width_ / 2.0f) /
-        std::tan(h_fov_ * static_cast<float>(M_PI) / 180.0f / 2.0f);
-    camera_fx_ = this->declare_parameter("camera_fx", fx_default);
-    float fy_default = (image_height_ / 2.0f) /
-        std::tan(v_fov_ * static_cast<float>(M_PI) / 180.0f / 2.0f);
-    camera_fy_ = this->declare_parameter("camera_fy", fy_default);
-  }
+  camera_fx_ = static_cast<float>(image_width_);
+  camera_fy_ = static_cast<float>(image_width_);
+  cx_ = image_width_ / 2.0f;
+  cy_ = image_height_ / 2.0f;
 
   // 初始化 Detector
   detector_ = initDetector();
@@ -97,6 +83,11 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
       get_node_logging_interface(), get_node_clock_interface(),
       std::chrono::duration<int>(1));
   tf2_filter_->registerCallback(&ArmorDetectorNode::imageCallback, this);
+
+  // Camera info subscription (for undistortion map, same namespace as image)
+  cam_info_sub_ = this->create_subscription<sensor_msgs::msg::CameraInfo>(
+      "camera_info", rclcpp::SensorDataQoS(),
+      std::bind(&ArmorDetectorNode::cameraInfoCallback, this, std::placeholders::_1));
 
   // Set Mode 服务 (节点私有服务，在命名空间下解析)
   set_mode_srv_ = this->create_service<rm_interfaces::srv::SetMode>(
@@ -149,20 +140,20 @@ void ArmorDetectorNode::imageCallback(
   blinds_msg_.blinds.reserve(armors.size());
 
   for (auto &armor : armors) {
-    float normalized_x = static_cast<double>(armor.center.x) / static_cast<double>(image_width_);
-    float yaw = camera_yaw - (normalized_x - 0.5) * h_fov_;
-
-    float normalized_y = static_cast<double>(armor.center.y) / static_cast<double>(image_height_);
-    float pitch = camera_pitch - (normalized_y - 0.5) * v_fov_;
+    // 使用针孔模型从像素坐标计算角度偏移，比线性 FOV 映射更精确
+    float dx = armor.center.x - cx_;
+    float dy = armor.center.y - cy_;
+    float yaw_offset_rad = std::atan2(dx, camera_fx_);
+    float pitch_offset_rad = std::atan2(dy, camera_fy_);
+    float yaw = camera_yaw - yaw_offset_rad * 180.0f / static_cast<float>(M_PI);
+    float pitch = camera_pitch - pitch_offset_rad * 180.0f / static_cast<float>(M_PI);
 
     // 距离估算：分别用装甲板宽度和高度通过针孔模型估算，最后取平均
     float distance = -1.0f;
     if (armor.type != ArmorType::INVALID) {
       // 透视补偿：目标偏离光轴时像素宽度/高度被压缩
-      float h_fov_rad = h_fov_ * static_cast<float>(M_PI) / 180.0f;
-      float v_fov_rad = v_fov_ * static_cast<float>(M_PI) / 180.0f;
-      float cos_angle_x = std::cos((normalized_x - 0.5f) * h_fov_rad);
-      float cos_angle_y = std::cos((normalized_y - 0.5f) * v_fov_rad);
+      float cos_angle_x = std::cos(yaw_offset_rad);
+      float cos_angle_y = std::cos(pitch_offset_rad);
 
       // 宽度估算（需知 small/large 类型）
       float pixel_width = armor.right_light.center.x - armor.left_light.center.x;
@@ -247,12 +238,56 @@ std::unique_ptr<Detector> ArmorDetectorNode::initDetector() {
   return detector;
 }
 
+void ArmorDetectorNode::cameraInfoCallback(
+    const sensor_msgs::msg::CameraInfo::SharedPtr msg) {
+  FYT_ASSERT_MSG(msg->d.size() >= 5,
+                 "Distortion model requires 5+ coefficients");
+  auto K = cv::Mat(3, 3, CV_64FC1, (void *)msg->k.data()).clone();
+  auto D = cv::Mat(1, 5, CV_64FC1, (void *)msg->d.data()).clone();
+
+  // 用标定内参更新焦距和主点，提高精度
+  camera_fx_ = static_cast<float>(K.at<double>(0, 0));
+  camera_fy_ = static_cast<float>(K.at<double>(1, 1));
+  cx_ = static_cast<float>(K.at<double>(0, 2));
+  cy_ = static_cast<float>(K.at<double>(1, 2));
+  image_width_ = static_cast<int>(msg->width);
+  image_height_ = static_cast<int>(msg->height);
+
+  // 计算去畸变映射表（畸变为零时跳过，避免无效的 per-frame remap）
+  bool has_distortion = false;
+  for (int i = 0; i < static_cast<int>(msg->d.size()); ++i) {
+    if (std::abs(msg->d[i]) > 1e-9) { has_distortion = true; break; }
+  }
+  if (has_distortion) {
+    cv::initUndistortRectifyMap(K, D, cv::Mat(), K,
+        cv::Size(msg->width, msg->height), CV_16SC2, map1_, map2_);
+    undistort_ready_ = true;
+  }
+
+  FYT_INFO("blind_detector",
+           "Camera info received: fx=%.1f fy=%.1f %dx%d%s",
+           camera_fx_, camera_fy_, msg->width, msg->height,
+           has_distortion ? ", undistortion enabled" : ", no distortion");
+
+  // 只订阅一次
+  cam_info_sub_.reset();
+}
+
 std::vector<Armor> ArmorDetectorNode::detectArmors(
     const sensor_msgs::msg::Image::ConstSharedPtr &img_msg) {
   // Convert ROS img to cv::Mat
   auto img = cv_bridge::toCvShare(img_msg, "rgb8")->image;
 
-  auto armors = detector_->detect(img);
+  // 去畸变（camera_info 到达且畸变非零时启用）
+  cv::Mat undistorted;
+  if (undistort_ready_) {
+    cv::remap(img, undistort_buffer_, map1_, map2_, cv::INTER_LINEAR);
+    undistorted = undistort_buffer_;
+  } else {
+    undistorted = img;
+  }
+
+  auto armors = detector_->detect(undistorted);
 
   // Publish debug info
   if (debug_) {
@@ -271,7 +306,7 @@ std::vector<Armor> ArmorDetectorNode::detectArmors(
     lights_data_pub_->publish(detector_->debug_lights);
     armors_data_pub_->publish(detector_->debug_armors);
 
-    detector_->drawResults(img);
+    detector_->drawResults(undistorted);
 
     // Draw FPS (基于帧间隔而非处理延迟)
     static rclcpp::Time last_frame_time = this->now();
@@ -282,10 +317,10 @@ std::vector<Armor> ArmorDetectorNode::detectArmors(
     std::stringstream fps_ss;
     fps_ss << "Frame rate: " << std::fixed << std::setprecision(1) << fps << " fps";
     auto fps_s = fps_ss.str();
-    cv::putText(img, fps_s, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX,
+    cv::putText(undistorted, fps_s, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX,
                 1.0, cv::Scalar(0, 255, 0), 2);
     result_img_pub_.publish(
-        cv_bridge::CvImage(img_msg->header, "rgb8", img).toImageMsg());
+        cv_bridge::CvImage(img_msg->header, "rgb8", undistorted).toImageMsg());
   }
 
   return armors;

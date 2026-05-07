@@ -5,10 +5,6 @@
     detect_color: 1
     binary_thres: 80
 
-    # 补盲相机图像的尺寸
-    blind_image_width: 640
-    blind_image_height: 480
-
     use_pca: false # 使用PCA算法矫正灯条的角点
     use_ba: true # 使用BA优化算法求解装甲板的Yaw角 
 

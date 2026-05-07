@@ -1,8 +1,10 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/msg/camera_info.hpp>
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>
 #include <rm_utils/heartbeat.hpp>
+#include <camera_info_manager/camera_info_manager.hpp>
 
 #include <fcntl.h>
 #include <linux/videodev2.h>
@@ -52,6 +54,19 @@ public:
       : rclcpp::QoS(rclcpp::KeepLast(10));
     image_pub_ = this->create_publisher<sensor_msgs::msg::Image>("image_raw", image_qos);
 
+    // 加载相机内参文件 (package://usb_camera_driver/config/camera_info_X.yaml)
+    {
+      std::string camera_num = camera_name_.substr(camera_name_.find_last_of('_') + 1);
+      std::string url = "package://usb_camera_driver/config/camera_info_" + camera_num + ".yaml";
+      camera_info_manager_ = std::make_unique<camera_info_manager::CameraInfoManager>(
+          this, camera_name_, url);
+      if (!camera_info_manager_->loadCameraInfo(url)) {
+        RCLCPP_WARN(get_logger(), "Failed to load camera_info from %s", url.c_str());
+      }
+    }
+    camera_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>(
+        "camera_info", rclcpp::SensorDataQoS());
+
     // 定时器发布帧
     timer_ = this->create_wall_timer(
       std::chrono::milliseconds(static_cast<int>(1000.0 / fps_)),
@@ -78,6 +93,8 @@ private:
   bool white_balance_automatic_;
   cv::VideoCapture cap_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_pub_;
+  std::unique_ptr<camera_info_manager::CameraInfoManager> camera_info_manager_;
   rclcpp::TimerBase::SharedPtr timer_;
   fyt::HeartBeatPublisher::SharedPtr heartbeat_;
 
@@ -183,6 +200,12 @@ private:
   void timer_callback()
   {
     process_and_publish();
+
+    // 发布 camera_info（每帧携带正确的时间戳）
+    auto camera_info = camera_info_manager_->getCameraInfo();
+    camera_info.header.stamp = this->now();
+    camera_info.header.frame_id = frame_id_;
+    camera_info_pub_->publish(camera_info);
   }
 };
 }  // namespace blind_vision
