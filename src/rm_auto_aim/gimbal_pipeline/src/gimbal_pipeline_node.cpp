@@ -2455,20 +2455,25 @@ rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildBlindGuidanceCommand() {
     double threshold_rad = guidance_end_yaw_threshold_deg_ * M_PI / 180.0;
     bool complete = (yaw_dev < threshold_rad);
 
-    // 补盲目标消失检测：所有补盲相机在 blind_target_timeout_ 内均无有效检测
+    // 补盲目标消失检测：在 blind_target_timeout_ 内锁定目标（按 current_target_id_）是否仍存在
     bool target_gone = false;
-    {
+    if (!current_target_id_.empty()) {
+      target_gone = true;  // 先假设消失，确认有匹配目标则设为 false
       std::lock_guard<std::mutex> lock(blind_buffer_mutex_);
       const auto now_stamp = this->now();
-      target_gone = true;  // 先假设消失，有任意相机仍有活目标则为 false
       for (const auto &[topic, msg] : blind_latest_per_topic_) {
         if (!msg || msg->blinds.empty()) continue;
-        auto it = blind_last_nonempty_time_.find(topic);
-        if (it == blind_last_nonempty_time_.end()) continue;
-        if ((now_stamp - it->second).seconds() <= blind_target_timeout_) {
-          target_gone = false;
-          break;
+        auto time_it = blind_last_nonempty_time_.find(topic);
+        if (time_it == blind_last_nonempty_time_.end()) continue;
+        if ((now_stamp - time_it->second).seconds() > blind_target_timeout_) continue;
+        // 该相机有有效检测，检查是否包含锁定的目标编号
+        for (const auto &b : msg->blinds) {
+          if (b.number == current_target_id_) {
+            target_gone = false;
+            break;
+          }
         }
+        if (!target_gone) break;
       }
     }
 
@@ -2479,8 +2484,8 @@ rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildBlindGuidanceCommand() {
         RCLCPP_WARN(get_logger(), "Blind guidance timeout (%.1fs)", elapsed);
       } else if (target_gone) {
         RCLCPP_INFO(get_logger(),
-                    "Blind guidance aborted: target gone (%.1fs since last detection)",
-                    blind_target_timeout_);
+                    "Blind guidance aborted: target %s no longer detected",
+                    current_target_id_.c_str());
       } else {
         RCLCPP_INFO(get_logger(), "Blind guidance complete (yaw_dev=%.2f deg)",
                     yaw_dev * 180.0 / M_PI);
