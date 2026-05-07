@@ -250,7 +250,11 @@ def generate_launch_description():
 
     # ==================== 补盲相机 + 补盲检测器 容器 ====================
     # Factory function — 返回一个 OpaqueFunction 兼容的创建函数
-    def make_blind_camera_container_func(camera_prefix, container_name):
+    # camera_params: dict with 'h_fov', 'v_fov', 'camera_fx', 'camera_fy' (per-camera calibration)
+    def make_blind_camera_container_func(camera_prefix, container_name, camera_params=None):
+        if camera_params is None:
+            camera_params = {'h_fov': 25.07, 'v_fov': 18.85, 'camera_fx': 1439.0, 'camera_fy': 1439.0}
+
         def _create(context):
             debug_enabled = LaunchConfiguration('debug').perform(context).lower() == 'true'
 
@@ -274,8 +278,10 @@ def generate_launch_description():
                     get_bringup_params('armor_detector'),
                     {
                         'camera_frame_id': f'{camera_prefix}_optical_frame',
-                        'h_fov': 25.07,
-                        'v_fov': 18.85,
+                        'h_fov': camera_params['h_fov'],
+                        'v_fov': camera_params['v_fov'],
+                        'camera_fx': camera_params['camera_fx'],
+                        'camera_fy': camera_params['camera_fy'],
                         'debug': debug_enabled,
                     },
                 ],
@@ -336,12 +342,16 @@ def generate_launch_description():
     delay_blind_camera_detector = TimerAction(
         period=2.0,
         actions=[OpaqueFunction(function=make_blind_camera_container_func(
-            'blind_camera_1', 'blind_camera_detector_container'))],
+            'blind_camera_1', 'blind_camera_detector_container',
+            camera_params={'h_fov': 25.07, 'v_fov': 18.85,
+                           'camera_fx': 1439.0, 'camera_fy': 1439.0}))],
     )
     delay_blind_camera_detector_2 = TimerAction(
         period=2.5,
         actions=[OpaqueFunction(function=make_blind_camera_container_func(
-            'blind_camera_2', 'blind_camera_detector_container_2'))],
+            'blind_camera_2', 'blind_camera_detector_container_2',
+            camera_params={'h_fov': 25.07, 'v_fov': 18.85,
+                           'camera_fx': 1439.0, 'camera_fy': 1439.0}))],
     )
     delay_gimbal_pipeline = TimerAction(
         period=2.5,

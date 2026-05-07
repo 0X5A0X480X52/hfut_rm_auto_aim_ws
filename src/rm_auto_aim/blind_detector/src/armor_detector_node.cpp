@@ -1,5 +1,6 @@
 // std
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <filesystem>
 #include <functional>
@@ -44,6 +45,18 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
   // Image dimensions (从配置文件中读取)
   image_width_ = this->declare_parameter("blind_image_width", 640);
   image_height_ = this->declare_parameter("blind_image_height", 480);
+
+  // 水平/垂直焦距（像素），用于距离估算
+  // 默认值从 FOV 推算：fx = (image_width/2) / tan(h_fov/2), fy = (image_height/2) / tan(v_fov/2)
+  // 若有标定值则优先从 launch.py 或配置文件传入
+  {
+    float fx_default = (image_width_ / 2.0f) /
+        std::tan(h_fov_ * static_cast<float>(M_PI) / 180.0f / 2.0f);
+    camera_fx_ = this->declare_parameter("camera_fx", fx_default);
+    float fy_default = (image_height_ / 2.0f) /
+        std::tan(v_fov_ * static_cast<float>(M_PI) / 180.0f / 2.0f);
+    camera_fy_ = this->declare_parameter("camera_fy", fy_default);
+  }
 
   // 初始化 Detector
   detector_ = initDetector();
@@ -142,11 +155,39 @@ void ArmorDetectorNode::imageCallback(
     float normalized_y = static_cast<double>(armor.center.y) / static_cast<double>(image_height_);
     float pitch = camera_pitch - (normalized_y - 0.5) * v_fov_;
 
+    // 距离估算：分别用装甲板宽度和高度通过针孔模型估算，最后取平均
+    float distance = -1.0f;
+    if (armor.type != ArmorType::INVALID) {
+      // 透视补偿：目标偏离光轴时像素宽度/高度被压缩
+      float h_fov_rad = h_fov_ * static_cast<float>(M_PI) / 180.0f;
+      float v_fov_rad = v_fov_ * static_cast<float>(M_PI) / 180.0f;
+      float cos_angle_x = std::cos((normalized_x - 0.5f) * h_fov_rad);
+      float cos_angle_y = std::cos((normalized_y - 0.5f) * v_fov_rad);
+
+      // 宽度估算（需知 small/large 类型）
+      float pixel_width = armor.right_light.center.x - armor.left_light.center.x;
+      if (pixel_width >= 1.0f) {
+        float real_width = (armor.type == ArmorType::SMALL) ? SMALL_ARMOR_WIDTH : LARGE_ARMOR_WIDTH;
+        distance = camera_fx_ * real_width / pixel_width * cos_angle_x;
+      }
+      // 高度估算（左右灯条长度取平均，small/large 高度相同）+ 取平均
+      float pixel_height = (armor.left_light.length + armor.right_light.length) / 2.0f;
+      if (pixel_height >= 1.0f) {
+        float dist_from_height = camera_fy_ * SMALL_ARMOR_HEIGHT / pixel_height * cos_angle_y;
+        if (distance >= 0.0f) {
+          distance = (distance + dist_from_height) / 2.0f;
+        } else {
+          distance = dist_from_height;
+        }
+      }
+    }
+
     rm_interfaces::msg::Blind b;
     b.number = armor.classfication_result;
     b.yaw = yaw;
     b.pitch = pitch;
     b.confi = armor.confidence;
+    b.distance = distance;
     blinds_msg_.blinds.push_back(b);
   }
 

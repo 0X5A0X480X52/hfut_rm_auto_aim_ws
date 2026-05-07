@@ -114,6 +114,8 @@ private:
   int image_height_;
   float h_fov_;  // Horizontal field of view in degrees
   float v_fov_;  // Vertical field of view in degrees
+  float camera_fx_;  // Horizontal focal length (pixels), for distance estimation
+  float camera_fy_;  // Vertical focal length (pixels), for distance estimation
 
   // Image subscription via tf2_ros::MessageFilter, synchronized with TF
   message_filters::Subscriber<sensor_msgs::msg::Image> img_mf_sub_;

@@ -2313,6 +2313,28 @@ void GimbalPipelineNode::initBlindSelectionStrategies() {
         });
     };
 
+  // 最近距离策略：选择 distance 最小的目标
+  blind_selection_strategies_["closest"] =
+    [](const std::vector<rm_interfaces::msg::Blind::SharedPtr> &candidates,
+       double /*current_yaw*/) -> rm_interfaces::msg::Blind::SharedPtr {
+      // 分离有有效距离和无效距离的候选
+      std::vector<rm_interfaces::msg::Blind::SharedPtr> with_dist;
+      for (const auto &c : candidates) {
+        if (c->distance > 0.0f) {
+          with_dist.push_back(c);
+        }
+      }
+      // 有有效距离则选最近的；否则取第一个候选
+      if (!with_dist.empty()) {
+        return *std::min_element(with_dist.begin(), with_dist.end(),
+          [](const rm_interfaces::msg::Blind::SharedPtr &a,
+             const rm_interfaces::msg::Blind::SharedPtr &b) {
+            return a->distance < b->distance;
+          });
+      }
+      return candidates.front();
+    };
+
   RCLCPP_INFO(get_logger(),
     "Blind selection strategy: %s", blind_selection_strategy_name_.c_str());
 }
