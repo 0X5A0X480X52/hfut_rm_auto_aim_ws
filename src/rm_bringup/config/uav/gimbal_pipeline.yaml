@@ -292,7 +292,7 @@ gimbal_pipeline:
 
     # 触发到出膛延迟（秒）：
     # 建议用实测值；过大容易“追未来过度”，过小容易“晚点火”。
-    controller.fire.trigger_to_muzzle_s: 0.050
+    controller.fire.trigger_to_muzzle_s: 0.00
 
     # ── 概率开火主开关 ───────────────────────────────────────────────
     # false: 仅几何判定；true: 使用概率窗口 + gate 输出 fire_advice。
@@ -466,7 +466,7 @@ gimbal_pipeline:
     # controller.mpc.s_pitch: 0.001
     
     controller.mpc.N: 5
-    controller.mpc.dt: 0.015
+    controller.mpc.dt: 0.010
     controller.mpc.control_delay_s: 0.0
     controller.mpc.max_accel: 18.0
     controller.mpc.q_yaw: 1000.0 #追踪权重
