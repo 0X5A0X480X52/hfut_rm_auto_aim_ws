@@ -1040,6 +1040,8 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::fallbackDirectAim(
   const GimbalControlContext & context,
   const Eigen::VectorXd & X_ref)
 {
+  std::cout << "Falling back to direct aim with reference yaw=" << X_ref(0) << " rad, pitch=" << X_ref(1)
+            << " rad." << std::endl;
   const auto target_robot =
     fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(context.target_robot);
 

@@ -47,7 +47,7 @@ armor_detector:
       class_offset: 4
       keypoint_offset: 18
       box_format: "cxcywh"
-      conf_threshold: 0.5
+      conf_threshold: 0.45
       nms_threshold: 0.7
       max_detections: 32
       class_agnostic_nms: false
