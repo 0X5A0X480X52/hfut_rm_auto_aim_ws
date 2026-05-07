@@ -606,6 +606,20 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       get_parameter("controller.fire.probability.ballistic_growth_y").as_double();
     prob_cfg.growth_z =
       get_parameter("controller.fire.probability.ballistic_growth_z").as_double();
+    prob_cfg.enable_normal_velocity_weight =
+      get_parameter("controller.fire.probability.normal_velocity_weight.enable").as_bool();
+    prob_cfg.normal_v_ref =
+      get_parameter("controller.fire.probability.normal_velocity_weight.v_ref").as_double();
+    prob_cfg.normal_w_min =
+      get_parameter("controller.fire.probability.normal_velocity_weight.w_min").as_double();
+    prob_cfg.enable_normal_velocity_gate =
+      get_parameter("controller.fire.probability.normal_velocity_gate.enable").as_bool();
+    prob_cfg.require_front_face =
+      get_parameter("controller.fire.probability.normal_velocity_gate.require_front_face").as_bool();
+    prob_cfg.normal_v_activate_min =
+      get_parameter("controller.fire.probability.normal_velocity_gate.v_activate_min").as_double();
+    prob_cfg.front_face_epsilon =
+      get_parameter("controller.fire.probability.normal_velocity_gate.front_epsilon").as_double();
     // Reuse solver hitbox size as probability hit rectangle in SI meters.
     prob_cfg.armor_width_m = std::max(shooting_range_w, 1e-6);
     prob_cfg.armor_height_m = std::max(shooting_range_h, 1e-6);
@@ -1185,6 +1199,13 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.fire.probability.ballistic_growth_x", 0.03);
   declare_parameter("controller.fire.probability.ballistic_growth_y", 0.06);
   declare_parameter("controller.fire.probability.ballistic_growth_z", 0.08);
+  declare_parameter("controller.fire.probability.normal_velocity_weight.enable", false);
+  declare_parameter("controller.fire.probability.normal_velocity_weight.v_ref", 28.0);
+  declare_parameter("controller.fire.probability.normal_velocity_weight.w_min", 0.5);
+  declare_parameter("controller.fire.probability.normal_velocity_gate.enable", true);
+  declare_parameter("controller.fire.probability.normal_velocity_gate.require_front_face", true);
+  declare_parameter("controller.fire.probability.normal_velocity_gate.v_activate_min", 8.0);
+  declare_parameter("controller.fire.probability.normal_velocity_gate.front_epsilon", 1e-4);
   declare_parameter("controller.fire.probability.sigma_point.enable", true);
   declare_parameter("controller.fire.probability.sigma_point.method", std::string("unscented"));
   declare_parameter("controller.fire.probability.sigma_point.sigma_v0", 0.3);

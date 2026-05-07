@@ -48,6 +48,10 @@ struct ProbabilityConfig
   bool enable_normal_velocity_weight{false};
   double normal_v_ref{28.0};
   double normal_w_min{0.5};
+  bool enable_normal_velocity_gate{true};
+  bool require_front_face{true};
+  double normal_v_activate_min{8.0};
+  double front_face_epsilon{1e-4};
 
   double sigma_x0{0.010};
   double sigma_y0{0.015};
@@ -69,6 +73,10 @@ struct TauDebugSample
   double e_v{0.0};
   double sigma_u{0.0};
   double sigma_v{0.0};
+  bool front_ok{true};
+  bool normal_gate_pass{true};
+  double normal_velocity{0.0};
+  double normal_weight{1.0};
   double impact_x{0.0};
   double impact_y{0.0};
   double impact_z{0.0};

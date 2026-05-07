@@ -361,6 +361,43 @@ ProbabilityDebugResult ProbabilityEngine::evaluate(
     double p_hit = hitProbabilityIndependent(
       e_u, e_v, sigma_u, sigma_v, out.armor_width_m, out.armor_height_m);
 
+    const double yaw_nom = muzzle_yaw + muzzle_yaw_rate * tau + 0.5 * muzzle_yaw_accel * tau * tau;
+    const double pitch_nom = muzzle_pitch + muzzle_pitch_rate * tau + 0.5 * muzzle_pitch_accel * tau * tau;
+    const Eigen::Matrix3d R_O_Bs_nom = worldFromBarrel(yaw_nom, pitch_nom);
+    const double dist_nom = std::max(c_nominal.norm(), 1e-3);
+    const double tf_nom = dist_nom / v0;
+    const Eigen::Vector3d v_b_Bs_nom(
+      v0 * std::cos(pitch_error) * std::cos(yaw_error),
+      v0 * std::cos(pitch_error) * std::sin(yaw_error),
+      v0 * std::sin(pitch_error) - kGravity * tf_nom);
+    const Eigen::Vector3d v_b_world_nom = R_O_Bs_nom * v_b_Bs_nom;
+    const double impact_dt = tau + tf_nom - tf;
+    const Eigen::Vector3d n_impact_nom = rotateAroundWorldZ(n0, armor_yaw_rate * impact_dt).normalized();
+    const double dot_vn = v_b_world_nom.dot(n_impact_nom);
+    const bool front_ok = dot_vn < -std::max(cfg_.front_face_epsilon, 0.0);
+    const double normal_velocity = std::max(0.0, -dot_vn);
+
+    bool normal_gate_pass = true;
+    if (cfg_.enable_normal_velocity_gate) {
+      if (cfg_.require_front_face && !front_ok) {
+        normal_gate_pass = false;
+      }
+      if (normal_velocity < std::max(cfg_.normal_v_activate_min, 0.0)) {
+        normal_gate_pass = false;
+      }
+    }
+    if (!normal_gate_pass) {
+      p_hit = 0.0;
+    }
+
+    double normal_weight = 1.0;
+    if (normal_gate_pass && cfg_.enable_normal_velocity_weight) {
+      const double v_ref = std::max(cfg_.normal_v_ref, 1e-3);
+      const double w_min = clamp(cfg_.normal_w_min, 0.0, 1.0);
+      normal_weight = clamp(normal_velocity / v_ref, w_min, 1.0);
+      p_hit *= normal_weight;
+    }
+
     TauDebugSample s;
     s.tau_s = tau;
     s.p_hit = p_hit;
@@ -368,6 +405,10 @@ ProbabilityDebugResult ProbabilityEngine::evaluate(
     s.e_v = e_v;
     s.sigma_u = sigma_u;
     s.sigma_v = sigma_v;
+    s.front_ok = front_ok;
+    s.normal_gate_pass = normal_gate_pass;
+    s.normal_velocity = normal_velocity;
+    s.normal_weight = normal_weight;
     const Eigen::Vector3d p3 = c_nominal + right_nominal * e_u + up_nominal * e_v;
     s.impact_x = p3.x();
     s.impact_y = p3.y();
