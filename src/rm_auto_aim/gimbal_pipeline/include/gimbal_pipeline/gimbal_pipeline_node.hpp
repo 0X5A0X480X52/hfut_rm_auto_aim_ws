@@ -214,6 +214,12 @@ class GimbalPipelineNode : public rclcpp::Node {
   std::atomic<double> guidance_locked_pitch_deg_{0.0}; // 锁定的目标 pitch (度，绝对坐标系)
   std::atomic<bool> guidance_target_locked_{false};    // 是否已锁定引导目标角度
 
+  // 补盲目标超时机制：若某补盲相机在 blind_target_timeout_ 秒内未收到有效检测，
+  // 则认为该目标已"消失"，用于避免引导持续向无效目标旋转
+  double blind_target_timeout_{0.4};
+  // 每个补盲相机 topic 最近一次收到非空 Blinds 消息的时间戳（受 blind_buffer_mutex_ 保护）
+  std::unordered_map<std::string, rclcpp::Time> blind_last_nonempty_time_;
+
   /* ================================================================ */
   /*  Gimbal controller state (from GimbalControllerNode)             */
   /* ================================================================ */

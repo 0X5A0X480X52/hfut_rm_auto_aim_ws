@@ -275,6 +275,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       get_parameter("selector.guidance_end_yaw_threshold").as_double();
   enable_guidance_timeout_ =
       get_parameter("selector.enable_guidance_timeout").as_bool();
+  blind_target_timeout_ =
+      get_parameter("selector.blind_target_timeout").as_double();
   initSelectionStrategy();
 
   RCLCPP_INFO(get_logger(), "[GimbalPipelineNode] selector_strategy: %s", selector_strategy_name_.c_str());
@@ -850,6 +852,7 @@ void GimbalPipelineNode::declareTargetSelectorParameters() {
   declare_parameter("selector.main_camera_frame", "camera_optical_frame");
   declare_parameter("selector.guidance_end_yaw_threshold", 5.0);  // 引导结束的 yaw deviation 阈值（度）
   declare_parameter("selector.enable_guidance_timeout", false);   // 是否启用引导超时检测，默认关闭
+  declare_parameter("selector.blind_target_timeout", 0.4);       // 补盲目标消失超时（秒），默认 0.4s
 }
 
 void GimbalPipelineNode::declareGimbalControllerParameters() {
@@ -2324,8 +2327,14 @@ uint8_t GimbalPipelineNode::computeTargetSources(bool main_camera_has_target) {
 
   // Blind cameras — check per-topic buffer for non-empty detections
   std::lock_guard<std::mutex> lock(blind_buffer_mutex_);
+  const auto now_stamp = this->now();
   for (const auto &[topic, msg] : blind_latest_per_topic_) {
     if (!msg || msg->blinds.empty()) continue;
+
+    // 超时过滤：如果该相机长时间未收到有效检测，认为目标已消失
+    auto it = blind_last_nonempty_time_.find(topic);
+    if (it == blind_last_nonempty_time_.end()) continue;
+    if ((now_stamp - it->second).seconds() > blind_target_timeout_) continue;
 
     // Extract camera number from topic name: "blind_camera_X/blinds"
     auto pos = topic.find("blind_camera_");
@@ -2350,8 +2359,13 @@ rm_interfaces::msg::Blind::SharedPtr GimbalPipelineNode::collectBlindCandidates(
   std::vector<rm_interfaces::msg::Blinds::SharedPtr> fresh_blinds_msgs;
   {
     std::lock_guard<std::mutex> lock(blind_buffer_mutex_);
+    const auto now_stamp = this->now();
     for (const auto &[topic, msg] : blind_latest_per_topic_) {
       if (!msg || msg->blinds.empty()) continue;
+      // 超时过滤：若该相机在 blind_target_timeout_ 内未收到有效检测，跳过
+      auto it = blind_last_nonempty_time_.find(topic);
+      if (it == blind_last_nonempty_time_.end()) continue;
+      if ((now_stamp - it->second).seconds() > blind_target_timeout_) continue;
       fresh_blinds_msgs.push_back(msg);
     }
   }
@@ -2419,11 +2433,32 @@ rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildBlindGuidanceCommand() {
     double threshold_rad = guidance_end_yaw_threshold_deg_ * M_PI / 180.0;
     bool complete = (yaw_dev < threshold_rad);
 
-    if (timeout || complete) {
+    // 补盲目标消失检测：所有补盲相机在 blind_target_timeout_ 内均无有效检测
+    bool target_gone = false;
+    {
+      std::lock_guard<std::mutex> lock(blind_buffer_mutex_);
+      const auto now_stamp = this->now();
+      target_gone = true;  // 先假设消失，有任意相机仍有活目标则为 false
+      for (const auto &[topic, msg] : blind_latest_per_topic_) {
+        if (!msg || msg->blinds.empty()) continue;
+        auto it = blind_last_nonempty_time_.find(topic);
+        if (it == blind_last_nonempty_time_.end()) continue;
+        if ((now_stamp - it->second).seconds() <= blind_target_timeout_) {
+          target_gone = false;
+          break;
+        }
+      }
+    }
+
+    if (timeout || complete || target_gone) {
       blind_guidance_active_ = false;
       guidance_target_locked_ = false;
       if (timeout) {
         RCLCPP_WARN(get_logger(), "Blind guidance timeout (%.1fs)", elapsed);
+      } else if (target_gone) {
+        RCLCPP_INFO(get_logger(),
+                    "Blind guidance aborted: target gone (%.1fs since last detection)",
+                    blind_target_timeout_);
       } else {
         RCLCPP_INFO(get_logger(), "Blind guidance complete (yaw_dev=%.2f deg)",
                     yaw_dev * 180.0 / M_PI);
@@ -2565,6 +2600,10 @@ void GimbalPipelineNode::blindCallback(
     const std::string &topic) {
   std::lock_guard<std::mutex> lock(blind_buffer_mutex_);
   blind_latest_per_topic_[topic] = msg;
+  // 记录非空检测的时间戳（使用消息时间，使多相机时间线一致）
+  if (!msg->blinds.empty()) {
+    blind_last_nonempty_time_[topic] = rclcpp::Time(msg->header.stamp);
+  }
 }
 
 rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildNoTargetCommand() {
