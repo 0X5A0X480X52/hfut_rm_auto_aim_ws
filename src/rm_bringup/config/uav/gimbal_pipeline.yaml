@@ -75,8 +75,8 @@ gimbal_pipeline:
     outpost.max_match_yaw_diff: 1.0
     outpost.singer_alpha: 0.001          # <=0: fallback to motion.singer_alpha
     outpost.singer_sigma: 0.001          # <=0: fallback to motion.singer_sigma
-    outpost.spin_process_noise_theta_rate: 0.10  # <=0: fallback to spin.spin_process_noise_delta_rate
-    outpost.spin_process_noise_theta_acc: 0.10   # <=0: fallback to spin.spin_process_noise_delta_acc
+    outpost.spin_process_noise_theta_rate: 1.0  # <=0: fallback to spin.spin_process_noise_delta_rate
+    outpost.spin_process_noise_theta_acc: 0.01   # <=0: fallback to spin.spin_process_noise_delta_acc
     outpost.radius: 0.275
     # 语义约定:
     #   id0=最高, id1=中间, id2=最低
@@ -133,8 +133,8 @@ gimbal_pipeline:
   #$
 
     # Output smoother (1-Euro filter + Robbins-Monro)
-    smoother.enable: false
-    smoother.enable_position_smooth: false
+    smoother.enable: true
+    smoother.enable_position_smooth: true
     smoother.enable_yaw_smooth: false
     smoother.enable_velocity_smooth: true
     smoother.enable_structural_convergence: true
@@ -190,7 +190,7 @@ gimbal_pipeline:
     # ═══════════════════════════════════════════════════════════════
     # Gimbal controller parameters
     # ═══════════════════════════════════════════════════════════════
-    controller.bullet_speed: 23.0
+    controller.bullet_speed: 20.0
     controller.control_rate: 250.0
     controller.strategy: "mpc"    # "current" | "predicted" | "mpc" | "state_machine"
     controller.ballistic_mode: "local"  # "service" | "local"
@@ -238,8 +238,8 @@ gimbal_pipeline:
     #   virtual_fixed_id          — 固定 ID 虚拟姿态选板
     #   facing_or_virtual_pose    — 真实可打板优先；无可打板时退回 virtual_pose
     #   facing_or_virtual_fixed_id — 固定 ID 真实可打时输出真实板，否则退回虚拟板
-    controller.solver.selection_method: "facing_or_virtual_fixed_id"
-    controller.solver.virtual_pose.fixed_id: 1
+    controller.solver.selection_method: "facing_or_virtual_pose"
+    # controller.solver.virtual_pose.fixed_id: 2
 
     # controller.solver.selection_method: "virtual_pose"
     # controller.solver.selection_method: "virtual_fixed_id"
@@ -250,8 +250,8 @@ gimbal_pipeline:
     controller.solver.virtual_pose.auto_switch.fixed_id: 0
 
     # 面向选板状态机参数
-    controller.solver.facing_enter_angle: 60.0
-    controller.solver.facing_exit_angle: 70.0
+    controller.solver.facing_enter_angle: 20.0
+    controller.solver.facing_exit_angle: 30.0
 
     # 径向选板动态阈值（仅对 min_movement_with_radial 生效）
     controller.solver.radial_dynamic.enable: false
@@ -280,7 +280,7 @@ gimbal_pipeline:
 
     # 朝向过滤开口角（度）：
     # 180 表示不过滤；值越小越保守，建议 110~170 起步。
-    controller.fire.facing_filter_opening_angle_deg: 30.0
+    controller.fire.facing_filter_opening_angle_deg: 60.0
 
     # 是否在出膛时刻预测云台姿态（考虑角速度/角加速度）：
     # true 更贴近真实时序；false 更稳但偏保守。
@@ -292,7 +292,7 @@ gimbal_pipeline:
 
     # 触发到出膛延迟（秒）：
     # 建议用实测值；过大容易“追未来过度”，过小容易“晚点火”。
-    controller.fire.trigger_to_muzzle_s: 0.0
+    controller.fire.trigger_to_muzzle_s: 0.050
 
     # ── 概率开火主开关 ───────────────────────────────────────────────
     # false: 仅几何判定；true: 使用概率窗口 + gate 输出 fire_advice。
@@ -331,8 +331,8 @@ gimbal_pipeline:
 
     # 法向速度权重（软约束，可选）：
     # 仅在通过法向速度硬门控后生效。用于降低擦边/斜入射样本的 p_hit。
-    controller.fire.probability.normal_velocity_weight.enable: false
-    controller.fire.probability.normal_velocity_weight.v_ref: 28.0
+    controller.fire.probability.normal_velocity_weight.enable: true
+    controller.fire.probability.normal_velocity_weight.v_ref: 15.0
     controller.fire.probability.normal_velocity_weight.w_min: 0.5
 
     # 法向速度门控（硬约束，推荐开启）：
@@ -364,8 +364,8 @@ gimbal_pipeline:
     # lowpass 系数（0~1）：越大越平滑但响应更慢。
     controller.fire.probability.gate.alpha: 0.1
     # 滞回阈值：on 必须大于 off，差值越大抗抖越强但触发更慢。
-    controller.fire.probability.gate.fire_on_th: 0.75
-    controller.fire.probability.gate.fire_off_th: 0.35
+    controller.fire.probability.gate.fire_on_th: 0.85
+    controller.fire.probability.gate.fire_off_th: 0.45
     # integrator 参数（仅 mode=integrator 生效）：
     controller.fire.probability.gate.integrator_base_probability: 0.45
     controller.fire.probability.gate.integrator_rise: 8.0
@@ -468,7 +468,7 @@ gimbal_pipeline:
     controller.mpc.control_delay_s: 0.0
     controller.mpc.max_accel: 18.0
     controller.mpc.q_yaw: 1000.0 #追踪权重
-    controller.mpc.q_pitch: 1200.0
+    controller.mpc.q_pitch: 1000.0
     controller.mpc.q_yaw_vel: 90.0 #角速度跟踪权重
     controller.mpc.q_pitch_vel: 2.0
     controller.mpc.r_yaw: 0.008 #控制惩罚越大越柔和
