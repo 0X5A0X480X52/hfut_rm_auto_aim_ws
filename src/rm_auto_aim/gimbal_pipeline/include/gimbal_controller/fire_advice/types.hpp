@@ -52,6 +52,7 @@ struct ProbabilityConfig
   bool require_front_face{true};
   double normal_v_activate_min{8.0};
   double front_face_epsilon{1e-4};
+  double max_complement_angle_deg{90.0};
 
   double sigma_x0{0.010};
   double sigma_y0{0.015};

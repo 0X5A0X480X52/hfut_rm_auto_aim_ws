@@ -638,6 +638,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       get_parameter("controller.fire.probability.normal_velocity_gate.v_activate_min").as_double();
     prob_cfg.front_face_epsilon =
       get_parameter("controller.fire.probability.normal_velocity_gate.front_epsilon").as_double();
+    prob_cfg.max_complement_angle_deg =
+      get_parameter("controller.fire.probability.normal_velocity_gate.max_complement_angle_deg").as_double();
     // Reuse solver hitbox size as probability hit rectangle in SI meters.
     prob_cfg.armor_width_m = std::max(shooting_range_w, 1e-6);
     prob_cfg.armor_height_m = std::max(shooting_range_h, 1e-6);
@@ -1230,6 +1232,7 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.fire.probability.normal_velocity_gate.require_front_face", true);
   declare_parameter("controller.fire.probability.normal_velocity_gate.v_activate_min", 8.0);
   declare_parameter("controller.fire.probability.normal_velocity_gate.front_epsilon", 1e-4);
+  declare_parameter("controller.fire.probability.normal_velocity_gate.max_complement_angle_deg", 90.0);
   declare_parameter("controller.fire.probability.sigma_point.enable", true);
   declare_parameter("controller.fire.probability.sigma_point.method", std::string("unscented"));
   declare_parameter("controller.fire.probability.sigma_point.sigma_v0", 0.3);

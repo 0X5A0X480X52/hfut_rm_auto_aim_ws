@@ -337,10 +337,12 @@ gimbal_pipeline:
 
     # 法向速度门控（硬约束，推荐开启）：
     # 1) require_front_face=true 时，只有 front-hit（弹速与法向成钝角）才允许开火样本
+    #    进一步可用 max_complement_angle_deg 限制“与 -n 的夹角”上限（越小越严格）
     # 2) v_n < v_activate_min 时直接拒绝（模拟装甲板最小激发速度）
     # 3) front_epsilon 为 front-hit 数值判定容差
     controller.fire.probability.normal_velocity_gate.enable: true
     controller.fire.probability.normal_velocity_gate.require_front_face: true
+    controller.fire.probability.normal_velocity_gate.max_complement_angle_deg: 45.0
     controller.fire.probability.normal_velocity_gate.v_activate_min: 8.0
     controller.fire.probability.normal_velocity_gate.front_epsilon: 0.0001
 

@@ -374,7 +374,13 @@ ProbabilityDebugResult ProbabilityEngine::evaluate(
     const double impact_dt = tau + tf_nom - tf;
     const Eigen::Vector3d n_impact_nom = rotateAroundWorldZ(n0, armor_yaw_rate * impact_dt).normalized();
     const double dot_vn = v_b_world_nom.dot(n_impact_nom);
-    const bool front_ok = dot_vn < -std::max(cfg_.front_face_epsilon, 0.0);
+    const double v_norm = std::max(v_b_world_nom.norm(), 1e-6);
+    const double n_norm = std::max(n_impact_nom.norm(), 1e-6);
+    const double cos_vn = clamp(dot_vn / (v_norm * n_norm), -1.0, 1.0);
+    const double max_comp_angle_deg = clamp(cfg_.max_complement_angle_deg, 0.0, 180.0);
+    const double cos_comp_th = std::cos(max_comp_angle_deg * M_PI / 180.0);
+    const double front_cos_threshold = std::min(-cos_comp_th, -std::max(cfg_.front_face_epsilon, 0.0));
+    const bool front_ok = cos_vn <= front_cos_threshold;
     const double normal_velocity = std::max(0.0, -dot_vn);
 
     bool normal_gate_pass = true;
