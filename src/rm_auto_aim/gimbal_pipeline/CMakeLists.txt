@@ -26,6 +26,8 @@ find_package(message_filters REQUIRED)
 find_package(angles REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(qpOASES REQUIRED)
+find_package(OpenCV REQUIRED)
+find_package(cv_bridge REQUIRED)
 
 # ─── Include directories ───────────────────────────────────────
 include_directories(
@@ -59,11 +61,13 @@ ament_target_dependencies(${PROJECT_NAME}
   tf2_geometry_msgs
   message_filters
   angles
+  cv_bridge
 )
 
 target_link_libraries(${PROJECT_NAME}
   Eigen3::Eigen
   ${qpOASES_LIBRARY}
+  ${OpenCV_LIBS}
 )
 
 # ─── Register composable node ─────────────────────────────────
@@ -119,11 +123,13 @@ if(BUILD_TESTING)
       message_filters
       angles
       rclcpp_components
+      cv_bridge
     )
     target_link_libraries(${target_name}
       ${PROJECT_NAME}
       Eigen3::Eigen
       ${qpOASES_LIBRARY}
+      ${OpenCV_LIBS}
     )
   endfunction()
 
@@ -149,6 +155,7 @@ ament_export_dependencies(
   tf2_geometry_msgs
   message_filters
   angles
+  cv_bridge
 )
 
 # ─── Optional pybind11 module for offline KF optimization ─────────

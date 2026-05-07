@@ -329,11 +329,20 @@ gimbal_pipeline:
     controller.fire.probability.ballistic_growth_y: 0.060
     controller.fire.probability.ballistic_growth_z: 0.080
 
-    # 法向速度权重（预留，当前实现未完全使用）：
-    # enable 后会倾向“正对装甲板”的入射方向，减少擦边判定。
+    # 法向速度权重（软约束，可选）：
+    # 仅在通过法向速度硬门控后生效。用于降低擦边/斜入射样本的 p_hit。
     controller.fire.probability.normal_velocity_weight.enable: false
     controller.fire.probability.normal_velocity_weight.v_ref: 28.0
     controller.fire.probability.normal_velocity_weight.w_min: 0.5
+
+    # 法向速度门控（硬约束，推荐开启）：
+    # 1) require_front_face=true 时，只有 front-hit（弹速与法向成钝角）才允许开火样本
+    # 2) v_n < v_activate_min 时直接拒绝（模拟装甲板最小激发速度）
+    # 3) front_epsilon 为 front-hit 数值判定容差
+    controller.fire.probability.normal_velocity_gate.enable: true
+    controller.fire.probability.normal_velocity_gate.require_front_face: true
+    controller.fire.probability.normal_velocity_gate.v_activate_min: 8.0
+    controller.fire.probability.normal_velocity_gate.front_epsilon: 0.0001
 
     # ── Sigma-Point（UT）扩展 ───────────────────────────────────────
     # 用于传播 [弹速误差, 发射延时误差] 对 e_uv 的影响。
@@ -369,6 +378,23 @@ gimbal_pipeline:
     controller.fire.visualization.ellipse_samples: 64
     # 点云最大点数：越大越细腻但更耗带宽/渲染。
     controller.fire.visualization.max_impact_points: 120
+
+    # ── 概率可视化（OpenCV 图像调试）───────────────────────────────
+    # 输出两个调试图：
+    #   ~/fire_debug/armor_plane : 装甲板平面投影误差 / 椭圆 / tau 样本
+    #   ~/fire_debug/normal_view : 法向入射示意 / 法向速度 / gate 状态
+    controller.fire.visualization.image_debug.enable: false
+    # 图像发布限频（Hz），建议 5~15，避免占用过高
+    controller.fire.visualization.image_debug.publish_rate_hz: 10.0
+    # 图像尺寸（像素）
+    controller.fire.visualization.image_debug.width: 960
+    controller.fire.visualization.image_debug.height: 540
+    # 是否叠加文字调试信息
+    controller.fire.visualization.image_debug.show_text: true
+    # 是否在平面图绘制 1σ/2σ 椭圆
+    controller.fire.visualization.image_debug.show_sigma_ellipse: true
+    # 是否在法向图绘制速度扇形示意
+    controller.fire.visualization.image_debug.show_velocity_fan: true
 
     # ── GimbalCmd 输出端保护滤波器 ──────────────────────────────────
     # 在 gimbal_cmd 发布前对 yaw_diff / pitch_diff 执行多级可配置保护：

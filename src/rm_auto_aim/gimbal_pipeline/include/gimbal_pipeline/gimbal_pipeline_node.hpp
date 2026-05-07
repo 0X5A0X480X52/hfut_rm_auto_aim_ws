@@ -16,6 +16,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
+#include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
@@ -153,6 +154,9 @@ class GimbalPipelineNode : public rclcpp::Node {
       const std_msgs::msg::Header &header,
       const gimbal_controller::FireAdviceDebugSnapshot & fire_snapshot,
       visualization_msgs::msg::MarkerArray & marker_array);
+  void publishFireProbabilityDebugImages(
+      const std_msgs::msg::Header &header,
+      const gimbal_controller::FireAdviceDebugSnapshot & fire_snapshot);
   std::array<float, 4> hsvToRgb(float h, float s, float v);
 
   /* ================================================================ */
@@ -259,6 +263,10 @@ class GimbalPipelineNode : public rclcpp::Node {
       debug_gimbal_marker_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
       debug_maneuver_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
+      debug_fire_plane_image_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
+      debug_fire_normal_image_pub_;
 
   // Services
   rclcpp::Service<rm_interfaces::srv::SetMode>::SharedPtr set_mode_srv_;
@@ -293,6 +301,14 @@ class GimbalPipelineNode : public rclcpp::Node {
   bool fire_prob_vis_enable_{true};
   int fire_prob_vis_ellipse_samples_{64};
   int fire_prob_vis_max_impact_points_{120};
+  bool fire_prob_image_debug_enable_{false};
+  bool fire_prob_image_debug_show_text_{true};
+  bool fire_prob_image_debug_show_sigma_ellipse_{true};
+  bool fire_prob_image_debug_show_velocity_fan_{true};
+  int fire_prob_image_debug_width_{960};
+  int fire_prob_image_debug_height_{540};
+  double fire_prob_image_debug_publish_rate_hz_{10.0};
+  rclcpp::Time last_fire_prob_image_pub_time_{0, 0, RCL_ROS_TIME};
 };
 
 }  // namespace fyt::auto_aim

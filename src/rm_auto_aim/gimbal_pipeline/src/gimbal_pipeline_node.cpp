@@ -16,6 +16,10 @@
 #include <iomanip>
 #include <unordered_set>
 
+#include <cv_bridge/cv_bridge.h>
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+
 #include "rm_utils/logger/log.hpp"
 
 #include <tf2/LinearMath/Quaternion.h>
@@ -477,6 +481,20 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     get_parameter("controller.fire.visualization.ellipse_samples").as_int();
   fire_prob_vis_max_impact_points_ =
     get_parameter("controller.fire.visualization.max_impact_points").as_int();
+  fire_prob_image_debug_enable_ =
+    get_parameter("controller.fire.visualization.image_debug.enable").as_bool();
+  fire_prob_image_debug_publish_rate_hz_ = std::max(
+    get_parameter("controller.fire.visualization.image_debug.publish_rate_hz").as_double(), 0.1);
+  fire_prob_image_debug_width_ = std::max(
+    static_cast<int>(get_parameter("controller.fire.visualization.image_debug.width").as_int()), 320);
+  fire_prob_image_debug_height_ = std::max(
+    static_cast<int>(get_parameter("controller.fire.visualization.image_debug.height").as_int()), 240);
+  fire_prob_image_debug_show_text_ =
+    get_parameter("controller.fire.visualization.image_debug.show_text").as_bool();
+  fire_prob_image_debug_show_sigma_ellipse_ =
+    get_parameter("controller.fire.visualization.image_debug.show_sigma_ellipse").as_bool();
+  fire_prob_image_debug_show_velocity_fan_ =
+    get_parameter("controller.fire.visualization.image_debug.show_velocity_fan").as_bool();
   const std::string fire_target_visibility_policy =
     get_parameter("controller.fire.target_visibility_policy").as_string();
 
@@ -859,6 +877,12 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     debug_maneuver_pub_ =
         create_publisher<visualization_msgs::msg::MarkerArray>(
             "~/maneuver_markers", 10);
+    if (fire_prob_image_debug_enable_) {
+      debug_fire_plane_image_pub_ = create_publisher<sensor_msgs::msg::Image>(
+        "~/fire_debug/armor_plane", rclcpp::SensorDataQoS());
+      debug_fire_normal_image_pub_ = create_publisher<sensor_msgs::msg::Image>(
+        "~/fire_debug/normal_view", rclcpp::SensorDataQoS());
+    }
   }
 
   RCLCPP_INFO(get_logger(), "Subscribed to topics: /armor_detector/armors (with TF sync), /joint_states, camera_info");
@@ -1224,6 +1248,13 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.fire.visualization.enable", true);
   declare_parameter("controller.fire.visualization.ellipse_samples", 64);
   declare_parameter("controller.fire.visualization.max_impact_points", 120);
+  declare_parameter("controller.fire.visualization.image_debug.enable", false);
+  declare_parameter("controller.fire.visualization.image_debug.publish_rate_hz", 10.0);
+  declare_parameter("controller.fire.visualization.image_debug.width", 960);
+  declare_parameter("controller.fire.visualization.image_debug.height", 540);
+  declare_parameter("controller.fire.visualization.image_debug.show_text", true);
+  declare_parameter("controller.fire.visualization.image_debug.show_sigma_ellipse", true);
+  declare_parameter("controller.fire.visualization.image_debug.show_velocity_fan", true);
 
   // Deprecated aliases (for migration from legacy gimbal_controller keys)
   declare_parameter("solver.prediction_delay", 0.0);
@@ -2752,6 +2783,7 @@ void GimbalPipelineNode::timerCallback() {
 
   if (debug_mode_ && control_result.has_tracking) {
     publishGimbalMarkers(context.target_robot, control_result.cmd, control_result.fire_advice_debug);
+    publishFireProbabilityDebugImages(context.target_robot.header, control_result.fire_advice_debug);
   }
 }
 
@@ -3384,6 +3416,148 @@ void GimbalPipelineNode::publishFireProbabilityMarkers(
       << " fire=" << (fire_snapshot.fire_advice ? 1 : 0);
   txt.text = oss.str();
   marker_array.markers.push_back(txt);
+}
+
+void GimbalPipelineNode::publishFireProbabilityDebugImages(
+  const std_msgs::msg::Header & header,
+  const gimbal_controller::FireAdviceDebugSnapshot & fire_snapshot)
+{
+  if (!fire_prob_image_debug_enable_ || !debug_fire_plane_image_pub_ || !debug_fire_normal_image_pub_) {
+    return;
+  }
+  if (!fire_snapshot.probability_enabled || fire_snapshot.tau_samples.empty()) {
+    return;
+  }
+
+  const rclcpp::Time stamp = header.stamp;
+  const double min_period = 1.0 / std::max(fire_prob_image_debug_publish_rate_hz_, 0.1);
+  if (last_fire_prob_image_pub_time_.nanoseconds() > 0 &&
+    (stamp - last_fire_prob_image_pub_time_).seconds() < min_period)
+  {
+    return;
+  }
+  last_fire_prob_image_pub_time_ = stamp;
+
+  const int w = fire_prob_image_debug_width_;
+  const int h = fire_prob_image_debug_height_;
+  cv::Mat plane(h, w, CV_8UC3, cv::Scalar(18, 18, 18));
+  cv::Mat normal(h, w, CV_8UC3, cv::Scalar(18, 18, 18));
+
+  const int margin = 40;
+  const cv::Point2d center_plane(w * 0.45, h * 0.55);
+  const double half_w = std::max(fire_snapshot.armor_width_m * 0.5, 1e-6);
+  const double half_h = std::max(fire_snapshot.armor_height_m * 0.5, 1e-6);
+  const double sx = (w * 0.35 - margin) / half_w;
+  const double sy = (h * 0.35 - margin) / half_h;
+  const double scale = std::min(sx, sy);
+
+  const cv::Rect armor_rect(
+    static_cast<int>(center_plane.x - half_w * scale),
+    static_cast<int>(center_plane.y - half_h * scale),
+    static_cast<int>(2.0 * half_w * scale),
+    static_cast<int>(2.0 * half_h * scale));
+  cv::rectangle(plane, armor_rect, cv::Scalar(220, 220, 220), 2);
+  cv::line(plane, cv::Point(armor_rect.x, static_cast<int>(center_plane.y)),
+    cv::Point(armor_rect.x + armor_rect.width, static_cast<int>(center_plane.y)), cv::Scalar(80, 80, 80), 1);
+  cv::line(plane, cv::Point(static_cast<int>(center_plane.x), armor_rect.y),
+    cv::Point(static_cast<int>(center_plane.x), armor_rect.y + armor_rect.height), cv::Scalar(80, 80, 80), 1);
+
+  for (const auto & s : fire_snapshot.tau_samples) {
+    const int px = static_cast<int>(center_plane.x + s.e_u * scale);
+    const int py = static_cast<int>(center_plane.y - s.e_v * scale);
+    const int g = static_cast<int>(255.0 * std::clamp(s.p_hit, 0.0, 1.0));
+    const int r = 255 - g;
+    cv::circle(plane, cv::Point(px, py), 3, cv::Scalar(30, g, r), -1);
+  }
+
+  if (fire_prob_image_debug_show_sigma_ellipse_) {
+    const int a1 = std::max(1, static_cast<int>(std::abs(fire_snapshot.sigma_u) * scale));
+    const int b1 = std::max(1, static_cast<int>(std::abs(fire_snapshot.sigma_v) * scale));
+    cv::ellipse(plane, center_plane, cv::Size(a1, b1), 0.0, 0.0, 360.0, cv::Scalar(80, 200, 255), 2);
+    cv::ellipse(plane, center_plane, cv::Size(2 * a1, 2 * b1), 0.0, 0.0, 360.0, cv::Scalar(80, 130, 255), 1);
+  }
+
+  const cv::Point best_pt(
+    static_cast<int>(center_plane.x + fire_snapshot.e_u * scale),
+    static_cast<int>(center_plane.y - fire_snapshot.e_v * scale));
+  cv::circle(plane, best_pt, 6, cv::Scalar(0, 255, 255), 2);
+
+  const gimbal_controller::fire_advice::TauDebugSample * best_s = &fire_snapshot.tau_samples.front();
+  double min_tau_diff = std::numeric_limits<double>::max();
+  const double best_tau_s = fire_snapshot.best_tau_ms * 1e-3;
+  for (const auto & sample : fire_snapshot.tau_samples) {
+    const double d = std::abs(sample.tau_s - best_tau_s);
+    if (d < min_tau_diff) {
+      min_tau_diff = d;
+      best_s = &sample;
+    }
+  }
+  const bool best_front_ok = best_s->front_ok;
+  const bool best_gate_ok = best_s->normal_gate_pass;
+
+  if (fire_prob_image_debug_show_text_) {
+    std::ostringstream oss1;
+    oss1 << "Pwin=" << std::fixed << std::setprecision(2) << fire_snapshot.p_hit_window
+         << " Score=" << fire_snapshot.fire_score
+         << " Tau=" << std::setprecision(1) << fire_snapshot.best_tau_ms << "ms"
+         << " Fire=" << (fire_snapshot.fire_advice ? "Y" : "N");
+    cv::putText(plane, oss1.str(), cv::Point(20, 30), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(230, 230, 230), 1);
+    std::ostringstream oss2;
+    oss2 << "eu=" << std::setprecision(3) << fire_snapshot.e_u
+         << " ev=" << fire_snapshot.e_v
+         << " su=" << fire_snapshot.sigma_u
+         << " sv=" << fire_snapshot.sigma_v;
+    cv::putText(plane, oss2.str(), cv::Point(20, 55), cv::FONT_HERSHEY_SIMPLEX, 0.55, cv::Scalar(200, 200, 200), 1);
+  }
+
+  const cv::Point2d c2(w * 0.50, h * 0.58);
+  const double axis_len = std::min(w, h) * 0.28;
+  const cv::Point2d n_tip(c2.x + axis_len, c2.y);
+  cv::arrowedLine(normal, c2, n_tip, cv::Scalar(80, 220, 80), 3, cv::LINE_AA, 0, 0.05);
+  cv::putText(normal, "armor normal +n", cv::Point(static_cast<int>(n_tip.x) - 30, static_cast<int>(n_tip.y) - 10),
+    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(120, 240, 120), 1);
+
+  const double v_n = std::max(0.0, best_s->normal_velocity);
+  const double v_ref = std::max(1e-3, get_parameter("controller.fire.probability.normal_velocity_weight.v_ref").as_double());
+  const double ratio = std::clamp(v_n / v_ref, 0.0, 1.0);
+  const double theta_deg = 150.0 - 120.0 * ratio;
+  const double theta = theta_deg * M_PI / 180.0;
+  const cv::Point2d v_tip(c2.x + axis_len * std::cos(theta), c2.y - axis_len * std::sin(theta));
+  cv::arrowedLine(normal, c2, v_tip, cv::Scalar(80, 180, 255), 3, cv::LINE_AA, 0, 0.05);
+  cv::putText(normal, "bullet velocity", cv::Point(static_cast<int>(v_tip.x) - 30, static_cast<int>(v_tip.y) - 8),
+    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(120, 200, 255), 1);
+
+  if (fire_prob_image_debug_show_velocity_fan_) {
+    const cv::Scalar fan_color = best_front_ok ? cv::Scalar(60, 200, 60) : cv::Scalar(60, 60, 220);
+    cv::ellipse(normal, c2, cv::Size(static_cast<int>(axis_len * 0.7), static_cast<int>(axis_len * 0.7)),
+      0.0, -45.0, 45.0, fan_color, 2, cv::LINE_AA);
+  }
+
+  cv::line(normal,
+    cv::Point(static_cast<int>(c2.x), static_cast<int>(c2.y)),
+    cv::Point(static_cast<int>(c2.x + axis_len * ratio), static_cast<int>(c2.y)),
+    cv::Scalar(0, 255, 255), 4, cv::LINE_AA);
+  cv::putText(normal, "v_n along normal", cv::Point(static_cast<int>(c2.x), static_cast<int>(c2.y) + 24),
+    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 255), 1);
+
+  const cv::Scalar status_color = (best_front_ok && best_gate_ok) ? cv::Scalar(80, 240, 80) : cv::Scalar(80, 80, 240);
+  const std::string status_text = (best_front_ok && best_gate_ok) ? "HIT GATE: PASS" : "HIT GATE: BLOCK";
+  cv::putText(normal, status_text, cv::Point(20, 35), cv::FONT_HERSHEY_SIMPLEX, 0.85, status_color, 2);
+
+  std::ostringstream ns1;
+  ns1 << "front_ok=" << (best_front_ok ? "Y" : "N")
+      << " gate_ok=" << (best_gate_ok ? "Y" : "N")
+      << " normal_v=" << std::fixed << std::setprecision(2) << best_s->normal_velocity << " m/s";
+  cv::putText(normal, ns1.str(), cv::Point(20, 65), cv::FONT_HERSHEY_SIMPLEX, 0.55, cv::Scalar(220, 220, 220), 1);
+  std::ostringstream ns2;
+  ns2 << "normal_weight=" << std::setprecision(2) << best_s->normal_weight
+      << " p_hit=" << best_s->p_hit;
+  cv::putText(normal, ns2.str(), cv::Point(20, 90), cv::FONT_HERSHEY_SIMPLEX, 0.55, cv::Scalar(220, 220, 220), 1);
+
+  auto plane_msg = cv_bridge::CvImage(header, "bgr8", plane).toImageMsg();
+  auto normal_msg = cv_bridge::CvImage(header, "bgr8", normal).toImageMsg();
+  debug_fire_plane_image_pub_->publish(*plane_msg);
+  debug_fire_normal_image_pub_->publish(*normal_msg);
 }
 
 void GimbalPipelineNode::publishManeuverMarkers(
