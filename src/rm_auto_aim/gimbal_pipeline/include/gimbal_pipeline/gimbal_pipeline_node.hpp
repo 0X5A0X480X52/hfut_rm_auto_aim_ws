@@ -146,8 +146,13 @@ class GimbalPipelineNode : public rclcpp::Node {
   void initMarkers();
   void publishGimbalMarkers(
       const rm_interfaces::msg::TrackedRobot &target_robot,
-      const rm_interfaces::msg::GimbalCmd &cmd);
+      const rm_interfaces::msg::GimbalCmd &cmd,
+      const gimbal_controller::FireAdviceDebugSnapshot & fire_snapshot);
   void publishManeuverMarkers(const std_msgs::msg::Header &header);
+  void publishFireProbabilityMarkers(
+      const std_msgs::msg::Header &header,
+      const gimbal_controller::FireAdviceDebugSnapshot & fire_snapshot,
+      visualization_msgs::msg::MarkerArray & marker_array);
   std::array<float, 4> hsvToRgb(float h, float s, float v);
 
   /* ================================================================ */
@@ -285,6 +290,9 @@ class GimbalPipelineNode : public rclcpp::Node {
     visualization_msgs::msg::Marker virtual_armor_marker_;
         visualization_msgs::msg::Marker virtual_armor_text_marker_;
   std::vector<std::array<float, 4>> color_palette_;
+  bool fire_prob_vis_enable_{true};
+  int fire_prob_vis_ellipse_samples_{64};
+  int fire_prob_vis_max_impact_points_{120};
 };
 
 }  // namespace fyt::auto_aim

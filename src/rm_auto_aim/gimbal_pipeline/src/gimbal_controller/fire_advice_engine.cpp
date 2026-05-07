@@ -193,6 +193,8 @@ CandidateImpactSolution CandidateImpactSolver::solveSingleCandidate(
 
   const Eigen::Vector3d target_velocity =
     fyt::auto_aim::robot_description::TrackedRobotUsage::linearVelocity(robot);
+  const double target_yaw_rate =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::yawVelocity(robot);
 
   double flight_time = 0.0;
   double target_yaw = 0.0;
@@ -233,6 +235,13 @@ CandidateImpactSolution CandidateImpactSolver::solveSingleCandidate(
   solution.flight_time_s = std::max(flight_time, 0.0);
   solution.target_yaw = angles::normalize_angle(target_yaw + request.yaw_offset_rad);
   solution.target_pitch = target_pitch + request.pitch_offset_rad;
+  solution.armor_position = target_position;
+  solution.center_position = fyt::auto_aim::robot_description::TrackedRobotUsage::predictCenter(
+    robot,
+    base_dt + std::max(flight_time, 0.0),
+    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
+  solution.center_velocity = target_velocity;
+  solution.armor_yaw_rate = target_yaw_rate;
 
   return solution;
 }
@@ -331,7 +340,17 @@ FireAdviceEngineResult FireAdviceEngine::evaluate(const FireAdviceEngineRequest 
     candidate.confidence = eval.confidence;
     candidate.facing_cos = impact.facing_cos;
     candidate.facing_ok = impact.facing_ok;
+    candidate.armor_position = impact.armor_position;
+    Eigen::Vector3d normal = impact.armor_position - impact.center_position;
+    if (normal.norm() <= 1e-6) {
+      normal = Eigen::Vector3d::UnitX();
+    } else {
+      normal.normalize();
+    }
+    candidate.armor_normal = normal;
     candidate.fire = eval.fire && impact.facing_ok;
+    candidate.center_velocity = impact.center_velocity;
+    candidate.armor_yaw_rate = impact.armor_yaw_rate;
     result.candidates.push_back(candidate);
 
     ++result.candidate_count_total;
@@ -366,6 +385,51 @@ FireAdviceEngineResult FireAdviceEngine::evaluate(const FireAdviceEngineRequest 
   }
 
   result.valid = has_best;
+
+  if (has_best && probability_cfg_.enable) {
+    result.probability_enabled = true;
+    const auto best_it = std::find_if(
+      result.candidates.begin(),
+      result.candidates.end(),
+      [&](const FireAdviceCandidateResult & c) {return c.candidate_index == result.best_candidate_index;});
+    if (best_it != result.candidates.end()) {
+      const auto prob = probability_engine_.evaluate(
+        request.target_robot,
+        std::max(best_it->distance, kMinDistance),
+        best_it->yaw_error,
+        best_it->pitch_error,
+        std::max(best_it->flight_time_s, 0.0),
+        std::max(request.bullet_speed, kMinBulletSpeed),
+        muzzle_yaw,
+        muzzle_pitch,
+        request.current_yaw_rate,
+        request.current_pitch_rate,
+        request.current_yaw_accel,
+        request.current_pitch_accel,
+        best_it->armor_position,
+        best_it->armor_normal,
+        best_it->center_velocity,
+        best_it->armor_yaw_rate,
+        1.0 / 120.0,
+        request.target_robot.robot_id);
+      if (prob.valid) {
+        result.p_hit_window = prob.p_window;
+        result.fire_score = prob.fire_score;
+        result.best_tau_s = prob.best_tau_s;
+        result.e_u = prob.best_e_u;
+        result.e_v = prob.best_e_v;
+        result.sigma_u = prob.best_sigma_u;
+        result.sigma_v = prob.best_sigma_v;
+        result.armor_width_m = prob.armor_width_m;
+        result.armor_height_m = prob.armor_height_m;
+        result.tau_samples = prob.tau_samples;
+        result.armor_center = prob.armor_center;
+        result.armor_right = prob.armor_right;
+        result.armor_up = prob.armor_up;
+        result.fire_advice = prob.fire_state;
+      }
+    }
+  }
   return result;
 }
 

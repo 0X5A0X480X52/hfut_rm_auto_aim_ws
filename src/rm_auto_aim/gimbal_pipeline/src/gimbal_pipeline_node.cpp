@@ -462,6 +462,21 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     get_parameter("controller.fire.facing_filter_opening_angle_deg").as_double();
   bool fire_use_gimbal_kinematics =
     get_parameter("controller.fire.use_gimbal_kinematics").as_bool();
+  const bool fire_probability_enable =
+    get_parameter("controller.fire.probability.enable").as_bool();
+  const double fire_probability_window_ms =
+    get_parameter("controller.fire.probability.future_window_ms").as_double();
+  const double fire_probability_step_ms =
+    get_parameter("controller.fire.probability.future_step_ms").as_double();
+  const std::string fire_probability_window_fusion =
+    get_parameter("controller.fire.probability.window_fusion").as_string();
+  const double fire_probability_softmax_beta =
+    get_parameter("controller.fire.probability.softmax_beta").as_double();
+  fire_prob_vis_enable_ = get_parameter("controller.fire.visualization.enable").as_bool();
+  fire_prob_vis_ellipse_samples_ =
+    get_parameter("controller.fire.visualization.ellipse_samples").as_int();
+  fire_prob_vis_max_impact_points_ =
+    get_parameter("controller.fire.visualization.max_impact_points").as_int();
   const std::string fire_target_visibility_policy =
     get_parameter("controller.fire.target_visibility_policy").as_string();
 
@@ -563,6 +578,65 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     fire_advice_engine_->setFlightTimeIterations(fire_flight_time_iters);
     fire_advice_engine_->setFacingFilterOpeningAngleDeg(fire_facing_filter_opening_angle_deg);
     fire_advice_engine_->setUseGimbalKinematics(fire_use_gimbal_kinematics);
+    gimbal_controller::fire_advice::ProbabilityConfig prob_cfg;
+    prob_cfg.enable = fire_probability_enable;
+    prob_cfg.future_window_ms = std::max(fire_probability_window_ms, 0.0);
+    prob_cfg.future_step_ms = std::max(fire_probability_step_ms, 1.0);
+    prob_cfg.softmax_fusion = (fire_probability_window_fusion == "softmax");
+    prob_cfg.softmax_beta = fire_probability_softmax_beta;
+    prob_cfg.use_tracker_covariance =
+      get_parameter("controller.fire.probability.use_tracker_covariance").as_bool();
+    prob_cfg.strict_covariance =
+      get_parameter("controller.fire.probability.strict_covariance").as_bool();
+    prob_cfg.fallback_sigma_x =
+      get_parameter("controller.fire.probability.fallback_sigma_x").as_double();
+    prob_cfg.fallback_sigma_y =
+      get_parameter("controller.fire.probability.fallback_sigma_y").as_double();
+    prob_cfg.fallback_sigma_z =
+      get_parameter("controller.fire.probability.fallback_sigma_z").as_double();
+    prob_cfg.sigma_x0 =
+      get_parameter("controller.fire.probability.ballistic_sigma_x0").as_double();
+    prob_cfg.sigma_y0 =
+      get_parameter("controller.fire.probability.ballistic_sigma_y0").as_double();
+    prob_cfg.sigma_z0 =
+      get_parameter("controller.fire.probability.ballistic_sigma_z0").as_double();
+    prob_cfg.growth_x =
+      get_parameter("controller.fire.probability.ballistic_growth_x").as_double();
+    prob_cfg.growth_y =
+      get_parameter("controller.fire.probability.ballistic_growth_y").as_double();
+    prob_cfg.growth_z =
+      get_parameter("controller.fire.probability.ballistic_growth_z").as_double();
+    // Reuse solver hitbox size as probability hit rectangle in SI meters.
+    prob_cfg.armor_width_m = std::max(shooting_range_w, 1e-6);
+    prob_cfg.armor_height_m = std::max(shooting_range_h, 1e-6);
+
+    gimbal_controller::fire_advice::SigmaPointConfig sigma_cfg;
+    sigma_cfg.enable = get_parameter("controller.fire.probability.sigma_point.enable").as_bool();
+    sigma_cfg.use_unscented =
+      get_parameter("controller.fire.probability.sigma_point.method").as_string() == "unscented";
+    sigma_cfg.sigma_v0 =
+      get_parameter("controller.fire.probability.sigma_point.sigma_v0").as_double();
+    sigma_cfg.sigma_delay =
+      get_parameter("controller.fire.probability.sigma_point.sigma_delay").as_double();
+    sigma_cfg.rho = get_parameter("controller.fire.probability.sigma_point.rho").as_double();
+    sigma_cfg.alpha = get_parameter("controller.fire.probability.sigma_point.alpha").as_double();
+    sigma_cfg.beta = get_parameter("controller.fire.probability.sigma_point.beta").as_double();
+    sigma_cfg.kappa = get_parameter("controller.fire.probability.sigma_point.kappa").as_double();
+
+    gimbal_controller::fire_advice::FireGateConfig gate_cfg;
+    gate_cfg.integrator_mode =
+      get_parameter("controller.fire.probability.gate.mode").as_string() == "integrator";
+    gate_cfg.alpha = get_parameter("controller.fire.probability.gate.alpha").as_double();
+    gate_cfg.fire_on_th = get_parameter("controller.fire.probability.gate.fire_on_th").as_double();
+    gate_cfg.fire_off_th = get_parameter("controller.fire.probability.gate.fire_off_th").as_double();
+    gate_cfg.integrator_base_probability =
+      get_parameter("controller.fire.probability.gate.integrator_base_probability").as_double();
+    gate_cfg.integrator_rise =
+      get_parameter("controller.fire.probability.gate.integrator_rise").as_double();
+    gate_cfg.integrator_fall =
+      get_parameter("controller.fire.probability.gate.integrator_fall").as_double();
+
+    fire_advice_engine_->setProbabilityConfig(prob_cfg, sigma_cfg, gate_cfg);
   }
   if (gimbal_control_core_) {
     gimbal_controller::FireDecisionConfig fire_cfg;
@@ -1095,6 +1169,40 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.fire.facing_filter_opening_angle_deg", 180.0);
   declare_parameter("controller.fire.use_gimbal_kinematics", false);
   declare_parameter("controller.fire.target_visibility_policy", std::string("facing_only"));
+  declare_parameter("controller.fire.probability.enable", false);
+  declare_parameter("controller.fire.probability.future_window_ms", 50.0);
+  declare_parameter("controller.fire.probability.future_step_ms", 10.0);
+  declare_parameter("controller.fire.probability.window_fusion", std::string("max"));
+  declare_parameter("controller.fire.probability.softmax_beta", 20.0);
+  declare_parameter("controller.fire.probability.use_tracker_covariance", true);
+  declare_parameter("controller.fire.probability.strict_covariance", false);
+  declare_parameter("controller.fire.probability.fallback_sigma_x", 0.02);
+  declare_parameter("controller.fire.probability.fallback_sigma_y", 0.02);
+  declare_parameter("controller.fire.probability.fallback_sigma_z", 0.03);
+  declare_parameter("controller.fire.probability.ballistic_sigma_x0", 0.010);
+  declare_parameter("controller.fire.probability.ballistic_sigma_y0", 0.015);
+  declare_parameter("controller.fire.probability.ballistic_sigma_z0", 0.015);
+  declare_parameter("controller.fire.probability.ballistic_growth_x", 0.03);
+  declare_parameter("controller.fire.probability.ballistic_growth_y", 0.06);
+  declare_parameter("controller.fire.probability.ballistic_growth_z", 0.08);
+  declare_parameter("controller.fire.probability.sigma_point.enable", true);
+  declare_parameter("controller.fire.probability.sigma_point.method", std::string("unscented"));
+  declare_parameter("controller.fire.probability.sigma_point.sigma_v0", 0.3);
+  declare_parameter("controller.fire.probability.sigma_point.sigma_delay", 0.005);
+  declare_parameter("controller.fire.probability.sigma_point.rho", 0.0);
+  declare_parameter("controller.fire.probability.sigma_point.alpha", 0.7);
+  declare_parameter("controller.fire.probability.sigma_point.beta", 2.0);
+  declare_parameter("controller.fire.probability.sigma_point.kappa", 0.0);
+  declare_parameter("controller.fire.probability.gate.mode", std::string("lowpass"));
+  declare_parameter("controller.fire.probability.gate.alpha", 0.85);
+  declare_parameter("controller.fire.probability.gate.fire_on_th", 0.65);
+  declare_parameter("controller.fire.probability.gate.fire_off_th", 0.35);
+  declare_parameter("controller.fire.probability.gate.integrator_base_probability", 0.45);
+  declare_parameter("controller.fire.probability.gate.integrator_rise", 8.0);
+  declare_parameter("controller.fire.probability.gate.integrator_fall", 6.0);
+  declare_parameter("controller.fire.visualization.enable", true);
+  declare_parameter("controller.fire.visualization.ellipse_samples", 64);
+  declare_parameter("controller.fire.visualization.max_impact_points", 120);
 
   // Deprecated aliases (for migration from legacy gimbal_controller keys)
   declare_parameter("solver.prediction_delay", 0.0);
@@ -2622,7 +2730,7 @@ void GimbalPipelineNode::timerCallback() {
   }
 
   if (debug_mode_ && control_result.has_tracking) {
-    publishGimbalMarkers(context.target_robot, control_result.cmd);
+    publishGimbalMarkers(context.target_robot, control_result.cmd, control_result.fire_advice_debug);
   }
 }
 
@@ -2745,7 +2853,8 @@ void GimbalPipelineNode::initMarkers() {
 
 void GimbalPipelineNode::publishGimbalMarkers(
     const rm_interfaces::msg::TrackedRobot &target_robot,
-    const rm_interfaces::msg::GimbalCmd &cmd) {
+    const rm_interfaces::msg::GimbalCmd &cmd,
+    const gimbal_controller::FireAdviceDebugSnapshot & fire_snapshot) {
   if (!debug_gimbal_marker_pub_) return;
 
   const auto normalized_target = robot_description::TrackedRobotUsage::normalizeState(target_robot);
@@ -3014,7 +3123,246 @@ void GimbalPipelineNode::publishGimbalMarkers(
     marker_array.markers.push_back(trajectory_marker_);
   }
 
+  if (fire_prob_vis_enable_) {
+    publishFireProbabilityMarkers(target_robot.header, fire_snapshot, marker_array);
+  }
+
   debug_gimbal_marker_pub_->publish(marker_array);
+}
+
+void GimbalPipelineNode::publishFireProbabilityMarkers(
+  const std_msgs::msg::Header & header,
+  const gimbal_controller::FireAdviceDebugSnapshot & fire_snapshot,
+  visualization_msgs::msg::MarkerArray & marker_array)
+{
+  if (!fire_snapshot.probability_enabled || fire_snapshot.tau_samples.empty()) {
+    const std::vector<std::pair<std::string, int>> stale_markers = {
+      {"fire_prob/tau_candidates", 0},
+      {"fire_prob/error_ellipse_1sigma", 0},
+      {"fire_prob/error_ellipse_2sigma", 0},
+      {"fire_prob/trajectory_mean", 0},
+      {"fire_prob/impact_cloud", 0},
+      {"fire_prob/armor_plane", 0},
+      {"fire_prob/mean_error_point", 0},
+      {"fire_prob/text", 0}
+    };
+    for (const auto & [ns, id] : stale_markers) {
+      visualization_msgs::msg::Marker del;
+      del.header = header;
+      del.ns = ns;
+      del.id = id;
+      del.action = visualization_msgs::msg::Marker::DELETE;
+      marker_array.markers.push_back(del);
+    }
+    return;
+  }
+
+  visualization_msgs::msg::Marker traj;
+  traj.header = header;
+  traj.ns = "fire_prob/trajectory_mean";
+  traj.id = 0;
+  traj.type = visualization_msgs::msg::Marker::LINE_STRIP;
+  traj.action = visualization_msgs::msg::Marker::ADD;
+  traj.scale.x = 0.01;
+  traj.color.a = 0.95;
+  traj.color.r = 0.1;
+  traj.color.g = 0.95;
+  traj.color.b = 0.2;
+  for (const auto & s : fire_snapshot.tau_samples) {
+    geometry_msgs::msg::Point p;
+    p.x = s.impact_x;
+    p.y = s.impact_y;
+    p.z = s.impact_z;
+    traj.points.push_back(p);
+  }
+  marker_array.markers.push_back(traj);
+
+  visualization_msgs::msg::Marker tau_pts;
+  tau_pts.header = header;
+  tau_pts.ns = "fire_prob/tau_candidates";
+  tau_pts.id = 0;
+  tau_pts.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+  tau_pts.action = visualization_msgs::msg::Marker::ADD;
+  tau_pts.scale.x = 0.03;
+  tau_pts.scale.y = 0.03;
+  tau_pts.scale.z = 0.03;
+  tau_pts.color.a = 0.9;
+  tau_pts.points.clear();
+  tau_pts.colors.clear();
+  for (const auto & s : fire_snapshot.tau_samples) {
+    geometry_msgs::msg::Point p;
+    p.x = s.impact_x;
+    p.y = s.impact_y;
+    p.z = s.impact_z;
+    tau_pts.points.push_back(p);
+    std_msgs::msg::ColorRGBA c;
+    c.a = 0.9f;
+    c.r = static_cast<float>(1.0 - s.p_hit);
+    c.g = static_cast<float>(s.p_hit);
+    c.b = 0.1f;
+    tau_pts.colors.push_back(c);
+  }
+  marker_array.markers.push_back(tau_pts);
+
+  visualization_msgs::msg::Marker armor_plane;
+  armor_plane.header = header;
+  armor_plane.ns = "fire_prob/armor_plane";
+  armor_plane.id = 0;
+  armor_plane.type = visualization_msgs::msg::Marker::LINE_LIST;
+  armor_plane.action = visualization_msgs::msg::Marker::ADD;
+  armor_plane.scale.x = 0.008;
+  armor_plane.color.a = 0.9;
+  armor_plane.color.r = 0.8;
+  armor_plane.color.g = 0.95;
+  armor_plane.color.b = 1.0;
+  const double hw = std::max(fire_snapshot.armor_width_m, 1e-6) * 0.5;
+  const double hh = std::max(fire_snapshot.armor_height_m, 1e-6) * 0.5;
+  const Eigen::Vector3d c = fire_snapshot.armor_center;
+  const Eigen::Vector3d r = fire_snapshot.armor_right;
+  const Eigen::Vector3d u = fire_snapshot.armor_up;
+  const Eigen::Vector3d p0 = c + r * hw + u * hh;
+  const Eigen::Vector3d p1 = c - r * hw + u * hh;
+  const Eigen::Vector3d p2 = c - r * hw - u * hh;
+  const Eigen::Vector3d p3 = c + r * hw - u * hh;
+  const std::array<Eigen::Vector3d, 4> ps = {p0, p1, p2, p3};
+  for (int i = 0; i < 4; ++i) {
+    geometry_msgs::msg::Point a;
+    geometry_msgs::msg::Point b;
+    a.x = ps[i].x();
+    a.y = ps[i].y();
+    a.z = ps[i].z();
+    b.x = ps[(i + 1) % 4].x();
+    b.y = ps[(i + 1) % 4].y();
+    b.z = ps[(i + 1) % 4].z();
+    armor_plane.points.push_back(a);
+    armor_plane.points.push_back(b);
+  }
+  marker_array.markers.push_back(armor_plane);
+
+  visualization_msgs::msg::Marker ell1;
+  ell1.header = header;
+  ell1.ns = "fire_prob/error_ellipse_1sigma";
+  ell1.id = 0;
+  ell1.type = visualization_msgs::msg::Marker::LINE_STRIP;
+  ell1.action = visualization_msgs::msg::Marker::ADD;
+  ell1.scale.x = 0.01;
+  ell1.color.a = 0.95;
+  ell1.color.r = 1.0;
+  ell1.color.g = 0.9;
+  ell1.color.b = 0.1;
+  const int samples = std::max(16, fire_prob_vis_ellipse_samples_);
+  for (int i = 0; i <= samples; ++i) {
+    const double th = 2.0 * M_PI * static_cast<double>(i) / static_cast<double>(samples);
+    const double du = fire_snapshot.sigma_u * std::cos(th);
+    const double dv = fire_snapshot.sigma_v * std::sin(th);
+    const Eigen::Vector3d p3 =
+      fire_snapshot.armor_center + fire_snapshot.armor_right * du + fire_snapshot.armor_up * dv;
+    geometry_msgs::msg::Point p;
+    p.x = p3.x();
+    p.y = p3.y();
+    p.z = p3.z();
+    ell1.points.push_back(p);
+  }
+  marker_array.markers.push_back(ell1);
+
+  visualization_msgs::msg::Marker ell2 = ell1;
+  ell2.ns = "fire_prob/error_ellipse_2sigma";
+  ell2.id = 0;
+  ell2.color.r = 1.0;
+  ell2.color.g = 0.5;
+  ell2.color.b = 0.1;
+  ell2.points.clear();
+  for (int i = 0; i <= samples; ++i) {
+    const double th = 2.0 * M_PI * static_cast<double>(i) / static_cast<double>(samples);
+    const double du = 2.0 * fire_snapshot.sigma_u * std::cos(th);
+    const double dv = 2.0 * fire_snapshot.sigma_v * std::sin(th);
+    const Eigen::Vector3d p3 =
+      fire_snapshot.armor_center + fire_snapshot.armor_right * du + fire_snapshot.armor_up * dv;
+    geometry_msgs::msg::Point p;
+    p.x = p3.x();
+    p.y = p3.y();
+    p.z = p3.z();
+    ell2.points.push_back(p);
+  }
+  marker_array.markers.push_back(ell2);
+
+  visualization_msgs::msg::Marker mean_pt;
+  mean_pt.header = header;
+  mean_pt.ns = "fire_prob/mean_error_point";
+  mean_pt.id = 0;
+  mean_pt.type = visualization_msgs::msg::Marker::SPHERE;
+  mean_pt.action = visualization_msgs::msg::Marker::ADD;
+  mean_pt.scale.x = 0.04;
+  mean_pt.scale.y = 0.04;
+  mean_pt.scale.z = 0.04;
+  mean_pt.color.a = 0.95;
+  mean_pt.color.r = static_cast<float>(1.0 - fire_snapshot.p_hit_window);
+  mean_pt.color.g = static_cast<float>(fire_snapshot.p_hit_window);
+  mean_pt.color.b = 0.1f;
+  const Eigen::Vector3d mean3 =
+    fire_snapshot.armor_center +
+    fire_snapshot.armor_right * fire_snapshot.e_u +
+    fire_snapshot.armor_up * fire_snapshot.e_v;
+  mean_pt.pose.position.x = mean3.x();
+  mean_pt.pose.position.y = mean3.y();
+  mean_pt.pose.position.z = mean3.z();
+  mean_pt.pose.orientation.w = 1.0;
+  marker_array.markers.push_back(mean_pt);
+
+  visualization_msgs::msg::Marker cloud;
+  cloud.header = header;
+  cloud.ns = "fire_prob/impact_cloud";
+  cloud.id = 0;
+  cloud.type = visualization_msgs::msg::Marker::POINTS;
+  cloud.action = visualization_msgs::msg::Marker::ADD;
+  cloud.scale.x = 0.012;
+  cloud.scale.y = 0.012;
+  cloud.color.a = 0.25;
+  cloud.color.r = 0.2;
+  cloud.color.g = 0.9;
+  cloud.color.b = 1.0;
+  const int cloud_n = std::max(8, std::min(fire_prob_vis_max_impact_points_, 512));
+  for (int i = 0; i < cloud_n; ++i) {
+    const double t = 2.0 * M_PI * static_cast<double>(i) / static_cast<double>(cloud_n);
+    const double rn = std::sqrt(static_cast<double>(i) / static_cast<double>(cloud_n));
+    const double du = fire_snapshot.e_u + fire_snapshot.sigma_u * rn * std::cos(t);
+    const double dv = fire_snapshot.e_v + fire_snapshot.sigma_v * rn * std::sin(t);
+    const Eigen::Vector3d q =
+      fire_snapshot.armor_center + fire_snapshot.armor_right * du + fire_snapshot.armor_up * dv;
+    geometry_msgs::msg::Point p;
+    p.x = q.x();
+    p.y = q.y();
+    p.z = q.z();
+    cloud.points.push_back(p);
+  }
+  marker_array.markers.push_back(cloud);
+
+  visualization_msgs::msg::Marker txt;
+  txt.header = header;
+  txt.ns = "fire_prob/text";
+  txt.id = 0;
+  txt.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+  txt.action = visualization_msgs::msg::Marker::ADD;
+  txt.scale.z = 0.10;
+  txt.color.a = 1.0;
+  txt.color.r = 0.95;
+  txt.color.g = 0.95;
+  txt.color.b = 0.95;
+  txt.pose.position.x = fire_snapshot.armor_center.x();
+  txt.pose.position.y = fire_snapshot.armor_center.y();
+  txt.pose.position.z = fire_snapshot.armor_center.z() + 0.20;
+  txt.pose.orientation.w = 1.0;
+  std::ostringstream oss;
+  oss << "Pwin=" << std::fixed << std::setprecision(2) << fire_snapshot.p_hit_window
+      << " Score=" << fire_snapshot.fire_score
+      << " tau=" << std::setprecision(1) << fire_snapshot.best_tau_ms << "ms"
+      << " eu=" << std::setprecision(3) << fire_snapshot.e_u << "m"
+      << " ev=" << fire_snapshot.e_v << "m"
+      << " su=" << fire_snapshot.sigma_u << "m"
+      << " sv=" << fire_snapshot.sigma_v << "m"
+      << " fire=" << (fire_snapshot.fire_advice ? 1 : 0);
+  txt.text = oss.str();
+  marker_array.markers.push_back(txt);
 }
 
 void GimbalPipelineNode::publishManeuverMarkers(

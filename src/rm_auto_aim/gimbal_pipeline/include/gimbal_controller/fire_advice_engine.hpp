@@ -24,6 +24,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 
+#include "gimbal_controller/fire_advice/probability_engine.hpp"
 #include "gimbal_controller/delay_management/delay_semantic_manager.hpp"
 #include "rm_interfaces/msg/tracked_robot.hpp"
 
@@ -78,6 +79,10 @@ struct FireAdviceCandidateResult
   double facing_cos{1.0};
   bool facing_ok{true};
   bool fire{false};
+  Eigen::Vector3d armor_position = Eigen::Vector3d::Zero();
+  Eigen::Vector3d armor_normal = Eigen::Vector3d::UnitX();
+  Eigen::Vector3d center_velocity = Eigen::Vector3d::Zero();
+  double armor_yaw_rate{0.0};
 };
 
 struct FireAdviceEngineResult
@@ -92,6 +97,20 @@ struct FireAdviceEngineResult
   int candidate_count_total{0};
   int candidate_count_facing_eligible{0};
   int candidate_count_facing_rejected{0};
+  bool probability_enabled{false};
+  double p_hit_window{0.0};
+  double fire_score{0.0};
+  double best_tau_s{0.0};
+  double e_u{0.0};
+  double e_v{0.0};
+  double sigma_u{0.0};
+  double sigma_v{0.0};
+  double armor_width_m{0.135};
+  double armor_height_m{0.125};
+  std::vector<fire_advice::TauDebugSample> tau_samples;
+  Eigen::Vector3d armor_center = Eigen::Vector3d::Zero();
+  Eigen::Vector3d armor_right = Eigen::Vector3d::UnitY();
+  Eigen::Vector3d armor_up = Eigen::Vector3d::UnitZ();
   delay_management::FireTimelineResult timeline;
   std::vector<FireAdviceCandidateResult> candidates;
 };
@@ -130,6 +149,10 @@ struct CandidateImpactSolution
   double target_pitch{0.0};
   double facing_cos{1.0};
   bool facing_ok{true};
+  Eigen::Vector3d armor_position = Eigen::Vector3d::Zero();
+  Eigen::Vector3d center_position = Eigen::Vector3d::Zero();
+  Eigen::Vector3d center_velocity = Eigen::Vector3d::Zero();
+  double armor_yaw_rate{0.0};
 };
 
 class CandidateImpactSolver
@@ -211,6 +234,17 @@ public:
     candidate_solver_.setFacingFilterOpeningAngleDeg(opening_angle_deg);
   }
 
+  void setProbabilityConfig(
+    const fire_advice::ProbabilityConfig & probability_cfg,
+    const fire_advice::SigmaPointConfig & sigma_cfg,
+    const fire_advice::FireGateConfig & gate_cfg)
+  {
+    probability_cfg_ = probability_cfg;
+    sigma_cfg_ = sigma_cfg;
+    gate_cfg_ = gate_cfg;
+    probability_engine_.setConfig(probability_cfg_, sigma_cfg_, gate_cfg_);
+  }
+
   FireAdviceEngineResult evaluate(const FireAdviceEngineRequest & request) const;
 
 private:
@@ -218,6 +252,10 @@ private:
   FireTimingResolver timing_resolver_;
   CandidateImpactSolver candidate_solver_;
   GimbalPosePredictor gimbal_pose_predictor_;
+  mutable fire_advice::ProbabilityEngine probability_engine_;
+  fire_advice::ProbabilityConfig probability_cfg_;
+  fire_advice::SigmaPointConfig sigma_cfg_;
+  fire_advice::FireGateConfig gate_cfg_;
 
   int flight_time_iters_{2};
   bool use_gimbal_kinematics_{false};

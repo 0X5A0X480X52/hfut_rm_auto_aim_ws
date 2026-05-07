@@ -18,6 +18,9 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
+
+#include <Eigen/Dense>
 
 #include "gimbal_controller/fire_advice_engine.hpp"
 #include "gimbal_controller/gimbal_control_strategy.hpp"
@@ -49,6 +52,20 @@ struct FireAdviceDebugSnapshot
   int32_t candidate_count_total{0};
   int32_t candidate_count_facing_eligible{0};
   int32_t candidate_count_facing_rejected{0};
+  bool probability_enabled{false};
+  double p_hit_window{0.0};
+  double fire_score{0.0};
+  double best_tau_ms{0.0};
+  double e_u{0.0};
+  double e_v{0.0};
+  double sigma_u{0.0};
+  double sigma_v{0.0};
+  double armor_width_m{0.135};
+  double armor_height_m{0.125};
+  std::vector<fire_advice::TauDebugSample> tau_samples;
+  Eigen::Vector3d armor_center = Eigen::Vector3d::Zero();
+  Eigen::Vector3d armor_right = Eigen::Vector3d::UnitY();
+  Eigen::Vector3d armor_up = Eigen::Vector3d::UnitZ();
   int8_t mode{rm_interfaces::msg::GimbalCmd::MODE_UNKNOWN};
   uint8_t track_state{rm_interfaces::msg::TrackedRobot::DETECTING};
   std::string target_id;

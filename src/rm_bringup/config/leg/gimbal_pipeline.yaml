@@ -337,6 +337,115 @@ gimbal_pipeline:
     #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
     controller.solver.selection_method: "min_movement_with_facing"
 
+    # ── Fire Advice（开火建议）统一参数 ───────────────────────────────
+    # 这些参数由 gimbal_pipeline_node 读取，并传入 FireAdviceEngine / ProbabilityEngine。
+    # 建议调参顺序：
+    #   1) 先调 decision_policy + delay（保证几何开火稳定）
+    #   2) 再开 probability.enable（先看 debug，不直接追求激进开火）
+    #   3) 最后调 gate 与 sigma-point（控制抖动与响应速度）
+
+    # 几何判定策略：
+    #   axis_threshold: 轴对齐矩形门限（更直观）
+    #   ellipse:        椭圆门限（边缘更平滑）
+    controller.fire.decision_policy: "axis_threshold"
+
+    # 开火可见性策略：
+    #   facing_only: 仅对“朝向可打”的装甲板出 fire（推荐）
+    #   legacy_all:  兼容旧行为，不做朝向过滤
+    controller.fire.target_visibility_policy: "facing_only"
+
+    # 朝向过滤开口角（度）：
+    # 180 表示不过滤；值越小越保守，建议 110~170 起步。
+    controller.fire.facing_filter_opening_angle_deg: 170.0
+
+    # 是否在出膛时刻预测云台姿态（考虑角速度/角加速度）：
+    # true 更贴近真实时序；false 更稳但偏保守。
+    controller.fire.use_gimbal_kinematics: true
+
+    # 候选飞行时间迭代次数（影响精度与耗时）：
+    # 1=快，2=推荐，3=高精度但更耗时。
+    controller.fire.flight_time_iters: 2
+
+    # 触发到出膛延迟（秒）：
+    # 建议用实测值；过大容易“追未来过度”，过小容易“晚点火”。
+    controller.fire.trigger_to_muzzle_s: 0.0
+
+    # ── 概率开火主开关 ───────────────────────────────────────────────
+    # false: 仅几何判定；true: 使用概率窗口 + gate 输出 fire_advice。
+    controller.fire.probability.enable: true
+
+    # 未来候选发射窗口（毫秒）与采样步长（毫秒）：
+    # window 越大，前瞻越多但计算更重；step 越小，分辨率更高但更耗时。
+    # 120FPS 场景建议从 50ms / 10ms 起步。
+    controller.fire.probability.future_window_ms: 50.0
+    controller.fire.probability.future_step_ms: 10.0
+
+    # 窗口融合：
+    #   max:     取窗口内最优开火时刻（激进）
+    #   softmax: 平滑融合（更稳）
+    controller.fire.probability.window_fusion: "max"
+    # softmax 温度，越大越接近 max；仅 window_fusion=softmax 时生效。
+    controller.fire.probability.softmax_beta: 20.0
+
+    # tracker 协方差使用策略：
+    # use_tracker_covariance=false 时使用 fallback_sigma_*。
+    # strict_covariance=true 时协方差非法将直接判 invalid（更严格）。
+    controller.fire.probability.use_tracker_covariance: false
+    controller.fire.probability.strict_covariance: false
+    controller.fire.probability.fallback_sigma_x: 0.020
+    controller.fire.probability.fallback_sigma_y: 0.020
+    controller.fire.probability.fallback_sigma_z: 0.030
+
+    # 弹道不确定性基线与随时间增长（用于 Sigma_bullet）：
+    # 数值越大，P_hit 越保守；建议小步调参，优先调 growth_*。
+    controller.fire.probability.ballistic_sigma_x0: 0.000010
+    controller.fire.probability.ballistic_sigma_y0: 0.000015
+    controller.fire.probability.ballistic_sigma_z0: 0.000015
+    controller.fire.probability.ballistic_growth_x: 0.000030
+    controller.fire.probability.ballistic_growth_y: 0.000060
+    controller.fire.probability.ballistic_growth_z: 0.000080
+
+    # 法向速度权重（预留，当前实现未完全使用）：
+    # enable 后会倾向“正对装甲板”的入射方向，减少擦边判定。
+    controller.fire.probability.normal_velocity_weight.enable: false
+    controller.fire.probability.normal_velocity_weight.v_ref: 28.0
+    controller.fire.probability.normal_velocity_weight.w_min: 0.5
+
+    # ── Sigma-Point（UT）扩展 ───────────────────────────────────────
+    # 用于传播 [弹速误差, 发射延时误差] 对 e_uv 的影响。
+    controller.fire.probability.sigma_point.enable: true
+    # method: unscented(推荐) | fixed(轻量近似)
+    controller.fire.probability.sigma_point.method: "unscented"
+    controller.fire.probability.sigma_point.sigma_v0: 0.30
+    controller.fire.probability.sigma_point.sigma_delay: 0.005
+    controller.fire.probability.sigma_point.rho: 0.0
+    controller.fire.probability.sigma_point.alpha: 0.7
+    controller.fire.probability.sigma_point.beta: 2.0
+    controller.fire.probability.sigma_point.kappa: 0.0
+
+    # ── Fire Gate（P_window -> fire_advice）────────────────────────
+    # mode:
+    #   lowpass:    响应快，调参直观
+    #   integrator: 抗抖更强，适合噪声大场景
+    controller.fire.probability.gate.mode: "lowpass"
+    # lowpass 系数（0~1）：越大越平滑但响应更慢。
+    controller.fire.probability.gate.alpha: 0.85
+    # 滞回阈值：on 必须大于 off，差值越大抗抖越强但触发更慢。
+    controller.fire.probability.gate.fire_on_th: 0.65
+    controller.fire.probability.gate.fire_off_th: 0.35
+    # integrator 参数（仅 mode=integrator 生效）：
+    controller.fire.probability.gate.integrator_base_probability: 0.45
+    controller.fire.probability.gate.integrator_rise: 8.0
+    controller.fire.probability.gate.integrator_fall: 6.0
+
+    # ── 概率可视化（RViz marker）───────────────────────────────────
+    # 说明：原 controller.fire.visualization 已升级为分层配置，使用 *.enable。
+    controller.fire.visualization.enable: true
+    # 椭圆离散点数：越高越圆滑但更耗 CPU，建议 32~96。
+    controller.fire.visualization.ellipse_samples: 64
+    # 点云最大点数：越大越细腻但更耗带宽/渲染。
+    controller.fire.visualization.max_impact_points: 120
+
     # controller.state_machine.facing_enter_angle: 40.0
     # controller.state_machine.facing_exit_angle: 55.0
     # controller.state_machine.spin_v_yaw_thresh: 4.0

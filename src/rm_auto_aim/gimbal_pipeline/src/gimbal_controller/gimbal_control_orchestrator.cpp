@@ -160,6 +160,20 @@ bool GimbalControlOrchestrator::evaluateFireAdvice(
     last_fire_debug_.candidate_count_total = result.candidate_count_total;
     last_fire_debug_.candidate_count_facing_eligible = result.candidate_count_facing_eligible;
     last_fire_debug_.candidate_count_facing_rejected = result.candidate_count_facing_rejected;
+    last_fire_debug_.probability_enabled = result.probability_enabled;
+    last_fire_debug_.p_hit_window = result.p_hit_window;
+    last_fire_debug_.fire_score = result.fire_score;
+    last_fire_debug_.best_tau_ms = result.best_tau_s * 1e3;
+    last_fire_debug_.e_u = result.e_u;
+    last_fire_debug_.e_v = result.e_v;
+    last_fire_debug_.sigma_u = result.sigma_u;
+    last_fire_debug_.sigma_v = result.sigma_v;
+    last_fire_debug_.armor_width_m = result.armor_width_m;
+    last_fire_debug_.armor_height_m = result.armor_height_m;
+    last_fire_debug_.tau_samples = result.tau_samples;
+    last_fire_debug_.armor_center = result.armor_center;
+    last_fire_debug_.armor_right = result.armor_right;
+    last_fire_debug_.armor_up = result.armor_up;
     last_fire_debug_.best_candidate_facing_ok = false;
     for (const auto & candidate : result.candidates) {
       if (candidate.candidate_index == result.best_candidate_index) {
