@@ -3520,7 +3520,9 @@ void GimbalPipelineNode::publishFireProbabilityDebugImages(
   const double v_n = std::max(0.0, best_s->normal_velocity);
   const double v_ref = std::max(1e-3, get_parameter("controller.fire.probability.normal_velocity_weight.v_ref").as_double());
   const double ratio = std::clamp(v_n / v_ref, 0.0, 1.0);
-  const double theta_deg = 150.0 - 120.0 * ratio;
+  const double spread_deg = (1.0 - ratio) * 35.0;
+  const double center_deg = best_front_ok ? 180.0 : 0.0;
+  const double theta_deg = center_deg + (best_front_ok ? -spread_deg : spread_deg);
   const double theta = theta_deg * M_PI / 180.0;
   const cv::Point2d v_tip(c2.x + axis_len * std::cos(theta), c2.y - axis_len * std::sin(theta));
   cv::arrowedLine(normal, c2, v_tip, cv::Scalar(80, 180, 255), 3, cv::LINE_AA, 0, 0.05);
@@ -3529,8 +3531,9 @@ void GimbalPipelineNode::publishFireProbabilityDebugImages(
 
   if (fire_prob_image_debug_show_velocity_fan_) {
     const cv::Scalar fan_color = best_front_ok ? cv::Scalar(60, 200, 60) : cv::Scalar(60, 60, 220);
+    const double fan_half = 15.0 + (1.0 - ratio) * 30.0;
     cv::ellipse(normal, c2, cv::Size(static_cast<int>(axis_len * 0.7), static_cast<int>(axis_len * 0.7)),
-      0.0, -45.0, 45.0, fan_color, 2, cv::LINE_AA);
+      0.0, center_deg - fan_half, center_deg + fan_half, fan_color, 2, cv::LINE_AA);
   }
 
   cv::line(normal,

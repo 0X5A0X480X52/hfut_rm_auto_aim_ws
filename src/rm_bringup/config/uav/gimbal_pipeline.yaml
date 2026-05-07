@@ -238,8 +238,8 @@ gimbal_pipeline:
     #   virtual_fixed_id          — 固定 ID 虚拟姿态选板
     #   facing_or_virtual_pose    — 真实可打板优先；无可打板时退回 virtual_pose
     #   facing_or_virtual_fixed_id — 固定 ID 真实可打时输出真实板，否则退回虚拟板
-    controller.solver.selection_method: "facing_or_virtual_pose"
-    # controller.solver.virtual_pose.fixed_id: 1
+    controller.solver.selection_method: "facing_or_virtual_fixed_id"
+    controller.solver.virtual_pose.fixed_id: 1
 
     # controller.solver.selection_method: "virtual_pose"
     # controller.solver.selection_method: "virtual_fixed_id"
@@ -250,8 +250,8 @@ gimbal_pipeline:
     controller.solver.virtual_pose.auto_switch.fixed_id: 0
 
     # 面向选板状态机参数
-    controller.solver.facing_enter_angle: 20.0
-    controller.solver.facing_exit_angle: 30.0
+    controller.solver.facing_enter_angle: 60.0
+    controller.solver.facing_exit_angle: 70.0
 
     # 径向选板动态阈值（仅对 min_movement_with_radial 生效）
     controller.solver.radial_dynamic.enable: false
@@ -280,7 +280,7 @@ gimbal_pipeline:
 
     # 朝向过滤开口角（度）：
     # 180 表示不过滤；值越小越保守，建议 110~170 起步。
-    controller.fire.facing_filter_opening_angle_deg: 60.0
+    controller.fire.facing_filter_opening_angle_deg: 30.0
 
     # 是否在出膛时刻预测云台姿态（考虑角速度/角加速度）：
     # true 更贴近真实时序；false 更稳但偏保守。
@@ -383,7 +383,7 @@ gimbal_pipeline:
     # 输出两个调试图：
     #   ~/fire_debug/armor_plane : 装甲板平面投影误差 / 椭圆 / tau 样本
     #   ~/fire_debug/normal_view : 法向入射示意 / 法向速度 / gate 状态
-    controller.fire.visualization.image_debug.enable: false
+    controller.fire.visualization.image_debug.enable: true
     # 图像发布限频（Hz），建议 5~15，避免占用过高
     controller.fire.visualization.image_debug.publish_rate_hz: 10.0
     # 图像尺寸（像素）
@@ -464,7 +464,7 @@ gimbal_pipeline:
     # controller.mpc.s_pitch: 0.001
     
     controller.mpc.N: 5
-    controller.mpc.dt: 0.005
+    controller.mpc.dt: 0.015
     controller.mpc.control_delay_s: 0.0
     controller.mpc.max_accel: 18.0
     controller.mpc.q_yaw: 1000.0 #追踪权重
