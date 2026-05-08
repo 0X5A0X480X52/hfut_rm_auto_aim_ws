@@ -62,9 +62,16 @@ class TFHandler {
 
     auto transformed = transform_pose(ps);
     if (!transformed) return std::nullopt;
-
-    return pose_to_observation(transformed->pose,
-                               stamp.seconds());
+    // Preserve image-domain metadata from detector, and only replace the
+    // 3D pose/yaw with TF-transformed values.
+    auto obs = armor_to_observation(armor, stamp.seconds());
+    auto tf_obs = pose_to_observation(transformed->pose, stamp.seconds());
+    obs.x = tf_obs.x;
+    obs.y = tf_obs.y;
+    obs.z = tf_obs.z;
+    obs.yaw = tf_obs.yaw;
+    obs.timestamp = tf_obs.timestamp;
+    return obs;
   }
 
   bool can_transform(const std::string &source_frame) const {

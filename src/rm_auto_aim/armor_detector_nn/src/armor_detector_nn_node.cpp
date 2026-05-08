@@ -548,6 +548,21 @@ void ArmorDetectorNNNode::imageCallback(
       armor.distance_to_image_center =
         ArmorPoseEstimatorAdapter::distanceToImageCenter(
           fd.detections[i].center, cam_center_);
+      armor.detection_confidence = fd.detections[i].confidence;
+      armor.has_image_geometry = true;
+      armor.bbox_xywh[0] = fd.detections[i].bbox.x;
+      armor.bbox_xywh[1] = fd.detections[i].bbox.y;
+      armor.bbox_xywh[2] = fd.detections[i].bbox.width;
+      armor.bbox_xywh[3] = fd.detections[i].bbox.height;
+      for (int k = 0; k < 4; ++k) {
+        geometry_msgs::msg::Point32 p;
+        p.x = fd.detections[i].keypoints[k].x;
+        p.y = fd.detections[i].keypoints[k].y;
+        p.z = 0.0f;
+        armor.image_corners[k] = p;
+      }
+      // 0: keypoint order as provided by detector postprocess.
+      armor.corners_ordering = 0;
 
       if (poses[i].valid) {
         geometry_msgs::msg::Pose pose_camera;

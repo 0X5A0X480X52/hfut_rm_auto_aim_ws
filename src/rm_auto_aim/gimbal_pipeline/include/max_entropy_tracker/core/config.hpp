@@ -74,6 +74,10 @@ struct MaxEntropyParameters {
 };
 
 struct TrackerParameters {
+  // Tracker implementation for non-outpost robots:
+  // "adaptive" | "norm4"
+  std::string implementation = "adaptive";
+
   int tracking_thres = 2;
   int lost_thres = 8;
   int temp_lost_thres = 3;
@@ -302,6 +306,41 @@ struct BinderConfig {
   int z_audit_rebind_confirm_frames = 3;
   double z_audit_rebind_min_confidence = 0.60;
   double z_audit_rebind_min_jump = 0.015;
+
+  // ── Phase 6: soft fusion weights ──
+  bool enable_soft_fusion = false;
+  double soft_fusion_w_seq = 0.25;
+  double soft_fusion_w_geo = 0.40;
+  double soft_fusion_w_dyn = 0.20;
+  double soft_fusion_w_continuity = 0.15;
+};
+
+// ======================== Norm4 V2 Config ========================
+
+struct AntiPingPongConfig {
+  int min_consistent_frames_to_commit = 3;
+  double jerk_gate = 1.5;
+  double yaw_rate_jump_gate = 2.0;
+  double velocity_dir_cos_min = 0.2;
+  int pending_timeout_frames = 12;
+};
+
+struct PhaseMemoryConfig {
+  bool enable_phase_memory = true;
+  bool enable_kinematic_anti_pingpong = true;
+  int sequence_window_size = 10;
+  double ping_pong_pattern_threshold = 0.7;
+  bool enable_opposite_jump_detect = true;
+  AntiPingPongConfig anti_pingpong;
+};
+
+struct Norm4V2Config {
+  bool enable_common_pipeline = false;
+  bool enable_phase_memory = true;
+  bool enable_kinematic_anti_pingpong = true;
+  bool enable_2d_tracker = false;
+  bool enable_proxy_manager = false;
+  PhaseMemoryConfig phase_memory;
 };
 
 // ======================== Unified Config ========================
@@ -320,6 +359,7 @@ struct UnifiedConfig {
   PanelMismatchParameters panel_mismatch;
   OutpostParameters outpost;
   BinderConfig binder;
+  Norm4V2Config norm4_v2;
 
   static UnifiedConfig create_default() { return UnifiedConfig{}; }
 

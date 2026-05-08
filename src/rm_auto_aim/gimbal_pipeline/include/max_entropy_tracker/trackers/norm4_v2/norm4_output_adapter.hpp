@@ -2,6 +2,8 @@
 #ifndef MAX_ENTROPY_TRACKER_TRACKERS_NORM4_V2_NORM4_OUTPUT_ADAPTER_HPP_
 #define MAX_ENTROPY_TRACKER_TRACKERS_NORM4_V2_NORM4_OUTPUT_ADAPTER_HPP_
 
+#include <array>
+#include <cmath>
 #include <vector>
 
 #include <geometry_msgs/msg/pose.hpp>
@@ -36,6 +38,7 @@ class Norm4OutputAdapter {
   void fill_from_center(Norm4RuntimeContext *ctx,
                         const BackendStateSnapshot &snap) const;
 
+  std::array<double, 4> panel_angles_{0.0, M_PI / 2.0, M_PI, -M_PI / 2.0};
   bool publish_single_semantics_ = true;
 };
 

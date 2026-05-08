@@ -16,7 +16,8 @@ namespace fyt::auto_aim {
 namespace {
 
 constexpr double kLog3 = 1.0986122886681098;
-constexpr double kOutpostPitchDown = -0.2618;
+// RViz/tf2 positive pitch rotates the local armor normal toward -Z.
+constexpr double kOutpostPitchDown = 0.2618;
 
 double clamp01(double x) {
   return std::clamp(x, 0.0, 1.0);

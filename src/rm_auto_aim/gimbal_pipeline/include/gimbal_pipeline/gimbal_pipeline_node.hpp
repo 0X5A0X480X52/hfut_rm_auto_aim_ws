@@ -16,6 +16,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <std_msgs/msg/string.hpp>
@@ -157,6 +158,12 @@ class GimbalPipelineNode : public rclcpp::Node {
   void publishFireProbabilityDebugImages(
       const std_msgs::msg::Header &header,
       const gimbal_controller::FireAdviceDebugSnapshot & fire_snapshot);
+  void publish2DTrackerDebugImage(
+      const std_msgs::msg::Header &header,
+      const std::vector<TrackerManager::TrackerConstView> &tracker_views);
+  void publishEvidenceFrameDebug(
+      const std_msgs::msg::Header &header,
+      const std::vector<TrackerManager::TrackerConstView> &tracker_views);
   std::array<float, 4> hsvToRgb(float h, float s, float v);
 
   /* ================================================================ */
@@ -257,6 +264,8 @@ class GimbalPipelineNode : public rclcpp::Node {
       debug_fire_advice_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr
       debug_armor_selection_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr
+      debug_evidence_frame_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
       debug_tracker_marker_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
@@ -267,6 +276,8 @@ class GimbalPipelineNode : public rclcpp::Node {
       debug_fire_plane_image_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
       debug_fire_normal_image_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr
+      debug_tracker_2d_image_pub_;
 
   // Services
   rclcpp::Service<rm_interfaces::srv::SetMode>::SharedPtr set_mode_srv_;
@@ -309,6 +320,10 @@ class GimbalPipelineNode : public rclcpp::Node {
   int fire_prob_image_debug_height_{540};
   double fire_prob_image_debug_publish_rate_hz_{10.0};
   rclcpp::Time last_fire_prob_image_pub_time_{0, 0, RCL_ROS_TIME};
+  bool tracker_2d_image_debug_enable_{false};
+  int tracker_2d_image_debug_width_{960};
+  int tracker_2d_image_debug_height_{540};
+  int tracker_2d_image_debug_jpeg_quality_{70};
 };
 
 }  // namespace fyt::auto_aim

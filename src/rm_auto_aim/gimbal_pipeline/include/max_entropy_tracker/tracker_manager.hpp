@@ -183,8 +183,11 @@ class TrackerManager {
         t = std::make_unique<OutpostArmorTracker>(config_, dt_, enable_osc_);
       }
     } else {
-      // t = std::make_unique<Norm4ArmorTracker>(config_, dt_, enable_osc_);
-      t = std::make_unique<AdaptiveArmorTracker>(config_, dt_, enable_osc_);
+      if (config_.tracker.implementation == "norm4") {
+        t = std::make_unique<Norm4ArmorTracker>(config_, dt_, enable_osc_);
+      } else {
+        t = std::make_unique<AdaptiveArmorTracker>(config_, dt_, enable_osc_);
+      }
     }
     t->initialize(initial_obs, default_r1_, default_r2_, default_dza_);
 

@@ -11,6 +11,7 @@
 #include "max_entropy_tracker/binder/id_binder/single_obs_sequence_binder.hpp"
 #include "max_entropy_tracker/binder/scorer/null_hypothesis_scorer.hpp"
 #include "max_entropy_tracker/binder/scorer/residual_hypothesis_scorer.hpp"
+#include "max_entropy_tracker/binder/scorer/soft_fusion_scorer.hpp"
 
 namespace fyt::auto_aim::binder {
 
@@ -85,6 +86,16 @@ std::unique_ptr<BinderPipeline> BinderFactory::create(
     scorer = std::make_unique<ResidualHypothesisScorer>(scfg);
   } else {
     scorer = std::make_unique<NullHypothesisScorer>();
+  }
+
+  // Phase 6: wrap with soft fusion scorer when enabled.
+  if (config.enable_soft_fusion) {
+    SoftFusionConfig sfc;
+    sfc.w_seq = config.soft_fusion_w_seq;
+    sfc.w_geo = config.soft_fusion_w_geo;
+    sfc.w_dyn = config.soft_fusion_w_dyn;
+    sfc.w_continuity = config.soft_fusion_w_continuity;
+    scorer = std::make_unique<SoftFusionScorer>(std::move(scorer), sfc);
   }
 
   // ── Assemble pipeline ──

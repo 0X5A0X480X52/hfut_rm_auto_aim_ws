@@ -19,6 +19,10 @@
 #include <limits>
 #include <vector>
 
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+
 #include "gimbal_controller/armor_position_calculator.hpp"
 #include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 #include "max_entropy_tracker/core/config.hpp"
@@ -105,6 +109,17 @@ Eigen::Vector3d armorPositionFromMessage(const Eigen::Vector3d &center,
   const double y = center.y() + offset.position.x * s + offset.position.y * c;
   const double z = center.z() + offset.position.z;
   return Eigen::Vector3d(x, y, z);
+}
+
+double pitchFromMessage(const geometry_msgs::msg::Quaternion &msg) {
+  tf2::Quaternion q;
+  tf2::fromMsg(msg, q);
+  q.normalize();
+  double roll = 0.0;
+  double pitch = 0.0;
+  double yaw = 0.0;
+  tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+  return pitch;
 }
 
 }  // namespace
@@ -274,6 +289,7 @@ TEST(OutpostBinding, BuilderEncodesOutpostOffsetsAndFallbackSummary) {
   EXPECT_NEAR(robot.armors_offset[0].position.z, cfg.outpost.z_offset_0, 1e-6);
   EXPECT_NEAR(robot.armors_offset[1].position.z, cfg.outpost.z_offset_1, 1e-6);
   EXPECT_NEAR(robot.armors_offset[2].position.z, cfg.outpost.z_offset_2, 1e-6);
+  EXPECT_NEAR(pitchFromMessage(robot.armors_offset[0].orientation), 0.2618, 1e-6);
 
   const double expected_dza =
       0.5 * (cfg.outpost.z_offset_0 - cfg.outpost.z_offset_2);
@@ -295,6 +311,7 @@ TEST(OutpostBinding, OutpostFallbackGeneratorsKeepTriLayerHeights) {
   EXPECT_NEAR(profile_offsets[0].position.z, dzc + dza, 1e-9);
   EXPECT_NEAR(profile_offsets[1].position.z, dzc, 1e-9);
   EXPECT_NEAR(profile_offsets[2].position.z, dzc - dza, 1e-9);
+  EXPECT_NEAR(pitchFromMessage(profile_offsets[0].orientation), 0.2618, 1e-6);
 
   const auto controller_offsets = gimbal_controller::ArmorPositionCalculator::
       generateDefaultOffsets(rm_interfaces::msg::TrackedRobot::OUTPOST_3,

@@ -14,7 +14,8 @@ namespace fyt::auto_aim::outpost_v2 {
 
 namespace {
 
-constexpr double kOutpostPitchDown = -0.2618;
+// RViz/tf2 positive pitch rotates the local armor normal toward -Z.
+constexpr double kOutpostPitchDown = 0.2618;
 
 }  // namespace
 
@@ -76,6 +77,9 @@ std::vector<geometry_msgs::msg::Pose>
 OutpostOutputAdapter::build_armors_offset_for_message(
     const OutpostRuntimeContext &ctx) const {
   std::vector<geometry_msgs::msg::Pose> offsets;
+
+  double OutpostArmorPitchDown = 0.2618;  // +15 deg
+
   if (ctx.mode == mode::TrackMode::AMBIGUOUS) {
     if (ambiguous_zero_offset_) {
       geometry_msgs::msg::Pose pose;
@@ -83,7 +87,7 @@ OutpostOutputAdapter::build_armors_offset_for_message(
       pose.position.y = 0.0;
       pose.position.z = 0.0;
       tf2::Quaternion q;
-      q.setRPY(0.0, 0.0, 0.0);
+      q.setRPY(0.0, OutpostArmorPitchDown, 0.0);
       pose.orientation = tf2::toMsg(q);
       offsets.push_back(pose);
       return offsets;
@@ -96,7 +100,7 @@ OutpostOutputAdapter::build_armors_offset_for_message(
     pose.position.y = -radius_ * std::sin(angle);
     pose.position.z = z_offsets_[pid];
     tf2::Quaternion q;
-    q.setRPY(0.0, kOutpostPitchDown, angle + M_PI);
+    q.setRPY(0.0, OutpostArmorPitchDown, angle + M_PI);
     pose.orientation = tf2::toMsg(q);
     offsets.push_back(pose);
     return offsets;
@@ -110,7 +114,7 @@ OutpostOutputAdapter::build_armors_offset_for_message(
     pose.position.y = -radius_ * std::sin(angle);
     pose.position.z = z_offsets_[i];
     tf2::Quaternion q;
-    q.setRPY(0.0, kOutpostPitchDown, angle + M_PI);
+    q.setRPY(0.0, OutpostArmorPitchDown, angle + M_PI);
     pose.orientation = tf2::toMsg(q);
     offsets.push_back(pose);
   }

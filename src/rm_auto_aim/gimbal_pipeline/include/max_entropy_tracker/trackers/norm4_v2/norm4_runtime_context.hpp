@@ -2,14 +2,20 @@
 #ifndef MAX_ENTROPY_TRACKER_TRACKERS_NORM4_V2_NORM4_RUNTIME_CONTEXT_HPP_
 #define MAX_ENTROPY_TRACKER_TRACKERS_NORM4_V2_NORM4_RUNTIME_CONTEXT_HPP_
 
+#include <memory>
 #include <optional>
 
 #include <Eigen/Dense>
 
 #include "max_entropy_tracker/binder/model/binder_enums.hpp"
+#include "max_entropy_tracker/evidence/evidence_frame.hpp"
 #include "max_entropy_tracker/mode/mode_enums.hpp"
 
 namespace fyt::auto_aim::norm4_v2 {
+
+// Forward declaration for ping-pong risk.
+enum class PingPongReason;
+struct PingPongRisk;
 
 struct Norm4RuntimeContext {
   mode::TrackMode mode = mode::TrackMode::AMBIGUOUS;
@@ -40,6 +46,17 @@ struct Norm4RuntimeContext {
   std::optional<double> last_timestamp;
   std::optional<double> last_obs_z;
   int lost_frames = 0;
+
+  // Phase 4: ping-pong suppression state.
+  double ping_pong_risk_score = 0.0;
+  bool ping_pong_pending = false;
+  bool ping_pong_should_hold = false;
+  int ping_pong_reason = 0;
+  int ping_pong_hold_counter = 0;
+  int ping_pong_consistent_counter = 0;
+
+  // Phase 5: unified evidence frame for debug / downstream consumption.
+  evidence::ArmorEvidenceFrame evidence_frame{};
 };
 
 }  // namespace fyt::auto_aim::norm4_v2

@@ -14,6 +14,9 @@
 
 #include "armor_detector/armor_pose_estimator.hpp"
 
+#include <algorithm>
+#include <array>
+
 #include "armor_detector/types.hpp"
 #include "rm_utils/logger/log.hpp"
 #include "rm_utils/math/utils.hpp"
@@ -84,6 +87,34 @@ ArmorPoseEstimator::extractArmorPoses(const std::vector<Armor> &armors,
       // Fill the distance to image center
       armor_msg.distance_to_image_center =
           pnp_solver_->calculateDistanceToCenter(armor.center);
+
+      // Fill optional 2D image geometry for downstream 2D evidence pipeline.
+      armor_msg.detection_confidence = armor.confidence;
+      armor_msg.has_image_geometry = true;
+      const auto corners = std::array<cv::Point2f, 4>{
+          armor.left_light.bottom, armor.left_light.top,
+          armor.right_light.top, armor.right_light.bottom};
+      float min_x = corners[0].x;
+      float min_y = corners[0].y;
+      float max_x = corners[0].x;
+      float max_y = corners[0].y;
+      for (int i = 0; i < 4; ++i) {
+        geometry_msgs::msg::Point32 p;
+        p.x = corners[i].x;
+        p.y = corners[i].y;
+        p.z = 0.0f;
+        armor_msg.image_corners[i] = p;
+        min_x = std::min(min_x, corners[i].x);
+        min_y = std::min(min_y, corners[i].y);
+        max_x = std::max(max_x, corners[i].x);
+        max_y = std::max(max_y, corners[i].y);
+      }
+      armor_msg.bbox_xywh[0] = min_x;
+      armor_msg.bbox_xywh[1] = min_y;
+      armor_msg.bbox_xywh[2] = std::max(0.0f, max_x - min_x);
+      armor_msg.bbox_xywh[3] = std::max(0.0f, max_y - min_y);
+      // 0: LB,LT,RT,RB (legacy detector convention).
+      armor_msg.corners_ordering = 0;
 
       armors_msg.push_back(std::move(armor_msg));
     } else {

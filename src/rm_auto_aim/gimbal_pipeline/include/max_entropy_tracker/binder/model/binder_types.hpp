@@ -41,6 +41,15 @@ struct BinderFrameInput {
   bool is_reacquired = false;
   double gap_dt = 0.0;
   int lost_frames = 0;
+
+  // Phase 6 soft fusion: 2D/proxy/phase evidence for binding scoring.
+  double phase_confidence = 0.0;
+  double ping_pong_risk = 0.0;
+  double track_continuity_score = 1.0;
+  double kinematic_consistency = 1.0;
+  double velocity_dir_cos = 1.0;
+  double acc_norm = 0.0;
+  bool has_soft_fusion = false;
 };
 
 struct JumpDecision {

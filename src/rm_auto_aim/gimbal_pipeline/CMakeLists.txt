@@ -135,6 +135,7 @@ if(BUILD_TESTING)
 
   add_gimbal_pipeline_gtest(test_mpc_core test/test_mpc_core.cpp)
   add_gimbal_pipeline_gtest(test_outpost_binding test/test_outpost_binding.cpp)
+  add_gimbal_pipeline_gtest(test_norm4_output_adapter test/test_norm4_output_adapter.cpp)
   add_gimbal_pipeline_gtest(test_adaptive_jump_binder test/test_adaptive_jump_binder.cpp)
 endif()
 

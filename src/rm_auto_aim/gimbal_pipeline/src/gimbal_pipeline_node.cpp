@@ -8,6 +8,8 @@
 
 #include "gimbal_pipeline/gimbal_pipeline_node.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <initializer_list>
 #include <limits>
@@ -18,6 +20,7 @@
 
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
 #include "rm_utils/logger/log.hpp"
@@ -26,6 +29,7 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include "max_entropy_tracker/msg_converter.hpp"
+#include "max_entropy_tracker/trackers/norm_4armor_tracker.hpp"
 #include "max_entropy_tracker/visualization.hpp"
 
 // Gimbal strategies
@@ -300,6 +304,14 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   predict_rate_ = get_parameter("predict_rate").as_double();
   debug_mode_ = get_parameter("debug_mode").as_bool();
   visualization_frame_ = get_parameter("visualization_frame").as_string();
+  tracker_2d_image_debug_enable_ =
+      get_parameter("tracker.debug_2d_viz.enable").as_bool();
+  tracker_2d_image_debug_width_ =
+      std::max(static_cast<int>(get_parameter("tracker.debug_2d_viz.width").as_int()), 320);
+  tracker_2d_image_debug_height_ =
+      std::max(static_cast<int>(get_parameter("tracker.debug_2d_viz.height").as_int()), 240);
+  tracker_2d_image_debug_jpeg_quality_ =
+      std::clamp(static_cast<int>(get_parameter("tracker.debug_2d_viz.jpeg_quality").as_int()), 20, 100);
   tracker_timeout_s_ = std::max(get_parameter("tracker_timeout").as_double(), 1e-3);
 
   tracker_config_ = UnifiedConfig::create_default();
@@ -870,6 +882,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       "~/fire_advice_debug", rclcpp::SensorDataQoS());
     debug_armor_selection_pub_ = create_publisher<std_msgs::msg::String>(
       "~/armor_selection_debug", rclcpp::SensorDataQoS());
+    debug_evidence_frame_pub_ = create_publisher<std_msgs::msg::String>(
+      "~/evidence_frame_debug", rclcpp::SensorDataQoS());
     debug_tracker_marker_pub_ =
         create_publisher<visualization_msgs::msg::MarkerArray>(
             "~/tracker_markers", 10);
@@ -884,6 +898,11 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
         "~/fire_debug/armor_plane", rclcpp::SensorDataQoS());
       debug_fire_normal_image_pub_ = create_publisher<sensor_msgs::msg::Image>(
         "~/fire_debug/normal_view", rclcpp::SensorDataQoS());
+    }
+    if (tracker_2d_image_debug_enable_) {
+      debug_tracker_2d_image_pub_ =
+          create_publisher<sensor_msgs::msg::CompressedImage>(
+              "~/tracker_debug/TwoD_tracks/compressed", rclcpp::SensorDataQoS());
     }
   }
 
@@ -946,6 +965,10 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("debug_mode", false);
   declare_parameter("enable_oscillation_detection", false);
   declare_parameter("visualization_frame", "odom");
+  declare_parameter("tracker.debug_2d_viz.enable", false);
+  declare_parameter("tracker.debug_2d_viz.width", 960);
+  declare_parameter("tracker.debug_2d_viz.height", 540);
+  declare_parameter("tracker.debug_2d_viz.jpeg_quality", 70);
   declare_parameter("robot_description.strict_unknown_reject", true);
 
   // UKF
@@ -986,6 +1009,7 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("entropy.k_prior_weight", 0.7);
 
   // Tracker
+  declare_parameter("tracker.implementation", std::string("adaptive"));
   declare_parameter("tracker.tracking_thres", 2);
   declare_parameter("tracker.lost_thres", 8);
   declare_parameter("tracker.temp_lost_thres", 3);
@@ -1100,6 +1124,69 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("maneuver.nis_threshold_dual", 4132.110);
   declare_parameter("maneuver.innov_norm_threshold_single", 0.1279);
   declare_parameter("maneuver.innov_norm_threshold_dual", 0.0613);
+  declare_parameter("maneuver.mad_filter_enable", false);
+  declare_parameter("maneuver.mad_window", 10);
+  declare_parameter("maneuver.mad_k", 3.0);
+
+  // Common binder config (Norm4/Outpost v2 pipeline)
+  declare_parameter("binder.confirm_frames", 3);
+  declare_parameter("binder.lock_new_hold_frames", 2);
+  declare_parameter("binder.force_rebind_bad_frames", 10);
+  declare_parameter("binder.pending_window_frames", 0);
+  declare_parameter("binder.post_jump_min_confidence", 0.45);
+  declare_parameter("binder.confidence_floor", 0.15);
+  declare_parameter("binder.z_jump_min", 0.015);
+  declare_parameter("binder.dz_match_tolerance", 0.03);
+  declare_parameter("binder.dz_gate", 0.010);
+  declare_parameter("binder.yaw_err_gate", 0.35);
+  declare_parameter("binder.cost_margin_min", 0.08);
+  declare_parameter("binder.dz_ema_alpha", 0.20);
+  declare_parameter("binder.periodic_enable", false);
+  declare_parameter("binder.periodic_window", 12);
+  declare_parameter("binder.periodic_weight", 0.60);
+  declare_parameter("binder.periodic_min_spin_rate", 0.8);
+  declare_parameter("binder.periodic_update_min_jump", 0.015);
+  declare_parameter("binder.periodic_signature_threshold", 0.60);
+  declare_parameter("binder.reacquire_gap_dt_gate", 0.12);
+  declare_parameter("binder.reacquire_lost_frames_gate", 1);
+  declare_parameter("binder.z_cluster_ema_alpha", 0.25);
+  declare_parameter("binder.z_cluster_assign_gate", 0.10);
+  declare_parameter("binder.min_candidate_prob", 0.40);
+  declare_parameter("binder.min_candidate_margin", 0.12);
+  declare_parameter("binder.switch_strong_score", 0.60);
+  declare_parameter("binder.single_obs_history_window", 8);
+  declare_parameter("binder.dual_obs_enable", true);
+  declare_parameter("binder.scorer_enable", true);
+  declare_parameter("binder.same_panel_yaw_gate", 0.35);
+  declare_parameter("binder.same_panel_z_gate", 0.08);
+  declare_parameter("binder.same_panel_xy_gate", 0.18);
+  declare_parameter("binder.z_audit_rebind_enable", false);
+  declare_parameter("binder.z_audit_rebind_confirm_frames", 3);
+  declare_parameter("binder.z_audit_rebind_min_confidence", 0.60);
+  declare_parameter("binder.z_audit_rebind_min_jump", 0.015);
+  declare_parameter("binder.enable_soft_fusion", false);
+  declare_parameter("binder.soft_fusion_w_seq", 0.25);
+  declare_parameter("binder.soft_fusion_w_geo", 0.40);
+  declare_parameter("binder.soft_fusion_w_dyn", 0.20);
+  declare_parameter("binder.soft_fusion_w_continuity", 0.15);
+
+  // Norm4 v2 common pipeline / anti-pingpong controls
+  declare_parameter("norm4_v2.enable_common_pipeline", false);
+  declare_parameter("norm4_v2.enable_phase_memory", true);
+  declare_parameter("norm4_v2.enable_kinematic_anti_pingpong", true);
+  declare_parameter("norm4_v2.enable_2d_tracker", false);
+  declare_parameter("norm4_v2.enable_proxy_manager", false);
+  declare_parameter("norm4_v2.phase_memory.enable_phase_memory", true);
+  declare_parameter("norm4_v2.phase_memory.enable_kinematic_anti_pingpong", true);
+  declare_parameter("norm4_v2.phase_memory.sequence_window_size", 10);
+  declare_parameter("norm4_v2.phase_memory.ping_pong_pattern_threshold", 0.7);
+  declare_parameter("norm4_v2.phase_memory.enable_opposite_jump_detect", true);
+  declare_parameter(
+      "norm4_v2.phase_memory.anti_pingpong.min_consistent_frames_to_commit", 3);
+  declare_parameter("norm4_v2.phase_memory.anti_pingpong.jerk_gate", 1.5);
+  declare_parameter("norm4_v2.phase_memory.anti_pingpong.yaw_rate_jump_gate", 2.0);
+  declare_parameter("norm4_v2.phase_memory.anti_pingpong.velocity_dir_cos_min", 0.2);
+  declare_parameter("norm4_v2.phase_memory.anti_pingpong.pending_timeout_frames", 12);
 
   // Panel mismatch detection
   declare_parameter("panel_mismatch.enable", true);
@@ -1477,6 +1564,21 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
   c.entropy.k_prior_weight =
       get_parameter("entropy.k_prior_weight").as_double();
 
+  c.tracker.implementation =
+      get_parameter("tracker.implementation").as_string();
+  std::transform(c.tracker.implementation.begin(), c.tracker.implementation.end(),
+                 c.tracker.implementation.begin(),
+                 [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+  if (c.tracker.implementation != "adaptive" &&
+      c.tracker.implementation != "norm4") {
+    RCLCPP_WARN(
+        get_logger(),
+        "Unknown tracker.implementation='%s', fallback to 'adaptive'. "
+        "Supported values: adaptive | norm4",
+        c.tracker.implementation.c_str());
+    c.tracker.implementation = "adaptive";
+  }
+
   c.tracker.tracking_thres = get_parameter("tracker.tracking_thres").as_int();
   c.tracker.lost_thres = get_parameter("tracker.lost_thres").as_int();
   c.tracker.temp_lost_thres =
@@ -1568,6 +1670,185 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("maneuver.innov_norm_threshold_single").as_double();
   c.maneuver.innov_norm_threshold_dual =
       get_parameter("maneuver.innov_norm_threshold_dual").as_double();
+  c.maneuver.mad_filter_enable =
+      get_parameter("maneuver.mad_filter_enable").as_bool();
+  c.maneuver.mad_window =
+      get_parameter("maneuver.mad_window").as_int();
+  c.maneuver.mad_k =
+      get_parameter("maneuver.mad_k").as_double();
+  c.maneuver.mad_window = std::max(1, c.maneuver.mad_window);
+  c.maneuver.mad_k = std::max(0.1, c.maneuver.mad_k);
+
+  c.binder.confirm_frames = get_parameter("binder.confirm_frames").as_int();
+  c.binder.lock_new_hold_frames =
+      get_parameter("binder.lock_new_hold_frames").as_int();
+  c.binder.force_rebind_bad_frames =
+      get_parameter("binder.force_rebind_bad_frames").as_int();
+  c.binder.pending_window_frames =
+      get_parameter("binder.pending_window_frames").as_int();
+  c.binder.post_jump_min_confidence =
+      get_parameter("binder.post_jump_min_confidence").as_double();
+  c.binder.confidence_floor =
+      get_parameter("binder.confidence_floor").as_double();
+  c.binder.z_jump_min = get_parameter("binder.z_jump_min").as_double();
+  c.binder.dz_match_tolerance =
+      get_parameter("binder.dz_match_tolerance").as_double();
+  c.binder.dz_gate = get_parameter("binder.dz_gate").as_double();
+  c.binder.yaw_err_gate = get_parameter("binder.yaw_err_gate").as_double();
+  c.binder.cost_margin_min =
+      get_parameter("binder.cost_margin_min").as_double();
+  c.binder.dz_ema_alpha = get_parameter("binder.dz_ema_alpha").as_double();
+  c.binder.periodic_enable =
+      get_parameter("binder.periodic_enable").as_bool();
+  c.binder.periodic_window =
+      get_parameter("binder.periodic_window").as_int();
+  c.binder.periodic_weight =
+      get_parameter("binder.periodic_weight").as_double();
+  c.binder.periodic_min_spin_rate =
+      get_parameter("binder.periodic_min_spin_rate").as_double();
+  c.binder.periodic_update_min_jump =
+      get_parameter("binder.periodic_update_min_jump").as_double();
+  c.binder.periodic_signature_threshold =
+      get_parameter("binder.periodic_signature_threshold").as_double();
+  c.binder.reacquire_gap_dt_gate =
+      get_parameter("binder.reacquire_gap_dt_gate").as_double();
+  c.binder.reacquire_lost_frames_gate =
+      get_parameter("binder.reacquire_lost_frames_gate").as_int();
+  c.binder.z_cluster_ema_alpha =
+      get_parameter("binder.z_cluster_ema_alpha").as_double();
+  c.binder.z_cluster_assign_gate =
+      get_parameter("binder.z_cluster_assign_gate").as_double();
+  c.binder.min_candidate_prob =
+      get_parameter("binder.min_candidate_prob").as_double();
+  c.binder.min_candidate_margin =
+      get_parameter("binder.min_candidate_margin").as_double();
+  c.binder.switch_strong_score =
+      get_parameter("binder.switch_strong_score").as_double();
+  c.binder.single_obs_history_window =
+      get_parameter("binder.single_obs_history_window").as_int();
+  c.binder.dual_obs_enable =
+      get_parameter("binder.dual_obs_enable").as_bool();
+  c.binder.scorer_enable = get_parameter("binder.scorer_enable").as_bool();
+  c.binder.same_panel_yaw_gate =
+      get_parameter("binder.same_panel_yaw_gate").as_double();
+  c.binder.same_panel_z_gate =
+      get_parameter("binder.same_panel_z_gate").as_double();
+  c.binder.same_panel_xy_gate =
+      get_parameter("binder.same_panel_xy_gate").as_double();
+  c.binder.z_audit_rebind_enable =
+      get_parameter("binder.z_audit_rebind_enable").as_bool();
+  c.binder.z_audit_rebind_confirm_frames =
+      get_parameter("binder.z_audit_rebind_confirm_frames").as_int();
+  c.binder.z_audit_rebind_min_confidence =
+      get_parameter("binder.z_audit_rebind_min_confidence").as_double();
+  c.binder.z_audit_rebind_min_jump =
+      get_parameter("binder.z_audit_rebind_min_jump").as_double();
+  c.binder.enable_soft_fusion =
+      get_parameter("binder.enable_soft_fusion").as_bool();
+  c.binder.soft_fusion_w_seq =
+      get_parameter("binder.soft_fusion_w_seq").as_double();
+  c.binder.soft_fusion_w_geo =
+      get_parameter("binder.soft_fusion_w_geo").as_double();
+  c.binder.soft_fusion_w_dyn =
+      get_parameter("binder.soft_fusion_w_dyn").as_double();
+  c.binder.soft_fusion_w_continuity =
+      get_parameter("binder.soft_fusion_w_continuity").as_double();
+
+  c.binder.confirm_frames = std::max(1, c.binder.confirm_frames);
+  c.binder.lock_new_hold_frames = std::max(0, c.binder.lock_new_hold_frames);
+  c.binder.force_rebind_bad_frames = std::max(1, c.binder.force_rebind_bad_frames);
+  c.binder.pending_window_frames = std::max(0, c.binder.pending_window_frames);
+  c.binder.post_jump_min_confidence =
+      std::clamp(c.binder.post_jump_min_confidence, 0.0, 1.0);
+  c.binder.confidence_floor = std::clamp(c.binder.confidence_floor, 0.0, 1.0);
+  c.binder.z_jump_min = std::max(0.0, c.binder.z_jump_min);
+  c.binder.dz_match_tolerance = std::max(0.0, c.binder.dz_match_tolerance);
+  c.binder.dz_gate = std::max(0.0, c.binder.dz_gate);
+  c.binder.yaw_err_gate = std::max(1e-3, c.binder.yaw_err_gate);
+  c.binder.cost_margin_min = std::max(0.0, c.binder.cost_margin_min);
+  c.binder.dz_ema_alpha = std::clamp(c.binder.dz_ema_alpha, 0.01, 1.0);
+  c.binder.periodic_window = std::max(3, c.binder.periodic_window);
+  c.binder.periodic_weight = std::max(0.0, c.binder.periodic_weight);
+  c.binder.periodic_min_spin_rate = std::max(0.0, c.binder.periodic_min_spin_rate);
+  c.binder.periodic_update_min_jump = std::max(0.0, c.binder.periodic_update_min_jump);
+  c.binder.periodic_signature_threshold =
+      std::clamp(c.binder.periodic_signature_threshold, 0.0, 1.0);
+  c.binder.reacquire_gap_dt_gate = std::max(0.0, c.binder.reacquire_gap_dt_gate);
+  c.binder.reacquire_lost_frames_gate = std::max(0, c.binder.reacquire_lost_frames_gate);
+  c.binder.z_cluster_ema_alpha = std::clamp(c.binder.z_cluster_ema_alpha, 0.01, 1.0);
+  c.binder.z_cluster_assign_gate = std::max(0.0, c.binder.z_cluster_assign_gate);
+  c.binder.min_candidate_prob = std::clamp(c.binder.min_candidate_prob, 0.0, 1.0);
+  c.binder.min_candidate_margin = std::clamp(c.binder.min_candidate_margin, 0.0, 1.0);
+  c.binder.switch_strong_score = std::clamp(c.binder.switch_strong_score, 0.0, 1.0);
+  c.binder.single_obs_history_window = std::max(1, c.binder.single_obs_history_window);
+  c.binder.same_panel_yaw_gate = std::max(1e-3, c.binder.same_panel_yaw_gate);
+  c.binder.same_panel_z_gate = std::max(1e-3, c.binder.same_panel_z_gate);
+  c.binder.same_panel_xy_gate = std::max(1e-3, c.binder.same_panel_xy_gate);
+  c.binder.z_audit_rebind_confirm_frames =
+      std::max(1, c.binder.z_audit_rebind_confirm_frames);
+  c.binder.z_audit_rebind_min_confidence =
+      std::clamp(c.binder.z_audit_rebind_min_confidence, 0.0, 1.0);
+  c.binder.z_audit_rebind_min_jump = std::max(0.0, c.binder.z_audit_rebind_min_jump);
+  c.binder.soft_fusion_w_seq = std::max(0.0, c.binder.soft_fusion_w_seq);
+  c.binder.soft_fusion_w_geo = std::max(0.0, c.binder.soft_fusion_w_geo);
+  c.binder.soft_fusion_w_dyn = std::max(0.0, c.binder.soft_fusion_w_dyn);
+  c.binder.soft_fusion_w_continuity = std::max(0.0, c.binder.soft_fusion_w_continuity);
+
+  c.norm4_v2.enable_common_pipeline =
+      get_parameter("norm4_v2.enable_common_pipeline").as_bool();
+  c.norm4_v2.enable_phase_memory =
+      get_parameter("norm4_v2.enable_phase_memory").as_bool();
+  c.norm4_v2.enable_kinematic_anti_pingpong =
+      get_parameter("norm4_v2.enable_kinematic_anti_pingpong").as_bool();
+  c.norm4_v2.enable_2d_tracker =
+      get_parameter("norm4_v2.enable_2d_tracker").as_bool();
+  c.norm4_v2.enable_proxy_manager =
+      get_parameter("norm4_v2.enable_proxy_manager").as_bool();
+  c.norm4_v2.phase_memory.enable_phase_memory =
+      get_parameter("norm4_v2.phase_memory.enable_phase_memory").as_bool();
+  c.norm4_v2.phase_memory.enable_kinematic_anti_pingpong =
+      get_parameter("norm4_v2.phase_memory.enable_kinematic_anti_pingpong").as_bool();
+  c.norm4_v2.phase_memory.sequence_window_size =
+      get_parameter("norm4_v2.phase_memory.sequence_window_size").as_int();
+  c.norm4_v2.phase_memory.ping_pong_pattern_threshold =
+      get_parameter("norm4_v2.phase_memory.ping_pong_pattern_threshold").as_double();
+  c.norm4_v2.phase_memory.enable_opposite_jump_detect =
+      get_parameter("norm4_v2.phase_memory.enable_opposite_jump_detect").as_bool();
+  c.norm4_v2.phase_memory.anti_pingpong.min_consistent_frames_to_commit =
+      get_parameter(
+          "norm4_v2.phase_memory.anti_pingpong.min_consistent_frames_to_commit")
+          .as_int();
+  c.norm4_v2.phase_memory.anti_pingpong.jerk_gate =
+      get_parameter("norm4_v2.phase_memory.anti_pingpong.jerk_gate").as_double();
+  c.norm4_v2.phase_memory.anti_pingpong.yaw_rate_jump_gate =
+      get_parameter("norm4_v2.phase_memory.anti_pingpong.yaw_rate_jump_gate").as_double();
+  c.norm4_v2.phase_memory.anti_pingpong.velocity_dir_cos_min =
+      get_parameter("norm4_v2.phase_memory.anti_pingpong.velocity_dir_cos_min")
+          .as_double();
+  c.norm4_v2.phase_memory.anti_pingpong.pending_timeout_frames =
+      get_parameter("norm4_v2.phase_memory.anti_pingpong.pending_timeout_frames")
+          .as_int();
+
+  c.norm4_v2.phase_memory.enable_phase_memory = c.norm4_v2.enable_phase_memory;
+  c.norm4_v2.phase_memory.enable_kinematic_anti_pingpong =
+      c.norm4_v2.enable_kinematic_anti_pingpong;
+  c.norm4_v2.phase_memory.sequence_window_size =
+      std::max(3, c.norm4_v2.phase_memory.sequence_window_size);
+  c.norm4_v2.phase_memory.ping_pong_pattern_threshold =
+      std::clamp(c.norm4_v2.phase_memory.ping_pong_pattern_threshold, 0.0, 1.0);
+  c.norm4_v2.phase_memory.anti_pingpong.min_consistent_frames_to_commit =
+      std::max(
+          1,
+          c.norm4_v2.phase_memory.anti_pingpong.min_consistent_frames_to_commit);
+  c.norm4_v2.phase_memory.anti_pingpong.jerk_gate =
+      std::max(0.0, c.norm4_v2.phase_memory.anti_pingpong.jerk_gate);
+  c.norm4_v2.phase_memory.anti_pingpong.yaw_rate_jump_gate =
+      std::max(0.0, c.norm4_v2.phase_memory.anti_pingpong.yaw_rate_jump_gate);
+  c.norm4_v2.phase_memory.anti_pingpong.velocity_dir_cos_min =
+      std::clamp(
+          c.norm4_v2.phase_memory.anti_pingpong.velocity_dir_cos_min, -1.0, 1.0);
+  c.norm4_v2.phase_memory.anti_pingpong.pending_timeout_frames =
+      std::max(1, c.norm4_v2.phase_memory.anti_pingpong.pending_timeout_frames);
 
   c.panel_mismatch.enable =
       get_parameter("panel_mismatch.enable").as_bool();
@@ -2134,6 +2415,13 @@ void GimbalPipelineNode::armorsCallback(
 
     if (debug_maneuver_pub_) {
       publishManeuverMarkers(msg->header);
+    }
+
+    if (debug_tracker_2d_image_pub_) {
+      publish2DTrackerDebugImage(msg->header, tracker_views);
+    }
+    if (debug_evidence_frame_pub_) {
+      publishEvidenceFrameDebug(msg->header, tracker_views);
     }
   }
 
@@ -2814,6 +3102,141 @@ GimbalPipelineNode::getGimbalStrategy(const std::string &name) const {
   return (it != gimbal_strategies_.end()) ? it->second : nullptr;
 }
 
+void GimbalPipelineNode::publish2DTrackerDebugImage(
+    const std_msgs::msg::Header &header,
+    const std::vector<TrackerManager::TrackerConstView> &tracker_views) {
+  if (!debug_tracker_2d_image_pub_) return;
+
+  cv::Mat canvas(
+      tracker_2d_image_debug_height_, tracker_2d_image_debug_width_, CV_8UC3,
+      cv::Scalar(20, 20, 20));
+
+  int draw_count = 0;
+  for (const auto &view : tracker_views) {
+    if (!view.tracker) continue;
+    const auto *norm4 = dynamic_cast<const Norm4ArmorTracker *>(view.tracker);
+    if (!norm4) continue;
+
+    const auto &frame = norm4->last_evidence_frame();
+    if (frame.observations.empty()) continue;
+
+    for (const auto &obs : frame.observations) {
+      if (!obs.image.has_value() || !obs.image->valid) continue;
+      const auto &img = obs.image.value();
+
+      int track_id = obs.track2d_id.value_or(-1);
+      int color_seed = (track_id >= 0 ? track_id : draw_count);
+      cv::Scalar color(
+          50 + (color_seed * 71) % 205,
+          50 + (color_seed * 131) % 205,
+          50 + (color_seed * 193) % 205);
+
+      const int x = std::max(0, static_cast<int>(std::lround(img.bbox_x)));
+      const int y = std::max(0, static_cast<int>(std::lround(img.bbox_y)));
+      const int w = std::max(1, static_cast<int>(std::lround(img.bbox_w)));
+      const int h = std::max(1, static_cast<int>(std::lround(img.bbox_h)));
+      cv::rectangle(canvas, cv::Rect(x, y, w, h), color, 2);
+
+      bool has_corners = true;
+      for (const auto &c : img.corners) {
+        if (!std::isfinite(c.x()) || !std::isfinite(c.y())) {
+          has_corners = false;
+          break;
+        }
+      }
+      if (has_corners) {
+        std::vector<cv::Point> poly;
+        poly.reserve(4);
+        for (const auto &c : img.corners) {
+          poly.emplace_back(
+              static_cast<int>(std::lround(c.x())),
+              static_cast<int>(std::lround(c.y())));
+        }
+        const cv::Point *pts = poly.data();
+        int npts = static_cast<int>(poly.size());
+        cv::polylines(canvas, &pts, &npts, 1, true, color, 1, cv::LINE_AA);
+      }
+
+      std::ostringstream oss;
+      oss << view.robot_id << " t2d=" << track_id;
+      cv::putText(canvas, oss.str(),
+                  cv::Point(x, std::max(16, y - 5)),
+                  cv::FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv::LINE_AA);
+      ++draw_count;
+    }
+  }
+
+  cv::putText(
+      canvas,
+      "2DTracker tracks: " + std::to_string(draw_count),
+      cv::Point(10, 22),
+      cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(200, 220, 255), 1, cv::LINE_AA);
+
+  std::vector<uchar> encoded;
+  std::vector<int> encode_params = {cv::IMWRITE_JPEG_QUALITY,
+                                    tracker_2d_image_debug_jpeg_quality_};
+  if (!cv::imencode(".jpg", canvas, encoded, encode_params)) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                         "Failed to encode 2D tracker debug image");
+    return;
+  }
+
+  sensor_msgs::msg::CompressedImage out;
+  out.header = header;
+  out.format = "jpeg";
+  out.data = std::move(encoded);
+  debug_tracker_2d_image_pub_->publish(out);
+}
+
+void GimbalPipelineNode::publishEvidenceFrameDebug(
+    const std_msgs::msg::Header &header,
+    const std::vector<TrackerManager::TrackerConstView> &tracker_views) {
+  if (!debug_evidence_frame_pub_) return;
+
+  std::ostringstream oss;
+  oss << std::fixed << std::setprecision(4);
+  oss << "stamp=" << rclcpp::Time(header.stamp).seconds();
+
+  int norm4_count = 0;
+  for (const auto &view : tracker_views) {
+    if (!view.tracker) continue;
+    const auto *norm4 = dynamic_cast<const Norm4ArmorTracker *>(view.tracker);
+    if (!norm4) continue;
+
+    ++norm4_count;
+    const auto &frame = norm4->last_evidence_frame();
+    oss << "\nrobot_id=" << view.robot_id
+        << " ts=" << frame.timestamp
+        << " obs=" << frame.obs_count
+        << " obs_vec=" << frame.observations.size()
+        << " t2d=" << frame.track2d_evidence.size()
+        << " proxy=" << frame.proxy_evidence.size()
+        << " comp={3d:" << (frame.completeness.has_3d_obs ? 1 : 0)
+        << ",2d:" << (frame.completeness.has_2d_tracks ? 1 : 0)
+        << ",proxy:" << (frame.completeness.has_proxy ? 1 : 0)
+        << ",geo:" << (frame.completeness.has_geometry ? 1 : 0)
+        << ",rel:" << (frame.completeness.has_relation ? 1 : 0)
+        << ",ratio:" << frame.completeness.fraction() << "}"
+        << " relation={valid:" << (frame.relation.valid ? 1 : 0)
+        << ",has_z_jump:" << (frame.relation.has_z_jump ? 1 : 0)
+        << ",z_jump:" << frame.relation.z_jump
+        << ",yaw_delta:" << frame.relation.yaw_delta
+        << ",spatial:" << frame.relation.spatial_consistency
+        << ",dual:" << (frame.relation.has_dual_obs ? 1 : 0)
+        << ",p1:" << frame.relation.dual_panel_id_1
+        << ",p2:" << frame.relation.dual_panel_id_2
+        << "}";
+  }
+
+  if (norm4_count == 0) {
+    oss << "\nno_norm4_tracker";
+  }
+
+  std_msgs::msg::String out;
+  out.data = oss.str();
+  debug_evidence_frame_pub_->publish(out);
+}
+
 /* ================================================================ */
 /*  Visualization                                                    */
 /* ================================================================ */
@@ -3098,7 +3521,7 @@ void GimbalPipelineNode::publishGimbalMarkers(
           const double normal_yaw =
             std::atan2(-center_position.y(), -center_position.x());
           tf2::Quaternion q_virtual;
-          q_virtual.setRPY(0.0, 0.2618, normal_yaw);
+          q_virtual.setRPY(0.0, -0.2618, normal_yaw);
           virtual_armor_marker_.pose.orientation.x = q_virtual.x();
           virtual_armor_marker_.pose.orientation.y = q_virtual.y();
           virtual_armor_marker_.pose.orientation.z = q_virtual.z();

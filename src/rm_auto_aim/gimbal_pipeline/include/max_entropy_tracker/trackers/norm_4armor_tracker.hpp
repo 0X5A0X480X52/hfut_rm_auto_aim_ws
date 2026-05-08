@@ -9,13 +9,16 @@
 #include "max_entropy_tracker/association/height_identifier.hpp"
 #include "max_entropy_tracker/association/panel_mismatch_detector.hpp"
 #include "max_entropy_tracker/core/config.hpp"
+#include "max_entropy_tracker/evidence/evidence_builder.hpp"
 #include "max_entropy_tracker/mode/evidence_fuser.hpp"
 #include "max_entropy_tracker/mode/mode_fsm.hpp"
+#include "max_entropy_tracker/pipeline/serial_tracker_pipeline.hpp"
 #include "max_entropy_tracker/trackers/base_tracker.hpp"
 #include "max_entropy_tracker/trackers/norm4_v2/norm4_ambiguous_backend.hpp"
 #include "max_entropy_tracker/trackers/norm4_v2/norm4_binder_bridge.hpp"
 #include "max_entropy_tracker/trackers/norm4_v2/norm4_observation_frontend.hpp"
 #include "max_entropy_tracker/trackers/norm4_v2/norm4_output_adapter.hpp"
+#include "max_entropy_tracker/trackers/norm4_v2/norm4_phase_sequence_memory.hpp"
 #include "max_entropy_tracker/trackers/norm4_v2/norm4_runtime_context.hpp"
 #include "max_entropy_tracker/trackers/norm4_v2/norm4_structured_backend.hpp"
 #include "max_entropy_tracker/utils/maneuver_detector.hpp"
@@ -54,6 +57,12 @@ class Norm4ArmorTracker : public BaseTracker {
     double obs_z = std::numeric_limits<double>::quiet_NaN();
     double obs_yaw = std::numeric_limits<double>::quiet_NaN();
     double obs_z_jump = std::numeric_limits<double>::quiet_NaN();
+
+    // Phase 4: ping-pong suppression debug.
+    double ping_pong_risk = std::numeric_limits<double>::quiet_NaN();
+    bool ping_pong_hold = false;
+    int ping_pong_reason = 0;
+    int ping_pong_hold_ctr = 0;
   };
 
   explicit Norm4ArmorTracker(const UnifiedConfig &config, double dt = 0.05,
@@ -79,6 +88,7 @@ class Norm4ArmorTracker : public BaseTracker {
   std::vector<geometry_msgs::msg::Pose> build_armors_offset_for_message() const override;
 
   const DebugSnapshot &debug_snapshot() const { return debug_snapshot_; }
+  const evidence::ArmorEvidenceFrame &last_evidence_frame() const { return ctx_.evidence_frame; }
 
  private:
   static int clamp_panel(int panel_id);
@@ -108,6 +118,12 @@ class Norm4ArmorTracker : public BaseTracker {
   HeightIdentifier height_identifier_;
   PanelMismatchDetector mismatch_detector_;
   ManeuverDetector maneuver_detector_;
+
+  norm4_v2::PhaseSequenceMemory phase_memory_;
+
+  evidence::EvidenceBuilder evidence_builder_;
+
+  std::unique_ptr<pipeline::SerialTrackerPipeline> serial_pipeline_;
 
   norm4_v2::Norm4RuntimeContext ctx_;
   double default_r1_ = 0.15;

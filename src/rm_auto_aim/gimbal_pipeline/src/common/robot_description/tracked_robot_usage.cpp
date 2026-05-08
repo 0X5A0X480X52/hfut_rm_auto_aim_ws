@@ -408,7 +408,8 @@ std::vector<geometry_msgs::msg::Pose> TrackedRobotUsage::generateArmorsOffsetFro
   double d_za,
   double d_zc)
 {
-  constexpr double kDefaultArmorPitchUp = 0.2618;  // +15 deg
+  constexpr double kDefaultArmorPitchUp = -0.2618;  // +15 deg
+  double pitchOffsetSign = 1.0;
   std::vector<geometry_msgs::msg::Pose> offsets;
   offsets.reserve(static_cast<size_t>(std::max(0, num_armors)));
 
@@ -431,6 +432,7 @@ std::vector<geometry_msgs::msg::Pose> TrackedRobotUsage::generateArmorsOffsetFro
       } else {
         dz = d_zc - d_za;
       }
+      pitchOffsetSign = -1.0;  // flip pitch for outpost armor to keep them facing outward
     }
 
     geometry_msgs::msg::Pose pose;
@@ -439,7 +441,7 @@ std::vector<geometry_msgs::msg::Pose> TrackedRobotUsage::generateArmorsOffsetFro
     pose.position.z = dz;
 
     tf2::Quaternion q;
-    q.setRPY(0.0, kDefaultArmorPitchUp, angle + M_PI);
+    q.setRPY(0.0, kDefaultArmorPitchUp * pitchOffsetSign, angle + M_PI);
     pose.orientation = tf2::toMsg(q);
 
     offsets.push_back(pose);

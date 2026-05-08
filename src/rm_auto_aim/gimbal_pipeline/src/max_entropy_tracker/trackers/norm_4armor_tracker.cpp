@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <iostream>
 
 #include "max_entropy_tracker/utils/angle_utils.hpp"
 
@@ -49,8 +50,23 @@ Norm4ArmorTracker::Norm4ArmorTracker(const UnifiedConfig &config, double dt,
                          config.panel_mismatch.confirm_count,
                          config.panel_mismatch.reinit_count,
                          config.panel_mismatch.enable),
-      maneuver_detector_(config.maneuver) {
+      maneuver_detector_(config.maneuver),
+      phase_memory_(config.norm4_v2.phase_memory),
+      evidence_builder_([&config]() {
+        evidence::EvidenceBuilderConfig ecfg;
+        ecfg.enable_2d_tracker = config.norm4_v2.enable_2d_tracker;
+        ecfg.enable_proxy_manager = config.norm4_v2.enable_proxy_manager;
+        ecfg.iou_2d = IoU2DTrackerConfig{};
+        ecfg.proxy = SingleProxyManagerConfig{};
+        return ecfg;
+      }(), config) {
   (void)enable_oscillation;
+
+  // Phase 7: construct serial pipeline when common pipeline is requested.
+  if (config.norm4_v2.enable_common_pipeline) {
+    serial_pipeline_ =
+        std::make_unique<pipeline::SerialTrackerPipeline>(config, dt);
+  }
 }
 
 int Norm4ArmorTracker::clamp_panel(int panel_id) {
@@ -89,9 +105,37 @@ void Norm4ArmorTracker::initialize(const std::vector<ObservationData> &obs, doub
   if (obs.empty()) {
     throw std::invalid_argument("Norm4ArmorTracker requires one observation");
   }
+
+  default_r1_ = std::max(0.05, r1);
+  default_r2_ = std::max(0.05, r2);
+  default_dza_ = std::max(0.0, dza);
+
+  // Phase 7: delegate to serial pipeline.
+  if (serial_pipeline_) {
+    ctx_ = norm4_v2::Norm4RuntimeContext{};
+    serial_pipeline_->initialize(obs, &ctx_);
+
+    if (obs[0].timestamp.has_value()) {
+      current_time_ = obs[0].timestamp.value();
+      last_update_time_ = obs[0].timestamp.value();
+    }
+    mark_initialized();
+    transition_to(TrackerState::INITIALIZING);
+    increment_frame();
+
+    norm4_v2::BindingCandidate candidate;
+    binder::BinderOutput binder_out;
+    mode::ModeDecision mode_decision;
+    refresh_debug(&obs[0], candidate, binder_out,
+                  binder_bridge_.debug_snapshot(),
+                  mode_decision, 0.0);
+    return;
+  }
+
   obs_frontend_.reset_history();
   height_identifier_.reset();
   mismatch_detector_.reset();
+  phase_memory_.reset();
   single_obs_streak_ = 0;
   degraded_single_obs_mode_ = false;
 
@@ -160,6 +204,19 @@ void Norm4ArmorTracker::predict(std::optional<double> target_time) {
   if (!is_initialized()) return;
 
   const double dt = compute_dt(target_time);
+
+  // Phase 7: delegate to serial pipeline.
+  if (serial_pipeline_) {
+    serial_pipeline_->predict(dt, &ctx_);
+    if (target_time.has_value()) {
+      current_time_ = target_time.value();
+      ctx_.last_timestamp = target_time.value();
+    } else if (current_time_.has_value()) {
+      current_time_ = current_time_.value() + dt;
+      ctx_.last_timestamp = current_time_.value();
+    }
+    return;
+  }
   ambiguous_backend_.predict(dt);
   structured_backend_.predict(dt);
 
@@ -257,6 +314,42 @@ bool Norm4ArmorTracker::update(const std::vector<ObservationData> &obs) {
     return false;
   }
 
+  // Phase 7: common pipeline fast path.
+  if (serial_pipeline_) {
+    handle_observation_received(config_.tracker.tracking_thres);
+
+    // Predict to current time.
+    double obs_ts = obs[0].timestamp.value_or(current_time_.value_or(0.0));
+    if (current_time_.has_value() && obs_ts > current_time_.value()) {
+      serial_pipeline_->predict(obs_ts - current_time_.value(), &ctx_);
+    }
+
+    auto result = serial_pipeline_->step(obs, &ctx_);
+
+    // Update tracker state.
+    if (result.ok) {
+      if (obs[0].timestamp.has_value()) {
+        update_time(obs[0].timestamp.value());
+      }
+      increment_frame();
+    } else {
+      handle_observation_loss(config_.tracker.tracking_thres, config_.tracker.lost_thres);
+    }
+
+    // Sync the degraded single obs mode.
+    update_degraded_single_obs_mode(obs.size() == 1);
+
+    // Reuse the existing debug refresh for compatibility.
+    const ObservationData *sel =
+        result.intent.obs ? result.intent.obs : &obs[0];
+    const auto &serial_binder_dbg =
+        serial_pipeline_->binder_bridge().debug_snapshot();
+    refresh_debug(sel, candidate, binder_out,
+                  serial_binder_dbg,
+                  mode_decision, result.intent.height_confidence);
+    return result.ok;
+  }
+
   const ObservationData *selected =
       obs_frontend_.select_primary_observation(obs, ctx_);
   if (selected == nullptr) {
@@ -277,6 +370,19 @@ bool Norm4ArmorTracker::update(const std::vector<ObservationData> &obs) {
 
   ctx_.lost_frames = lost_count();
   handle_observation_received(config_.tracker.tracking_thres);
+
+  // Phase 5: build unified evidence frame (idempotent; stages run only when enabled).
+  if (config_.norm4_v2.enable_common_pipeline) {
+    ctx_.evidence_frame = evidence_builder_.build(
+        obs, selected->timestamp.value_or(ctx_.last_timestamp.value_or(0.0)));
+
+    // Debug: print evidence frame.
+    std::cout << "[enable_common_pipeline] Evidence Frame at t=" << ctx_.evidence_frame.timestamp
+              << " with " << ctx_.evidence_frame.observations.size()
+              << " observations and " << ctx_.evidence_frame.proxy_evidence.size()
+              << " proxy evidence entries." << std::endl;
+
+  }
 
   auto association_ctx = ctx_;
   if (ctx_.mode == mode::TrackMode::AMBIGUOUS) {
@@ -369,6 +475,54 @@ bool Norm4ArmorTracker::update(const std::vector<ObservationData> &obs) {
   double height_confidence =
       std::clamp(std::max(candidate.height_confidence, binder_out.binding_confidence),
                  0.0, 1.0);
+
+  // Phase 4: ping-pong suppression.
+  norm4_v2::PingPongRisk ping_pong_risk;
+  if (config_.norm4_v2.enable_phase_memory) {
+    // Resolve kin_summary from proxy evidence when available (Phase 5 wire).
+    const KinematicSummary *kin_summary = nullptr;
+    if (config_.norm4_v2.enable_common_pipeline) {
+      std::optional<int> selected_track2d_id;
+      if (selected_obs_index >= 0 &&
+          selected_obs_index <
+              static_cast<int>(ctx_.evidence_frame.observations.size())) {
+        selected_track2d_id =
+            ctx_.evidence_frame.observations[selected_obs_index].track2d_id;
+      }
+      if (selected_track2d_id.has_value()) {
+        for (const auto &pe : ctx_.evidence_frame.proxy_evidence) {
+          if (pe.valid && pe.track2d_id == selected_track2d_id.value()) {
+            kin_summary = &pe.kin_summary;
+            break;
+          }
+        }
+      }
+      if (kin_summary == nullptr) {
+        for (const auto &pe : ctx_.evidence_frame.proxy_evidence) {
+          if (pe.valid && pe.track2d_id >= 0) {
+            kin_summary = &pe.kin_summary;
+            break;
+          }
+        }
+      }
+    }
+    ping_pong_risk = phase_memory_.assess(
+        selected_panel, height_confidence,
+        selected->timestamp.value_or(ctx_.last_timestamp.value_or(0.0)),
+        kin_summary);
+    if (ping_pong_risk.should_hold && ctx_.bound_panel_id >= 0) {
+      selected_panel = ctx_.bound_panel_id;
+      if (ctx_.bound_height_label != binder::HeightLabel::UNKNOWN) {
+        selected_label = ctx_.bound_height_label;
+      }
+    }
+    ctx_.ping_pong_risk_score = ping_pong_risk.risk_score;
+    ctx_.ping_pong_pending = ping_pong_risk.pending;
+    ctx_.ping_pong_should_hold = ping_pong_risk.should_hold;
+    ctx_.ping_pong_reason = static_cast<int>(ping_pong_risk.reason);
+    ctx_.ping_pong_hold_counter = phase_memory_.hold_counter();
+    ctx_.ping_pong_consistent_counter = phase_memory_.consistent_counter();
+  }
 
   if (mode_decision.switched) {
     ctx_.mode = mode_decision.mode;
@@ -563,6 +717,10 @@ void Norm4ArmorTracker::refresh_debug(
   debug_snapshot_.obs_z = (obs != nullptr) ? obs->z : kNaN;
   debug_snapshot_.obs_yaw = (obs != nullptr) ? obs->yaw : kNaN;
   debug_snapshot_.obs_z_jump = candidate.z_jump;
+  debug_snapshot_.ping_pong_risk = ctx_.ping_pong_risk_score;
+  debug_snapshot_.ping_pong_hold = ctx_.ping_pong_should_hold;
+  debug_snapshot_.ping_pong_reason = ctx_.ping_pong_reason;
+  debug_snapshot_.ping_pong_hold_ctr = ctx_.ping_pong_hold_counter;
 }
 
 }  // namespace fyt::auto_aim

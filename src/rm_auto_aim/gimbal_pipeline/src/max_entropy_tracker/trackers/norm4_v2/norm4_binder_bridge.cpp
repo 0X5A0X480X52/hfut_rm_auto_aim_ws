@@ -96,6 +96,27 @@ binder::BinderOutput Norm4BinderBridge::step(
   in.gap_dt = 0.0;
   in.lost_frames = std::max(0, ctx.lost_frames);
 
+  // Phase 6: soft fusion fields from runtime context.
+  in.phase_confidence = ctx.binding_confidence;
+  in.ping_pong_risk = ctx.ping_pong_risk_score;
+  if (ctx.ping_pong_pending || ctx.ping_pong_should_hold) {
+    in.track_continuity_score = 1.0 - std::min(1.0, ctx.ping_pong_risk_score);
+    in.kinematic_consistency = 1.0 - std::min(1.0, ctx.ping_pong_risk_score);
+  }
+  double vel_cos = 1.0;
+  double acc_n = 0.0;
+  for (const auto &pe : ctx.evidence_frame.proxy_evidence) {
+    if (pe.valid) {
+      vel_cos = std::max(vel_cos, pe.kin_summary.velocity_dir_cos);
+      acc_n = std::max(acc_n, pe.kin_summary.acc_norm_window);
+    }
+  }
+  in.velocity_dir_cos = vel_cos;
+  in.acc_norm = acc_n;
+  in.has_soft_fusion =
+      (cfg_.binder.enable_soft_fusion &&
+       ctx.evidence_frame.completeness.has_proxy);
+
   out = pipeline_->step(in);
   debug_ = pipeline_->debug_snapshot();
   return out;
