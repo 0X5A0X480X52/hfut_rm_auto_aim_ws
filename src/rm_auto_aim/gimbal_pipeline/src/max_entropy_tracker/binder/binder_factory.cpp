@@ -95,6 +95,7 @@ std::unique_ptr<BinderPipeline> BinderFactory::create(
     sfc.w_geo = config.soft_fusion_w_geo;
     sfc.w_dyn = config.soft_fusion_w_dyn;
     sfc.w_continuity = config.soft_fusion_w_continuity;
+    sfc.w_topology = config.soft_fusion_w_topology;
     scorer = std::make_unique<SoftFusionScorer>(std::move(scorer), sfc);
   }
 

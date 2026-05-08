@@ -185,6 +185,8 @@ gimbal_pipeline:
       soft_fusion_w_geo: 0.40
       soft_fusion_w_dyn: 0.20
       soft_fusion_w_continuity: 0.15
+      # 2D左右拓扑一致性权重：用于抑制 0101 等非物理震荡
+      soft_fusion_w_topology: 0.15
 
     # Norm4 v2 通用流水线/反乒乓参数
     norm4_v2:

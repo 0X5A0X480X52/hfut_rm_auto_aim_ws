@@ -26,11 +26,14 @@ double SoftFusionScorer::compute_phase_confidence_penalty(
 
   // w_continuity: track continuity from 2D tracker.
   double cont = input.track_continuity_score;
+  // w_topology: left/right panel-order consistency from 2D tracker.
+  double topo = input.topology_consistency_score;
 
   double fused = config_.w_seq * seq +
                  config_.w_geo * geo +
                  config_.w_dyn * dyn +
-                 config_.w_continuity * cont;
+                 config_.w_continuity * cont +
+                 config_.w_topology * topo;
 
   return std::max(0.0, 1.0 - fused);
 }

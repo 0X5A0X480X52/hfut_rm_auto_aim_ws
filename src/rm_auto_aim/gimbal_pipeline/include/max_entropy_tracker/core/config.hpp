@@ -313,6 +313,7 @@ struct BinderConfig {
   double soft_fusion_w_geo = 0.40;
   double soft_fusion_w_dyn = 0.20;
   double soft_fusion_w_continuity = 0.15;
+  double soft_fusion_w_topology = 0.15;
 };
 
 // ======================== Norm4 V2 Config ========================

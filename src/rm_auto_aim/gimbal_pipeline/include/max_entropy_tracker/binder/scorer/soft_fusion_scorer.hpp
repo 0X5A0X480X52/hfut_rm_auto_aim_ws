@@ -13,6 +13,7 @@ struct SoftFusionConfig {
   double w_geo = 0.40;
   double w_dyn = 0.20;
   double w_continuity = 0.15;
+  double w_topology = 0.15;
 };
 
 /// Phase 6: wraps an inner scorer and adds track_continuity_cost and
@@ -22,6 +23,7 @@ struct SoftFusionConfig {
 ///             + w_geo * yaw_xy_consistency
 ///             + w_dyn * kinematic_consistency
 ///             + w_continuity * track_continuity_score
+///             - w_topology * topology_transition_cost
 ///
 /// The resulting confidence penalty is blended into the inner scorer's
 /// health score when soft fusion fields are present in BinderFrameInput.

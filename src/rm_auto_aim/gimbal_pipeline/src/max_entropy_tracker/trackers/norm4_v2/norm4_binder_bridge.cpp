@@ -2,10 +2,62 @@
 #include "max_entropy_tracker/trackers/norm4_v2/norm4_binder_bridge.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 #include "max_entropy_tracker/binder/factory/binder_factory.hpp"
 
 namespace fyt::auto_aim::norm4_v2 {
+namespace {
+
+int left_neighbor(int panel_id) {
+  const int p = ((panel_id % 4) + 4) % 4;
+  return (p + 3) % 4;
+}
+
+int right_neighbor(int panel_id) {
+  const int p = ((panel_id % 4) + 4) % 4;
+  return (p + 1) % 4;
+}
+
+bool find_track_center_x_for_observation(
+    const evidence::ArmorEvidenceFrame &frame, int observation_index,
+    double *center_x) {
+  if (observation_index < 0 || center_x == nullptr) return false;
+  for (const auto &te : frame.track2d_evidence) {
+    if (!te.valid) continue;
+    if (te.observation_index != observation_index) continue;
+    if (!std::isfinite(te.center_x)) continue;
+    *center_x = te.center_x;
+    return true;
+  }
+  return false;
+}
+
+double compute_topology_consistency_score(
+    const norm4_v2::BindingCandidate &candidate,
+    const evidence::ArmorEvidenceFrame &frame) {
+  if (candidate.candidate_panel_id < 0) return 1.0;
+  if (candidate.obs_panel_ids.size() < 2) return 1.0;
+
+  double x0 = std::numeric_limits<double>::quiet_NaN();
+  double x1 = std::numeric_limits<double>::quiet_NaN();
+  if (!find_track_center_x_for_observation(frame, 0, &x0) ||
+      !find_track_center_x_for_observation(frame, 1, &x1)) {
+    return 1.0;
+  }
+
+  const int p0 = candidate.obs_panel_ids[0];
+  const int p1 = candidate.obs_panel_ids[1];
+  if (p0 < 0 || p1 < 0) return 1.0;
+
+  if (std::abs(x0 - x1) < 1e-3) return 1.0;
+  const bool obs1_on_left = (x1 < x0);
+  const int expected_p1 = obs1_on_left ? left_neighbor(p0) : right_neighbor(p0);
+  return (expected_p1 == p1) ? 1.0 : 0.0;
+}
+
+}  // namespace
 
 Norm4BinderBridge::Norm4BinderBridge(const UnifiedConfig &cfg)
     : cfg_(cfg),
@@ -99,6 +151,8 @@ binder::BinderOutput Norm4BinderBridge::step(
   // Phase 6: soft fusion fields from runtime context.
   in.phase_confidence = ctx.binding_confidence;
   in.ping_pong_risk = ctx.ping_pong_risk_score;
+  in.topology_consistency_score =
+      compute_topology_consistency_score(candidate, ctx.evidence_frame);
   if (ctx.ping_pong_pending || ctx.ping_pong_should_hold) {
     in.track_continuity_score = 1.0 - std::min(1.0, ctx.ping_pong_risk_score);
     in.kinematic_consistency = 1.0 - std::min(1.0, ctx.ping_pong_risk_score);
@@ -115,7 +169,8 @@ binder::BinderOutput Norm4BinderBridge::step(
   in.acc_norm = acc_n;
   in.has_soft_fusion =
       (cfg_.binder.enable_soft_fusion &&
-       ctx.evidence_frame.completeness.has_proxy);
+       (ctx.evidence_frame.completeness.has_proxy ||
+        ctx.evidence_frame.completeness.has_2d_tracks));
 
   out = pipeline_->step(in);
   debug_ = pipeline_->debug_snapshot();

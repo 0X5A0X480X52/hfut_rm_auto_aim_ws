@@ -1169,6 +1169,7 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("binder.soft_fusion_w_geo", 0.40);
   declare_parameter("binder.soft_fusion_w_dyn", 0.20);
   declare_parameter("binder.soft_fusion_w_continuity", 0.15);
+  declare_parameter("binder.soft_fusion_w_topology", 0.15);
 
   // Norm4 v2 common pipeline / anti-pingpong controls
   declare_parameter("norm4_v2.enable_common_pipeline", false);
@@ -1753,6 +1754,8 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("binder.soft_fusion_w_dyn").as_double();
   c.binder.soft_fusion_w_continuity =
       get_parameter("binder.soft_fusion_w_continuity").as_double();
+  c.binder.soft_fusion_w_topology =
+      get_parameter("binder.soft_fusion_w_topology").as_double();
 
   c.binder.confirm_frames = std::max(1, c.binder.confirm_frames);
   c.binder.lock_new_hold_frames = std::max(0, c.binder.lock_new_hold_frames);
@@ -1793,6 +1796,7 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
   c.binder.soft_fusion_w_geo = std::max(0.0, c.binder.soft_fusion_w_geo);
   c.binder.soft_fusion_w_dyn = std::max(0.0, c.binder.soft_fusion_w_dyn);
   c.binder.soft_fusion_w_continuity = std::max(0.0, c.binder.soft_fusion_w_continuity);
+  c.binder.soft_fusion_w_topology = std::max(0.0, c.binder.soft_fusion_w_topology);
 
   c.norm4_v2.enable_common_pipeline =
       get_parameter("norm4_v2.enable_common_pipeline").as_bool();

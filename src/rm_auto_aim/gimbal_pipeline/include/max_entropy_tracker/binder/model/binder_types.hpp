@@ -46,6 +46,7 @@ struct BinderFrameInput {
   double phase_confidence = 0.0;
   double ping_pong_risk = 0.0;
   double track_continuity_score = 1.0;
+  double topology_consistency_score = 1.0;
   double kinematic_consistency = 1.0;
   double velocity_dir_cos = 1.0;
   double acc_norm = 0.0;
