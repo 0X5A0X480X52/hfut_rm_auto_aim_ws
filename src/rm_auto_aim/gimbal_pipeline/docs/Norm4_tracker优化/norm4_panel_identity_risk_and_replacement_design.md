@@ -340,12 +340,38 @@ missing_phase_progress:
   spin_direction 明确时，连续跳变应推动 phase progress 单调前进。
 ```
 
+新增动力学一致性约束（来自 `SingleArmorProxyManager`）：
+
+```text
+kinematic_inconsistency:
+  若同一 track2d_id 在 panel A/B 间切换后，single armor 的速度/加速度/yaw_rate
+  与切换前窗口显著不连续，则提高 phase_transition_cost。
+
+abab_with_kinematic_conflict:
+  当窗口出现 A->B->A->B，且每次回跳都伴随高 jerk 或速度方向突变，
+  将 ping_pong_risk 提升到 hard risk，禁止立即 commit 回跳 panel。
+```
+
 对 `0101` 的约束：
 
 ```text
 如果 spin_direction 稳定且连续出现 0->1->0，
 第二个 0 应被视为 phase regression，
 除非有强证据表明机器人确实反向转动或发生 reacquire。
+```
+
+建议评分融合：
+
+```text
+phase_score =
+  w_seq * sequence_consistency
+  + w_geo * yaw_xy_consistency
+  + w_dyn * kinematic_consistency
+
+其中 kinematic_consistency 来自 SingleArmorTrackEvidence 的:
+- armor_vel 连续性
+- armor_acc 平滑性（可由速度差分估计）
+- armor_yaw_rate 连续性
 ```
 
 ### 5.5 Norm4PanelIdentityResolver
@@ -390,7 +416,8 @@ class Norm4PanelIdentityResolver {
 ```text
 Norm4BindingStage
 ModeDecider
-BackendCommandBuilder
+BackendPlanner
+BackendExecutor
 ```
 
 如果 `ping_pong_risk` 或 `opposite_pair_ambiguous` 为 true：
@@ -414,8 +441,8 @@ ObservationData[]
 → Norm4PanelIdentityResolver
 → Norm4BindingStage
 → ModeDecider
-→ BackendCommandBuilder
-→ BackendManager
+→ BackendPlanner
+→ BackendExecutor
 ```
 
 关键变化：
@@ -481,6 +508,15 @@ hold 当前 bound panel 或按 expected next panel 修正；
 等待 dual observation 或更强 yaw/xy 证据恢复。
 ```
 
+增加动力学门控（与上面处理并行）：
+
+```text
+若 A<->B 回跳时 single armor 动力学不连续：
+  - 切换进入 pending，不直接 bound switch
+  - 要求连续 N 帧 kinematic_consistency 达标后才 commit
+  - 在此期间 structured backend 仅允许低权重 update 或 hold
+```
+
 ## 8. 与现有 binder 的关系
 
 现有 `BinderPipeline` 可以继续保留，但新版 Norm4 不应再把 raw `candidate_panel_id` 直接送入 binder。
@@ -515,8 +551,10 @@ binding_conflict_for_update = true
    - `0<->2`
    - `1<->3`
    - `A B A B` ping-pong
-4. 替换 `apply_forced_assignment`：双观测只输出 pair evidence，不直接强改 candidate。
-5. 在 `BackendCommandBuilder` 中：
+4. 给 `Norm4PhaseSequenceMemory` 接入 `SingleArmorTrackEvidence` 动力学摘要
+   （速度、加速度差分、yaw_rate 连续性），用于 `kinematic_inconsistency` 判定。
+5. 替换 `apply_forced_assignment`：双观测只输出 pair evidence，不直接强改 candidate。
+6. 在 `BackendPlanner` 中（并由 `BackendExecutor` 执行）：
    - phase_confidence 低时降低 `position_confidence`；
    - ping_pong_risk 时禁止 reset structured backend；
    - 优先输出 single armor proxy。
@@ -567,4 +605,3 @@ digraph Norm4PanelIdentityResolverFlow {
   resolver -> binder -> cmd;
 }
 ```
-

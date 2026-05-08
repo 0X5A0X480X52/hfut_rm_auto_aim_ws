@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 
+#include <geometry_msgs/msg/point32.hpp>
 #include <geometry_msgs/msg/pose.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>
 #include <rm_interfaces/msg/armor.hpp>
@@ -44,6 +45,28 @@ inline ObservationData armor_to_observation(
   obs.z = z;
   obs.yaw = yaw_radial;
   obs.timestamp = timestamp;
+
+  // Phase 1: copy 2D image geometry when available
+  if (armor.has_image_geometry) {
+    ImageObservation2D img;
+    img.valid = true;
+    img.detection_confidence = armor.detection_confidence;
+    img.number = armor.number;
+    img.type = armor.type;
+    img.bbox_x = armor.bbox_xywh[0];
+    img.bbox_y = armor.bbox_xywh[1];
+    img.bbox_w = armor.bbox_xywh[2];
+    img.bbox_h = armor.bbox_xywh[3];
+    img.image_center_x = img.bbox_x + img.bbox_w * 0.5;
+    img.image_center_y = img.bbox_y + img.bbox_h * 0.5;
+    for (int i = 0; i < 4 && i < 4; ++i) {
+      img.corners[i] = Eigen::Vector2d(
+        armor.image_corners[i].x,
+        armor.image_corners[i].y);
+    }
+    obs.image = std::move(img);
+  }
+
   return obs;
 }
 

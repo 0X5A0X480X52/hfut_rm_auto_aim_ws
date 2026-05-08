@@ -3,9 +3,33 @@
 #define MAX_ENTROPY_TRACKER_CORE_OBSERVATION_HPP_
 
 #include <Eigen/Dense>
+
+#include <array>
 #include <optional>
+#include <string>
 
 namespace fyt::auto_aim {
+
+/// 2D image-domain metadata carried alongside a 3D observation.
+/// All fields are optional; valid == false when the source detector
+/// did not provide image geometry.
+struct ImageObservation2D {
+  bool valid = false;
+  int detection_id = -1;
+
+  double bbox_x = 0.0;
+  double bbox_y = 0.0;
+  double bbox_w = 0.0;
+  double bbox_h = 0.0;
+
+  std::array<Eigen::Vector2d, 4> corners{};
+  double image_center_x = 0.0;
+  double image_center_y = 0.0;
+
+  double detection_confidence = 0.0;
+  std::string number;
+  std::string type;
+};
 
 /// Observation from a single armor plate
 struct ObservationData {
@@ -20,6 +44,10 @@ struct ObservationData {
   std::optional<std::string> layer;
   double confidence = 1.0;
   std::optional<double> timestamp;
+
+  // 2D evidence (Phase 1: append-only, optional)
+  std::optional<ImageObservation2D> image;
+  std::optional<int> track2d_id;
 
   Eigen::Vector3d position() const { return {x, y, z}; }
 

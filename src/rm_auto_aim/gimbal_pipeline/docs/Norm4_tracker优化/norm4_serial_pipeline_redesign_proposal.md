@@ -1,5 +1,9 @@
 # Norm4ArmorTracker 串行 Pipeline 重设计建议
 
+> 术语收敛说明：本文中历史术语 `Norm4CommandBuilder / Norm4BackendManager / Norm4BackendCommand`，
+> 在统一语义上分别对应 `BackendPlanner / BackendExecutor / BackendIntent(或 BackendExecutionPlan)`。
+> 以 `terminology_and_tracker_colocation_convergence.md` 为最终约束。
+
 ## 1. 结论
 
 综合当前实现、DAG 架构文档和 2D-binder 方案，建议不要立即把 `Norm4ArmorTracker` 改成完整通用 DAG Runtime。当前更合适的路线是：
@@ -649,4 +653,3 @@ OutputAdapter 只读 snapshot。
 ```
 
 这套边界能让 Norm4 的语义接近 DAG 架构，但实现仍然是普通 C++ 串行调用链，工程风险可控。
-

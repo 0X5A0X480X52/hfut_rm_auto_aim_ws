@@ -120,6 +120,32 @@ include/max_entropy_tracker/
 
 `trackers/*` 只保留机器人类型相关的策略组合和 BaseTracker 外壳；通用证据、2D track、binding、debug 类型放在上层目录共享。
 
+### 3.1 Tracker 家族共址约定（先共址，后清理）
+
+在功能稳定前，`Armor2DTracker / Armor3DTracker / RobotTracker` 三类实现先按当前项目结构共址，避免跨项目拆分带来的调试成本：
+
+```text
+include/max_entropy_tracker/
+  tracking2d/          # Armor2DTracker + manager + filter
+  tracking3d_single/   # Armor3DTracker(single armor) + manager + filter
+  tracking3d_robot/    # RobotTracker(structured robot) + manager + filter
+  pipeline/            # BackendPlanner / BackendExecutor
+```
+
+对位关系：
+
+```text
+Armor2DTracker: IoUArmor2DTracker / SortArmor2DTracker
+Armor3DTracker: AmbiguousSingleArmorFilterAdapter（通过 adapter 纳入）
+RobotTracker: DualRadiusSpinUKF / OutpostSpinUKF（通过 adapter 纳入）
+```
+
+约束：
+
+```text
+先在 max_entropy_tracker 内共址组织，后续功能稳定后再做目录清理与命名收敛。
+```
+
 ## 4. 当前已有实现调研与复用清单
 
 本次架构不应重写已有成熟能力，而是把它们组织成可复用模块。当前 `include/max_entropy_tracker` 中可直接参考或复用的设计如下。
@@ -453,7 +479,7 @@ single armor innovation / quality
 track lifecycle confidence
 ```
 
-这些信息后续可进入 `BackendCommand` 或 UKF update 的噪声调度：
+这些信息后续可进入 `BackendIntent / BackendExecutionPlan` 或 UKF update 的噪声调度：
 
 ```text
 position_confidence
@@ -635,7 +661,7 @@ GeometryAssociator
 HeightDiscriminator
 RelationEvidenceBuilder
 BindingStage
-BackendCommand
+BackendIntent / BackendExecutionPlan
 DebugTrace
 ```
 
@@ -649,49 +675,84 @@ Mode policy
 Output adapter
 ```
 
-## 14. BackendCommand 通用化
+## 14. BackendCommand 通用化（语义去重版）
 
-不要让 binder 或 discriminator 直接调用 UKF。统一输出命令：
+为避免与 `SingleArmorProxyManager` 的状态更新语义重叠，建议把“后端决策”拆为两层：
+
+```text
+BackendIntent（做什么）
+-> BackendExecutionPlan（怎么做）
+```
+
+关键边界：
+
+1. `SingleArmorProxyManager` 是 single-armor filter 的唯一 update/reset 拥有者（每帧执行）。
+2. backend 决策层不得再次调用 `AmbiguousSingleArmorFilterAdapter::update(...)`。
+3. AMBIGUOUS 模式默认“消费 proxy 快照并发布”，而不是“再更新一遍 proxy filter”。
+
+建议数据结构如下。
 
 ```cpp
-enum class BackendKind {
-  SINGLE_ARMOR,
-  DUAL_RADIUS_4P,
-  OUTPOST_3P,
-  AMBIGUOUS_SINGLE,
+enum class BackendTarget {
+  STRUCTURED_4P,   // DualRadiusSpinUKF
+  OUTPOST_3P,      // OutpostSpinUKF
+  PROXY_SNAPSHOT,  // 从 SingleArmorProxyManager 读取并发布
 };
 
-struct BackendCommand {
-  BackendKind kind = BackendKind::SINGLE_ARMOR;
-  bool reset = false;
-  bool update_primary = true;
-  bool update_shadow = false;
+enum class BackendAction {
+  HOLD,            // 不更新滤波器，仅保持状态
+  UPDATE_SINGLE,   // 结构化后端单观测更新
+  UPDATE_DUAL,     // 结构化后端双观测更新
+  RESET_THEN_UPDATE,
+  PUBLISH_PROXY_ONLY,
+};
+
+struct BackendIntent {
+  BackendTarget target = BackendTarget::PROXY_SNAPSHOT;
+  BackendAction action = BackendAction::HOLD;
 
   int selected_observation = -1;
+  std::vector<int> dual_observation_indices;
   int selected_panel_id = -1;
-  binder::HeightLabel height_label = binder::HeightLabel::UNKNOWN;
+  std::vector<int> dual_panel_ids;
 
+  binder::HeightLabel height_label = binder::HeightLabel::UNKNOWN;
+  std::vector<binder::HeightLabel> dual_height_labels;
+
+  std::optional<Track2DId> source_track2d_id;  // 仅用于读取 proxy snapshot
   double height_confidence = 0.0;
   double position_confidence = 0.0;
   double binding_confidence = 0.0;
-
-  std::optional<Track2DId> source_track2d_id;
-  bool use_single_armor_proxy_output = false;
-
-  std::vector<int> dual_observation_indices;
-  std::vector<int> dual_panel_ids;
-  std::vector<binder::HeightLabel> dual_height_labels;
-
   std::string reason;
+};
+
+struct BackendExecutionPlan {
+  BackendIntent intent;
+  bool call_structured_backend = false;
+  bool call_outpost_backend = false;
+  bool read_proxy_snapshot = false;
+  bool publish_only = false;
 };
 ```
 
-各 backend manager 负责翻译成具体滤波器调用：
+执行规则固定为：
 
 ```text
-DualRadiusSpinUKF::update(...)
-OutpostSpinUKF::update_with_panel(...)
-AmbiguousSingleArmorFilterAdapter::update(...)
+if target == PROXY_SNAPSHOT:
+  只读取 SingleArmorProxyManager 快照，不调用任何 single armor update
+
+if target == STRUCTURED_4P:
+  只调用 DualRadiusSpinUKF，不触碰 proxy filter 状态
+
+if target == OUTPOST_3P:
+  只调用 OutpostSpinUKF，不触碰 proxy filter 状态
+```
+
+兼容迁移建议：
+
+```text
+旧 BackendCommand 可以作为 BackendIntent 的别名过渡，
+但禁止再出现 AmbiguousSingleArmorFilterAdapter::update(...) 的 backend 路径。
 ```
 
 ## 15. 对现有 tracker 的迁移方式
@@ -719,8 +780,8 @@ update(obs)
 
 ```text
 ObservationFrontend 拆为通用 EvidenceBuilder + Norm4 PanelPolicy
-BackendUpdateHint 改为 BackendCommand
-AMBIGUOUS/STRUCTURED 由 BackendManager 执行
+BackendUpdateHint 改为 BackendIntent / BackendExecutionPlan
+AMBIGUOUS/STRUCTURED 由 BackendExecutor 执行
 ```
 
 Norm4 最能受益于 2D track，因为它当前 ambiguous 单板反推中心容易受 panel 错配影响。
@@ -787,35 +848,47 @@ enable_2d_tracker = true
 3. 输出 `Armor2DTrackEvidence`；
 4. 仅输出纯 2D evidence：track id、bbox、center、velocity、age/hits/missed、association quality。
 
-### Phase 3：SingleArmorProxyManager
+### Phase 3：SingleArmorProxyManager（含动力学摘要）
 
 1. 新增 `single_armor/single_armor_proxy_manager.hpp`；
 2. 为每个 active Track2DId 维护一个 `AmbiguousSingleArmorFilterAdapter`；
 3. 将 z 统计、3D velocity、yaw_rate 等放入 `SingleArmorTrackEvidence`；
-4. 支持 ambiguous 模式直接从 proxy 输出。
+4. 增加动力学摘要字段（窗口速度方差、加速度差分、yaw_rate 连续性）；
+5. 支持 ambiguous 模式直接从 proxy 输出；
+6. 第一版只作为 soft evidence / debug 指标，不作为 UKF 强观测。
 
-### Phase 4：通用 EvidenceFrame
+### Phase 4：Norm4 相位记忆 + 0101 抑制（首版）
+
+1. 在 Norm4 侧新增 phase sequence memory；
+2. 检测 `A B A B` ping-pong 与 `0<->2` / `1<->3` opposite jump；
+3. 引入基于 proxy 动力学的 `kinematic_inconsistency`：
+   - 回跳时速度方向突变、jerk 过高、yaw_rate 不连续则降权；
+4. 切换策略改为 `pending -> commit`，要求连续 N 帧动力学一致才提交；
+5. 命中风险时默认 `hold bound panel` 或 `single_only`，避免错误污染 structured backend。
+
+### Phase 5：通用 EvidenceFrame
 
 1. 新增 `evidence/evidence_frame.hpp`；
 2. 在 `TrackerManager` 或各 tracker update 入口先构造 evidence；
 3. Adaptive/Norm4/Outpost 均可读取。
 
-### Phase 5：Norm4-only Binding soft fusion
+### Phase 6：Norm4-only Binding soft fusion
 
 1. 仅在 Norm4 新 pipeline 使用 2D/proxy evidence；
 2. 通过包装 `AdaptiveArmorBinder` 或 `BinderPipeline` 形成 Norm4 的 BindingStage；
 3. 同一 track 连续时提高 same-panel 分数；
 4. track 发生 ID switch 或未 confirmed 时降权；
-5. 参数开关确保可 A/B。
+5. `0101` + 动力学冲突时进入低置信切换路径；
+6. 参数开关确保可 A/B。
 
-### Phase 6：Norm4 通用 pipeline 试点
+### Phase 7：Norm4 通用 pipeline 试点
 
 1. 抽 `Norm4Pipeline`；
 2. 使用通用 EvidenceFrame；
-3. 将 `BackendUpdateHint` 改为通用 `BackendCommand`；
+3. 将 `BackendUpdateHint` 改为通用 `BackendIntent / BackendExecutionPlan`；
 4. debug trace 展示 2D/3D/binder/mode/backend 全链路。
 
-### Phase 7：SORT/KF 2D tracker 增强
+### Phase 8：SORT/KF 2D tracker 增强
 
 1. 适配 `muit_obj_tracker::SortTracker` 或迁移其核心；
 2. 在高速运动、短遮挡 bag 上对比 IOU tracker；
@@ -913,17 +986,36 @@ digraph MaxEntropyTrackerCommonPipeline {
   msg [label="Armors msg\npose + bbox/corners"];
   obs [label="ObservationData\n3D + optional ImageObservation2D"];
   track2d [label="Armor2DTracker\nIoU/SORT pure 2D"];
-  proxy [label="SingleArmorProxyManager\ntrack2d -> AmbiguousSingleArmorFilterAdapter"];
-  evidence [label="EvidenceFrame\n2D + single armor 3D + relation + quality"];
+  proxy [label="SingleArmorProxyManager\n唯一负责 single armor update/reset\n产出 proxy snapshot + dynamics summary"];
+  evidence [label="EvidenceFrame\n只聚合证据，不修改任何 backend state"];
   discrim [label="Discriminators\nheight / yaw phase / panel"];
   binding [label="BindingStage\nAdaptiveBinder / BinderPipeline"];
-  command [label="BackendCommand\nsingle/structured/shadow update"];
-  backend [label="BackendManager\nUKF / ambiguous / outpost"];
+  planner [label="BackendPlanner\nBackendIntent -> BackendExecutionPlan"];
+  backend [label="BackendExecutor\n仅执行 structured/outpost 或读取 proxy snapshot"];
   output [label="OutputAdapter\nTrackedRobot / debug"];
 
   msg -> obs -> track2d -> proxy -> evidence;
   obs -> evidence;
   obs -> proxy;
-  evidence -> discrim -> binding -> command -> backend -> output;
+  evidence -> discrim -> binding -> planner -> backend -> output;
 }
+```
+
+模块语义固定约束：
+
+```text
+SingleArmorProxyManager:
+  唯一 single armor 状态写入者（update/reset/predict）
+
+EvidenceBuilder:
+  只读 observation / 2d / proxy / backend snapshot，禁止状态写入
+
+Discriminator + Binding:
+  只输出 identity / confidence，不直接调用 backend
+
+BackendPlanner:
+  只产生命令，不执行滤波器调用
+
+BackendExecutor:
+  只执行计划；当选择 PROXY_SNAPSHOT 时仅读取 proxy 输出
 ```
