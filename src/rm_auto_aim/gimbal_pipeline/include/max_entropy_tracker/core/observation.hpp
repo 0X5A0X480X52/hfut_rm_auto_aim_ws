@@ -24,6 +24,10 @@ struct ObservationData {
   // 来源相机 frame_id
   std::string source_frame;
 
+  // PnP 协方差传播结果（可选，仅在 r_source=PNP_COVARIANCE 时有效）
+  std::optional<Eigen::Matrix3d> pos_covariance;  // 3x3 位置协方差 (x,y,z)
+  std::optional<double> yaw_variance;              // yaw 方差
+
   Eigen::Vector3d position() const { return {x, y, z}; }
 
   Eigen::Vector4d as_4d() const { return {x, y, z, yaw}; }

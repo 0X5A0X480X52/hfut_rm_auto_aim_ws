@@ -86,6 +86,27 @@ public:
                                     const cv::Mat &tvec,
                                     const std::string &coord_frame_name) const noexcept;
 
+  /**
+   * 通过一阶误差传播从 PnP 解算结果估算位置协方差。
+   *
+   * @param image_points    N 个图像角点坐标
+   * @param rvec            最优旋转向量
+   * @param tvec            最优平移向量
+   * @param coord_frame_name 物点坐标系名称
+   * @param pixel_noise_sigma 像素噪声标准差（像素）
+   * @param pos_cov_out     输出：3x3 位置协方差矩阵 (x,y,z)
+   * @param yaw_var_out     输出：yaw 角度方差
+   * @return 成功返回 true
+   */
+  bool calculatePnPCovariance(
+      const std::vector<cv::Point2f> &image_points,
+      const cv::Mat &rvec,
+      const cv::Mat &tvec,
+      const std::string &coord_frame_name,
+      double pixel_noise_sigma,
+      Eigen::Matrix3d &pos_cov_out,
+      double &yaw_var_out) const;
+
 private:
   std::unordered_map<std::string, std::vector<cv::Point3f>> object_points_map_;
   cv::Mat camera_matrix_;

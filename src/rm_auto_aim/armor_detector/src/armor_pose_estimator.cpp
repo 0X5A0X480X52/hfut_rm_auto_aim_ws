@@ -81,6 +81,25 @@ ArmorPoseEstimator::extractArmorPoses(const std::vector<Armor> &armors,
       armor_msg.pose.orientation.z = q.z();
       armor_msg.pose.orientation.w = q.w();
 
+      // 计算 PnP 协方差并填入消息
+      {
+        Eigen::Matrix3d pos_cov;
+        double yaw_var;
+        if (pnp_solver_->calculatePnPCovariance(
+                armor.landmarks(), rvecs[0], tvecs[0],
+                (armor.type == ArmorType::SMALL ? "small" : "large"),
+                1.0, pos_cov, yaw_var)) {
+          for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 3; ++c)
+              armor_msg.pos_covariance[r * 3 + c] = pos_cov(r, c);
+          armor_msg.yaw_variance = yaw_var;
+        } else {
+          armor_msg.pos_covariance.fill(0.0);
+          armor_msg.pos_covariance[0] = armor_msg.pos_covariance[4] = armor_msg.pos_covariance[8] = 0.01;
+          armor_msg.yaw_variance = 0.01;
+        }
+      }
+
       // Fill the distance to image center
       armor_msg.distance_to_image_center =
           pnp_solver_->calculateDistanceToCenter(armor.center);

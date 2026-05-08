@@ -38,6 +38,13 @@ struct UKFParameters {
   // Innovation gating
   bool enable_innovation_gating = false;
   double innovation_gate_chi2_threshold = 9.49;
+
+  // "CONFIG"         — 使用 YAML 静态噪声参数
+  // "PNP_COVARIANCE" — 从 PnP 协方差传播推导 R
+  std::string r_source = "CONFIG";
+
+  // PNP_COVARIANCE 模式：yaw 方差的额外膨胀系数
+  double pnp_cov_yaw_inflation = 2.0;
 };
 
 struct MotionModelParameters {

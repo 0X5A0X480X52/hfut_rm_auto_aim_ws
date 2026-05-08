@@ -692,6 +692,8 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("ukf.single_obs_update_weight_pos", 0.05);
   declare_parameter("ukf.enable_innovation_gating", false);
   declare_parameter("ukf.innovation_gate_chi2_threshold", 9.49);
+  declare_parameter("ukf.r_source", "CONFIG");
+  declare_parameter("ukf.pnp_cov_yaw_inflation", 2.0);
 
   // Motion
   declare_parameter("motion.translation_model", "CA");
@@ -1081,6 +1083,9 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("ukf.enable_innovation_gating").as_bool();
   c.ukf.innovation_gate_chi2_threshold =
       get_parameter("ukf.innovation_gate_chi2_threshold").as_double();
+  c.ukf.r_source = get_parameter("ukf.r_source").as_string();
+  c.ukf.pnp_cov_yaw_inflation =
+      get_parameter("ukf.pnp_cov_yaw_inflation").as_double();
 
   auto tm_str = get_parameter("motion.translation_model").as_string();
   c.motion.translation_model = translation_model_from_string(tm_str);
