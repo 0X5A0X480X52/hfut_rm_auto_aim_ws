@@ -14,6 +14,7 @@
 
 #include "gimbal_controller/armor_selector.hpp"
 #include <angles/angles.h>
+#include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 
 #include <limits>
 
@@ -381,26 +382,8 @@ double ArmorSelector::computeImpactFacingCos(
   const Eigen::Vector3d & target_center,
   const Eigen::Vector3d & armor_position)
 {
-  // Keep this geometry equivalent to FireAdviceEngine::computeFacingCos:
-  // compare the horizontal radial direction center->armor against center->gimbal-origin.
-  // A value near +1 means the armor normal is facing our muzzle; near -1 is back-facing.
-  Eigen::Vector3d center_to_armor = armor_position - target_center;
-  Eigen::Vector3d center_to_gimbal = -target_center;
-
-  Eigen::Vector3d center_to_armor_xy(center_to_armor.x(), center_to_armor.y(), 0.0);
-  Eigen::Vector3d center_to_gimbal_xy(center_to_gimbal.x(), center_to_gimbal.y(), 0.0);
-
-  const double armor_norm = center_to_armor_xy.norm();
-  const double gimbal_norm = center_to_gimbal_xy.norm();
-
-  constexpr double kMinDistance = 1e-3;
-  if (armor_norm <= kMinDistance || gimbal_norm <= kMinDistance) {
-    return 1.0;
-  }
-
-  const double cos_value =
-    center_to_armor_xy.dot(center_to_gimbal_xy) / (armor_norm * gimbal_norm);
-  return std::clamp(cos_value, -1.0, 1.0);
+  return fyt::auto_aim::robot_description::TrackedRobotUsage::computeFacingCos(
+    target_center, armor_position);
 }
 
 std::vector<double> ArmorSelector::computeImpactFacingAngles(

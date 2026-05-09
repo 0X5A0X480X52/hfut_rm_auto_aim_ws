@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
@@ -25,6 +26,25 @@ namespace fyt::auto_aim::robot_description
 {
 namespace
 {
+struct ProjectionPolicy
+{
+  fyt::auto_aim::robot_description::TrackedRobotUsage::ProjectionMode default_mode{
+    fyt::auto_aim::robot_description::TrackedRobotUsage::ProjectionMode::YAW_PLANE};
+  std::unordered_set<std::string> full_se3_ids{"big_buff", "small_buff"};
+  std::unordered_set<uint8_t> full_se3_robot_types{};
+};
+
+ProjectionPolicy & projectionPolicy()
+{
+  static ProjectionPolicy policy;
+  return policy;
+}
+
+std::mutex & projectionPolicyMutex()
+{
+  static std::mutex mtx;
+  return mtx;
+}
 
 double extractYawFromQuaternion(const geometry_msgs::msg::Quaternion & quat)
 {
@@ -62,6 +82,27 @@ Eigen::Vector3d transformOffsetToWorld(
     center.x() + offset.x() * cos_yaw - offset.y() * sin_yaw,
     center.y() + offset.x() * sin_yaw + offset.y() * cos_yaw,
     center.z() + offset.z());
+}
+
+bool isValidQuaternion(const geometry_msgs::msg::Quaternion & quat)
+{
+  tf2::Quaternion q;
+  tf2::fromMsg(quat, q);
+  if (q.length2() < 1e-12) {
+    return false;
+  }
+  return std::isfinite(q.x()) && std::isfinite(q.y()) && std::isfinite(q.z()) &&
+         std::isfinite(q.w());
+}
+
+Eigen::Quaterniond normalizedEigenQuat(const geometry_msgs::msg::Quaternion & quat)
+{
+  Eigen::Quaterniond q(quat.w, quat.x, quat.y, quat.z);
+  if (q.norm() <= 1e-12 || !std::isfinite(q.norm())) {
+    return Eigen::Quaterniond::Identity();
+  }
+  q.normalize();
+  return q;
 }
 
 }  // namespace
@@ -169,17 +210,31 @@ std::vector<Eigen::Vector3d> TrackedRobotUsage::calculateArmorWorldPositionsEige
   const rm_interfaces::msg::TrackedRobot & robot,
   double dt,
   MotionModel model,
+  ProjectionMode projection_mode,
   const OffsetFallbackGenerator & fallback_generator)
 {
   const auto predicted_robot = predict(robot, dt, model);
   const Eigen::Vector3d center = centerPosition(predicted_robot);
+  const ProjectionMode resolved_mode =
+    projection_mode == ProjectionMode::AUTO ? resolveProjectionMode(predicted_robot) : projection_mode;
+  const bool use_full_se3 =
+    resolved_mode == ProjectionMode::FULL_SE3 &&
+    predicted_robot.full_state_valid &&
+    isValidQuaternion(predicted_robot.center_pose.orientation);
   const double predicted_yaw = yaw(predicted_robot);
+  const Eigen::Quaterniond q_center_world =
+    use_full_se3 ? normalizedEigenQuat(predicted_robot.center_pose.orientation)
+                 : Eigen::Quaterniond::Identity();
   const auto offsets = resolveOffsets(predicted_robot, fallback_generator);
 
   std::vector<Eigen::Vector3d> world_positions;
   world_positions.reserve(offsets.size());
   for (const auto & offset : offsets) {
-    world_positions.push_back(transformOffsetToWorld(center, predicted_yaw, offset));
+    if (use_full_se3) {
+      world_positions.push_back(center + q_center_world * offset);
+    } else {
+      world_positions.push_back(transformOffsetToWorld(center, predicted_yaw, offset));
+    }
   }
   return world_positions;
 }
@@ -188,9 +243,11 @@ std::vector<geometry_msgs::msg::Point> TrackedRobotUsage::calculateArmorWorldPos
   const rm_interfaces::msg::TrackedRobot & robot,
   double dt,
   MotionModel model,
+  ProjectionMode projection_mode,
   const OffsetFallbackGenerator & fallback_generator)
 {
-  const auto world_positions = calculateArmorWorldPositionsEigen(robot, dt, model, fallback_generator);
+  const auto world_positions = calculateArmorWorldPositionsEigen(
+    robot, dt, model, projection_mode, fallback_generator);
 
   std::vector<geometry_msgs::msg::Point> points;
   points.reserve(world_positions.size());
@@ -198,6 +255,114 @@ std::vector<geometry_msgs::msg::Point> TrackedRobotUsage::calculateArmorWorldPos
     points.push_back(toPoint(pos));
   }
   return points;
+}
+
+std::vector<Eigen::Vector3d> TrackedRobotUsage::calculateArmorWorldPositionsEigen(
+  const rm_interfaces::msg::TrackedRobot & robot,
+  double dt,
+  MotionModel model,
+  const OffsetFallbackGenerator & fallback_generator)
+{
+  return calculateArmorWorldPositionsEigen(
+    robot, dt, model, ProjectionMode::AUTO, fallback_generator);
+}
+
+std::vector<geometry_msgs::msg::Point> TrackedRobotUsage::calculateArmorWorldPositionsPoints(
+  const rm_interfaces::msg::TrackedRobot & robot,
+  double dt,
+  MotionModel model,
+  const OffsetFallbackGenerator & fallback_generator)
+{
+  return calculateArmorWorldPositionsPoints(
+    robot, dt, model, ProjectionMode::AUTO, fallback_generator);
+}
+
+TrackedRobotUsage::ProjectionMode TrackedRobotUsage::resolveProjectionMode(
+  const rm_interfaces::msg::TrackedRobot & robot)
+{
+  std::scoped_lock lk(projectionPolicyMutex());
+  const auto & policy = projectionPolicy();
+  if (policy.full_se3_ids.find(robot.robot_id) != policy.full_se3_ids.end()) {
+    return ProjectionMode::FULL_SE3;
+  }
+  if (policy.full_se3_robot_types.find(robot.robot_type) != policy.full_se3_robot_types.end()) {
+    return ProjectionMode::FULL_SE3;
+  }
+  return policy.default_mode;
+}
+
+void TrackedRobotUsage::setProjectionModePolicy(
+  ProjectionMode default_mode,
+  const std::unordered_set<std::string> & full_se3_ids,
+  const std::unordered_set<uint8_t> & full_se3_robot_types)
+{
+  std::scoped_lock lk(projectionPolicyMutex());
+  auto & policy = projectionPolicy();
+  policy.default_mode = default_mode;
+  policy.full_se3_ids = full_se3_ids;
+  policy.full_se3_robot_types = full_se3_robot_types;
+}
+
+Eigen::Vector3d TrackedRobotUsage::calculateArmorWorldNormal(
+  const rm_interfaces::msg::TrackedRobot & robot,
+  int armor_index,
+  double dt,
+  MotionModel model,
+  ProjectionMode projection_mode)
+{
+  const auto predicted_robot = predict(robot, dt, model);
+  const auto center = centerPosition(predicted_robot);
+  const auto armor_positions = calculateArmorWorldPositionsEigen(
+    predicted_robot, 0.0, MotionModel::CONSTANT_VELOCITY, projection_mode,
+    [](const rm_interfaces::msg::TrackedRobot &) { return std::vector<Eigen::Vector3d>{}; });
+  if (armor_index < 0 || armor_index >= static_cast<int>(armor_positions.size())) {
+    return Eigen::Vector3d::UnitX();
+  }
+
+  const ProjectionMode resolved_mode =
+    projection_mode == ProjectionMode::AUTO ? resolveProjectionMode(predicted_robot) : projection_mode;
+  const bool use_full_se3 =
+    resolved_mode == ProjectionMode::FULL_SE3 &&
+    predicted_robot.full_state_valid &&
+    isValidQuaternion(predicted_robot.center_pose.orientation) &&
+    armor_index < static_cast<int>(predicted_robot.armors_offset.size()) &&
+    isValidQuaternion(predicted_robot.armors_offset[static_cast<size_t>(armor_index)].orientation);
+
+  if (use_full_se3) {
+    const auto q_center = normalizedEigenQuat(predicted_robot.center_pose.orientation);
+    const auto q_offset = normalizedEigenQuat(
+      predicted_robot.armors_offset[static_cast<size_t>(armor_index)].orientation);
+    const Eigen::Vector3d n = (q_center * q_offset) * Eigen::Vector3d::UnitX();
+    if (n.norm() > 1e-9) {
+      return n.normalized();
+    }
+  }
+
+  Eigen::Vector3d radial = armor_positions[static_cast<size_t>(armor_index)] - center;
+  if (radial.norm() <= 1e-9) {
+    return Eigen::Vector3d::UnitX();
+  }
+  return radial.normalized();
+}
+
+double TrackedRobotUsage::computeFacingCos(
+  const Eigen::Vector3d & center,
+  const Eigen::Vector3d & armor,
+  const Eigen::Vector3d & observer)
+{
+  Eigen::Vector3d center_to_armor = armor - center;
+  Eigen::Vector3d center_to_observer = observer - center;
+
+  Eigen::Vector3d a_xy(center_to_armor.x(), center_to_armor.y(), 0.0);
+  Eigen::Vector3d b_xy(center_to_observer.x(), center_to_observer.y(), 0.0);
+  const double a_norm = a_xy.norm();
+  const double b_norm = b_xy.norm();
+
+  if (a_norm <= 1e-3 || b_norm <= 1e-3) {
+    return 1.0;
+  }
+  const double cos_value = a_xy.dot(b_xy) / (a_norm * b_norm);
+  return std::clamp(cos_value, -1.0, 1.0);
 }
 
 void TrackedRobotUsage::syncFullStateFromLegacy(rm_interfaces::msg::TrackedRobot & robot)
@@ -399,6 +564,13 @@ double TrackedRobotUsage::singleArmorYaw(
     const rm_interfaces::msg::TrackedRobot &robot)
 {
   return yaw(robot);
+}
+
+Eigen::Vector3d TrackedRobotUsage::singleArmorNormal(
+    const rm_interfaces::msg::TrackedRobot &robot)
+{
+  return calculateArmorWorldNormal(
+    robot, 0, 0.0, MotionModel::CONSTANT_VELOCITY, ProjectionMode::AUTO);
 }
 
 std::vector<geometry_msgs::msg::Pose> TrackedRobotUsage::generateArmorsOffsetFromProfile(

@@ -11,6 +11,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <rclcpp/rclcpp.hpp>
@@ -55,6 +56,7 @@
 
 // ─── prediction logger ────────────────────────────────────────
 #include "gimbal_pipeline/prediction_logger.hpp"
+#include "gimbal_pipeline/adapters/buff_target_adapter.hpp"
 #include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 
 // ─── gimbal_controller internals ──────────────────────────────
@@ -94,6 +96,10 @@ class GimbalPipelineNode : public rclcpp::Node {
   void armorsCallback(const rm_interfaces::msg::Armors::SharedPtr msg);
   rm_interfaces::msg::TrackedRobots buildTrackedRobotsMsg(
       const std_msgs::msg::Header &header);
+  void mergeExternalTargets(
+      rm_interfaces::msg::TrackedRobots & tracked_msg,
+      const std_msgs::msg::Header &header);
+  void refreshExternalTargetAllowlist(int mode);
   rm_interfaces::msg::Target buildTargetMessage(
       const std_msgs::msg::Header &header, const std::string &robot_id,
       BaseTracker &tracker, const SmoothedOutput *smoothed = nullptr);
@@ -181,6 +187,15 @@ class GimbalPipelineNode : public rclcpp::Node {
   std::unique_ptr<TrackerManager> tracker_manager_;
   std::unique_ptr<robot_description::RobotDescriptionFacade>
       robot_description_facade_;
+  std::unique_ptr<adapters::BuffTargetAdapter> buff_target_adapter_;
+
+  bool external_targets_enable_{false};
+  bool external_targets_buff_enable_{false};
+  std::string external_targets_buff_topic_{"/auto_buff/tracked_robot"};
+  double external_targets_buff_timeout_s_{0.3};
+  int current_mode_{0};
+  std::unordered_map<int, std::unordered_set<std::string>> allowed_ids_by_mode_;
+  std::unordered_set<std::string> active_external_allowed_ids_;
 
   SmootherConfig smoother_config_;
 

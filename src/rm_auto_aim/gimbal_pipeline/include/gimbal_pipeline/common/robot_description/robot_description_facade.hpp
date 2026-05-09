@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <Eigen/Dense>
@@ -134,6 +135,13 @@ public:
     CONSTANT_ACCELERATION = 1,
   };
 
+  enum class ProjectionMode
+  {
+    AUTO = 0,
+    YAW_PLANE = 1,
+    FULL_SE3 = 2,
+  };
+
   /// Discriminates between full-robot and degraded single-armor representations.
   enum class RepresentationMode
   {
@@ -176,13 +184,46 @@ public:
     const rm_interfaces::msg::TrackedRobot & robot,
     double dt,
     MotionModel model,
+    ProjectionMode projection_mode = ProjectionMode::AUTO,
+    const OffsetFallbackGenerator & fallback_generator = OffsetFallbackGenerator{});
+
+  static std::vector<Eigen::Vector3d> calculateArmorWorldPositionsEigen(
+    const rm_interfaces::msg::TrackedRobot & robot,
+    double dt,
+    MotionModel model,
     const OffsetFallbackGenerator & fallback_generator);
 
   static std::vector<geometry_msgs::msg::Point> calculateArmorWorldPositionsPoints(
     const rm_interfaces::msg::TrackedRobot & robot,
     double dt,
     MotionModel model,
+    ProjectionMode projection_mode = ProjectionMode::AUTO,
+    const OffsetFallbackGenerator & fallback_generator = OffsetFallbackGenerator{});
+
+  static std::vector<geometry_msgs::msg::Point> calculateArmorWorldPositionsPoints(
+    const rm_interfaces::msg::TrackedRobot & robot,
+    double dt,
+    MotionModel model,
     const OffsetFallbackGenerator & fallback_generator);
+
+  static ProjectionMode resolveProjectionMode(const rm_interfaces::msg::TrackedRobot & robot);
+
+  static void setProjectionModePolicy(
+    ProjectionMode default_mode,
+    const std::unordered_set<std::string> & full_se3_ids,
+    const std::unordered_set<uint8_t> & full_se3_robot_types);
+
+  static Eigen::Vector3d calculateArmorWorldNormal(
+    const rm_interfaces::msg::TrackedRobot & robot,
+    int armor_index,
+    double dt,
+    MotionModel model,
+    ProjectionMode projection_mode);
+
+  static double computeFacingCos(
+    const Eigen::Vector3d & center,
+    const Eigen::Vector3d & armor,
+    const Eigen::Vector3d & observer = Eigen::Vector3d::Zero());
 
   static void syncFullStateFromLegacy(rm_interfaces::msg::TrackedRobot & robot);
 
@@ -234,6 +275,8 @@ public:
   static Eigen::Vector3d singleArmorVelocity(
       const rm_interfaces::msg::TrackedRobot &robot);
   static double singleArmorYaw(
+      const rm_interfaces::msg::TrackedRobot &robot);
+  static Eigen::Vector3d singleArmorNormal(
       const rm_interfaces::msg::TrackedRobot &robot);
 
   static std::vector<geometry_msgs::msg::Pose> generateArmorsOffsetFromProfile(

@@ -342,6 +342,70 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   robot_description_facade_ = std::make_unique<robot_description::RobotDescriptionFacade>();
   robot_description_facade_->setStrictUnknownReject(
       get_parameter("robot_description.strict_unknown_reject").as_bool());
+  {
+    const auto mode_raw =
+      get_parameter("robot_description.default_projection_mode").as_string();
+    std::string mode_lower = mode_raw;
+    std::transform(
+      mode_lower.begin(), mode_lower.end(), mode_lower.begin(),
+      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    using RU = robot_description::TrackedRobotUsage;
+    RU::ProjectionMode default_mode = RU::ProjectionMode::YAW_PLANE;
+    if (mode_lower == "full_se3") {
+      default_mode = RU::ProjectionMode::FULL_SE3;
+    } else if (mode_lower == "yaw_plane") {
+      default_mode = RU::ProjectionMode::YAW_PLANE;
+    } else {
+      RCLCPP_WARN(
+        get_logger(),
+        "Unknown robot_description.default_projection_mode='%s', fallback to yaw_plane",
+        mode_raw.c_str());
+    }
+
+    const auto full_se3_ids_vec =
+      get_parameter("robot_description.full_se3_ids").as_string_array();
+    std::unordered_set<std::string> full_se3_ids(
+      full_se3_ids_vec.begin(), full_se3_ids_vec.end());
+
+    const auto full_se3_types_vec =
+      get_parameter("robot_description.full_se3_robot_types").as_integer_array();
+    std::unordered_set<uint8_t> full_se3_robot_types;
+    for (const auto v : full_se3_types_vec) {
+      if (v < 0 || v > 255) {
+        RCLCPP_WARN(
+          get_logger(),
+          "robot_description.full_se3_robot_types contains out-of-range value %ld, ignored",
+          static_cast<long>(v));
+        continue;
+      }
+      full_se3_robot_types.insert(static_cast<uint8_t>(v));
+    }
+
+    RU::setProjectionModePolicy(default_mode, full_se3_ids, full_se3_robot_types);
+  }
+
+  external_targets_enable_ = get_parameter("external_targets.enable").as_bool();
+  external_targets_buff_enable_ = get_parameter("external_targets.buff.enable").as_bool();
+  external_targets_buff_topic_ = get_parameter("external_targets.buff.topic").as_string();
+  external_targets_buff_timeout_s_ = get_parameter("external_targets.buff.timeout_s").as_double();
+  allowed_ids_by_mode_.clear();
+  for (int mode = 0; mode <= 5; ++mode) {
+    const auto key =
+      "external_targets.allowed_ids_by_mode.mode_" + std::to_string(mode);
+    const auto arr = get_parameter(key).as_string_array();
+    allowed_ids_by_mode_[mode] = std::unordered_set<std::string>(arr.begin(), arr.end());
+  }
+  refreshExternalTargetAllowlist(current_mode_);
+
+  if (external_targets_enable_ && external_targets_buff_enable_) {
+    adapters::BuffTargetAdapter::Config cfg;
+    cfg.enable = true;
+    cfg.topic = external_targets_buff_topic_;
+    cfg.timeout_s = std::max(0.01, external_targets_buff_timeout_s_);
+    cfg.target_frame = target_frame_;
+    buff_target_adapter_ = std::make_unique<adapters::BuffTargetAdapter>(*this, cfg);
+  }
 
   {
     std::ostringstream oss;
@@ -970,6 +1034,21 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("tracker.debug_2d_viz.height", 540);
   declare_parameter("tracker.debug_2d_viz.jpeg_quality", 70);
   declare_parameter("robot_description.strict_unknown_reject", true);
+  declare_parameter("robot_description.default_projection_mode", std::string("yaw_plane"));
+  declare_parameter(
+    "robot_description.full_se3_ids",
+    std::vector<std::string>{"big_buff", "small_buff"});
+  declare_parameter("robot_description.full_se3_robot_types", std::vector<int64_t>{});
+  declare_parameter("external_targets.enable", false);
+  declare_parameter("external_targets.buff.enable", false);
+  declare_parameter("external_targets.buff.topic", std::string("/auto_buff/tracked_robot"));
+  declare_parameter("external_targets.buff.timeout_s", 0.3);
+  declare_parameter("external_targets.allowed_ids_by_mode.mode_0", std::vector<std::string>{});
+  declare_parameter("external_targets.allowed_ids_by_mode.mode_1", std::vector<std::string>{});
+  declare_parameter("external_targets.allowed_ids_by_mode.mode_2", std::vector<std::string>{"small_buff"});
+  declare_parameter("external_targets.allowed_ids_by_mode.mode_3", std::vector<std::string>{"small_buff"});
+  declare_parameter("external_targets.allowed_ids_by_mode.mode_4", std::vector<std::string>{"big_buff"});
+  declare_parameter("external_targets.allowed_ids_by_mode.mode_5", std::vector<std::string>{"big_buff"});
 
   // UKF
   declare_parameter("ukf.alpha", 0.001);
@@ -2489,7 +2568,55 @@ rm_interfaces::msg::TrackedRobots GimbalPipelineNode::buildTrackedRobotsMsg(
     tracked_msg.robots.push_back(robot);
   }
 
+  mergeExternalTargets(tracked_msg, header);
+
   return tracked_msg;
+}
+
+void GimbalPipelineNode::mergeExternalTargets(
+    rm_interfaces::msg::TrackedRobots & tracked_msg,
+    const std_msgs::msg::Header & header)
+{
+  if (!external_targets_enable_ || !external_targets_buff_enable_ || !buff_target_adapter_) {
+    return;
+  }
+
+  const auto now = rclcpp::Time(header.stamp);
+  auto buff_robot_opt = buff_target_adapter_->latestValid(now);
+  if (!buff_robot_opt.has_value()) {
+    return;
+  }
+
+  auto buff_robot = buff_robot_opt.value();
+  if (!active_external_allowed_ids_.empty() &&
+    active_external_allowed_ids_.find(buff_robot.robot_id) == active_external_allowed_ids_.end())
+  {
+    return;
+  }
+
+  buff_robot.header = tracked_msg.header;
+  bool replaced = false;
+  for (auto & robot : tracked_msg.robots) {
+    if (robot.robot_id == buff_robot.robot_id) {
+      robot = buff_robot;
+      replaced = true;
+      break;
+    }
+  }
+  if (!replaced) {
+    tracked_msg.robots.push_back(buff_robot);
+  }
+}
+
+void GimbalPipelineNode::refreshExternalTargetAllowlist(int mode)
+{
+  current_mode_ = mode;
+  auto it = allowed_ids_by_mode_.find(mode);
+  if (it == allowed_ids_by_mode_.end()) {
+    active_external_allowed_ids_.clear();
+    return;
+  }
+  active_external_allowed_ids_ = it->second;
 }
 
 /* ================================================================ */
@@ -3090,12 +3217,21 @@ void GimbalPipelineNode::setModeCallback(
     const std::shared_ptr<rm_interfaces::srv::SetMode::Request> request,
     std::shared_ptr<rm_interfaces::srv::SetMode::Response> response) {
   response->success = true;
-  int mode = request->mode;
-  if (mode == 1 || mode == 2) {
+  const int mode = request->mode;
+  if (mode >= 0 && mode <= 5) {
     enable_ = true;
+    refreshExternalTargetAllowlist(mode);
+    if (buff_target_adapter_) {
+      const bool enable_buff =
+        external_targets_enable_ && external_targets_buff_enable_;
+      buff_target_adapter_->setEnabled(enable_buff);
+    }
     RCLCPP_INFO(get_logger(), "GimbalPipeline enabled (mode=%d)", mode);
   } else {
     enable_ = false;
+    if (buff_target_adapter_) {
+      buff_target_adapter_->setEnabled(false);
+    }
     RCLCPP_INFO(get_logger(), "GimbalPipeline disabled (mode=%d)", mode);
   }
 }

@@ -56,55 +56,15 @@ Eigen::Vector3d computeArmorNormalFromPose(
   const Eigen::Vector3d & armor_position,
   const Eigen::Vector3d & center_position)
 {
-  if (candidate_index < 0) {
+  if (candidate_index < 0 || normalized_robot.armors_offset.empty()) {
     return fallbackArmorNormal(armor_position, center_position);
   }
-
-  const auto predicted_robot = fyt::auto_aim::robot_description::TrackedRobotUsage::predict(
+  return fyt::auto_aim::robot_description::TrackedRobotUsage::calculateArmorWorldNormal(
     normalized_robot,
+    candidate_index,
     hit_dt_s,
-    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY);
-  if (candidate_index >= static_cast<int>(predicted_robot.armors_offset.size())) {
-    return fallbackArmorNormal(armor_position, center_position);
-  }
-
-  const auto & offset = predicted_robot.armors_offset[static_cast<size_t>(candidate_index)];
-  tf2::Quaternion q_offset;
-  tf2::fromMsg(offset.orientation, q_offset);
-  if (q_offset.length2() <= 1e-12) {
-    return fallbackArmorNormal(armor_position, center_position);
-  }
-  q_offset.normalize();
-
-  tf2::Quaternion q_world_yaw;
-  q_world_yaw.setRPY(0.0, 0.0, fyt::auto_aim::robot_description::TrackedRobotUsage::yaw(predicted_robot));
-  const tf2::Quaternion q_world_armor = q_world_yaw * q_offset;
-  const tf2::Vector3 n_world = tf2::quatRotate(q_world_armor, tf2::Vector3(1.0, 0.0, 0.0));
-  Eigen::Vector3d normal(n_world.x(), n_world.y(), n_world.z());
-  if (normal.norm() <= 1e-9) {
-    return fallbackArmorNormal(armor_position, center_position);
-  }
-  return normal.normalized();
-}
-
-double computeFacingCos(
-  const Eigen::Vector3d & center_position,
-  const Eigen::Vector3d & armor_position)
-{
-  Eigen::Vector3d a = armor_position - center_position;
-  Eigen::Vector3d b = -center_position;
-
-  Eigen::Vector3d a_xy(a.x(), a.y(), 0.0);
-  Eigen::Vector3d b_xy(b.x(), b.y(), 0.0);
-
-  double a_norm = a_xy.norm();
-  double b_norm = b_xy.norm();
-
-  if (a_norm <= kMinDistance || b_norm <= kMinDistance) {
-    return 1.0;
-  }
-
-  return a_xy.dot(b_xy) / (a_norm * b_norm);
+    fyt::auto_aim::robot_description::TrackedRobotUsage::MotionModel::CONSTANT_VELOCITY,
+    fyt::auto_aim::robot_description::TrackedRobotUsage::ProjectionMode::AUTO);
 }
 
 }  // namespace
@@ -328,7 +288,9 @@ std::vector<CandidateImpactSolution> CandidateImpactSolver::solve(
 
   results.reserve(base_positions.size());
   for (int i = 0; i < static_cast<int>(base_positions.size()); ++i) {
-    const double facing_cos = computeFacingCos(center_position, base_positions[i]);
+    const double facing_cos =
+      fyt::auto_aim::robot_description::TrackedRobotUsage::computeFacingCos(
+      center_position, base_positions[i]);
     const bool facing_ok = !facing_filter_enabled_ || (facing_cos >= facing_filter_cos_threshold_);
 
     auto solution = solveSingleCandidate(robot, i, request, timeline, flight_time_iters);

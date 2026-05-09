@@ -19,6 +19,9 @@ gimbal_pipeline:
     default_dza: 0.0                     # 初始高低板差(m)
     robot_description:
       strict_unknown_reject: true        # 严格拒绝未知 robot_id
+      default_projection_mode: "yaw_plane" # yaw_plane | full_se3
+      full_se3_ids: ["big_buff", "small_buff"]
+      full_se3_robot_types: []
 
     # =========================
     # UKF 与运动模型
