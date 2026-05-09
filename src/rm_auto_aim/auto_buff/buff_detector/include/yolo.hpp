@@ -1,13 +1,23 @@
 #pragma once
 
 #include "types.hpp"
-#include "configs.hpp"
 
 #include <openvino/openvino.hpp>
-#include <Eigen/Dense>
+#include <opencv2/core/matx.hpp>
 #include <vector>
 
 namespace auto_buff {
+struct YoloParams {
+  std::string model_path;
+  std::string device{"CPU"};
+  bool use_latency_performance_mode{true};
+  float threshold{0.35F};
+  int top_k{30};
+  float nms_threshold{0.45F};
+  float merge_conf_error{0.2F};
+  float merge_min_iou{0.85F};
+};
+
 class YOLOBase {
 public:
   virtual ov::Tensor preProcess(const cv::Mat &image) = 0;
@@ -17,7 +27,7 @@ public:
 
 class YOLO : public YOLOBase {
 public:
-  YOLO();
+  explicit YOLO(const YoloParams & params);
   ~YOLO();
   // NOTE: 返回的tensor是浅拷贝的，并发场景要自己深拷贝下保证生命周期
   ov::Tensor preProcess(const cv::Mat &image) override;
@@ -38,7 +48,7 @@ private:
   float intersectionArea(const RuneObject &a, const RuneObject &b) const;
 
 private:
-  YOLOConfig config_;
+  YoloParams config_;
   static constexpr int yolo_input_size = 480;
   static constexpr int yolo_class_number = 2;
   static constexpr int yolo_color_number = 2;
@@ -48,7 +58,7 @@ private:
   ov::CompiledModel compiled_model_;
 
   bool is_recoded_image_parameters_ = false;
-  Eigen::Matrix3f transform_matrix_;
+  cv::Matx33f transform_matrix_;
   cv::Size input_image_size_;
   std::vector<GridAndStride> grid_strides_;
 };

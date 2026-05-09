@@ -122,9 +122,11 @@ public:
     msg.num_armors = runtime_num_armors > 0 ? runtime_num_armors : num_armors_;
 
     // ── AMBIGUOUS single-armor: zero out geometry fields ──
+    const bool force_single_semantics =
+      (msg.num_armors <= 1) || (input.robot_id == "big_buff") || (input.robot_id == "small_buff");
     const bool ambiguous_mode =
-      input.tracker.supports_ambiguous_single_semantics() &&
-      input.tracker.is_ambiguous_single_mode();
+      (input.tracker.supports_ambiguous_single_semantics() &&
+      input.tracker.is_ambiguous_single_mode()) || force_single_semantics;
     if (ambiguous_mode) {
       msg.radius = 0.0;
       msg.radius_2 = 0.0;

@@ -1,232 +1,215 @@
 #include "buff_detector_node.hpp"
-#include "basic/colors.hpp"
-#include "configs.hpp"
-#include "msgs/BuffBlade.hpp"
-#include "types.hpp"
-#include "types/BuffBladeType.hpp"
-#include "types/IceoryxServiceDescription.hpp"
 
-#include "opencv2/core/types.hpp"
-#include "opencv2/highgui.hpp"
-#include "quill/LogMacros.h"
-#include "rfl/enums.hpp"
-#include <opencv2/imgproc.hpp>
-
-#include <exception>
-#include <optional>
-#include <string>
+#include <algorithm>
 #include <vector>
+#include <limits>
+#include <utility>
 
-auto_buff::DetectorNode::DetectorNode()
-    : cam_params_changer_(ConfigManager::instance()->logger(),
-                          ConfigManager::instance()->configs().camera_name),
-      enemy_color_listener_(
-          ConfigManager::instance()->logger(),
-          ConfigManager::instance()->configs().default_enemy_color),
-      task_mode_listener_small_buff_(
-          ConfigManager::instance()->logger(), types::TaskMode::SmallBuff,
-          [this]() {
-            this->cam_params_changer_.changeCameraParams(
-                ConfigManager::instance()->configs().camera_params);
-            LOG_INFO(ConfigManager::instance()->logger(),
-                     "on task! change camera params.");
-          }),
-      task_mode_listener_big_buff_(
-          ConfigManager::instance()->logger(), types::TaskMode::BigBuff,
-          [this]() {
-            this->cam_params_changer_.changeCameraParams(
-                ConfigManager::instance()->configs().camera_params);
-            LOG_INFO(ConfigManager::instance()->logger(),
-                     "on task! change camera params.");
-          }),
-      rune_pub_(types::IceoryxServiceDescription{
-          ConfigManager::instance()->configs().runes_topic}
-                    .description) {}
+#include "cv_bridge/cv_bridge.h"
+#include "opencv2/imgcodecs.hpp"
+#include "opencv2/imgproc.hpp"
+#include "ament_index_cpp/get_package_share_directory.hpp"
 
-auto_buff::DetectorNode::~DetectorNode() { cv::destroyAllWindows(); }
+namespace auto_buff
+{
 
-int auto_buff::DetectorNode::run() {
-  LOG_INFO(ConfigManager::instance()->logger(),
-           "rune detector node is running!");
-  init();
-  iox::runtime::PoshRuntime::initRuntime(APP_NAME);
-  iox::waitForTerminationRequest();
-  return 0;
-}
-
-void auto_buff::DetectorNode::init() {
-  debug = ConfigManager::instance()->configs().debug_mode;
-  // 只写了单线程的深度识别Detector
-  st_detector_ = std::make_unique<STDetectorDL>();
-
-  image_poller_ =
-      std::make_unique<hardware::ImagePoller<msgs::Image1440x1080_8UC3>>(
-          ConfigManager::instance()->logger(),
-          ConfigManager::instance()->configs().camera_name,
-          [this](const cv::Mat &image, const std::string frame_id,
-                 const std::chrono::system_clock::time_point &stamp) {
-            Mode mode = Mode::Idle;
-            if (task_mode_listener_small_buff_.isOnTask())
-              mode = Mode::SmallBuff;
-            else if (task_mode_listener_big_buff_.isOnTask())
-              mode = Mode::BigBuff;
-            else if (task_mode_listener_big_buff_.isTask(types::TaskMode::Idle))
-              mode = ConfigManager::instance()->configs().do_when_idle;
-                  
-            if (mode != Mode::Idle)
-              this->imageCallback(image, frame_id, stamp, mode);
-          });
-  LOG_INFO(ConfigManager::instance()->logger(), "detector node inited!");
-}
-
-void auto_buff::DetectorNode::imageCallback(
-    const cv::Mat &image, const std::string &frame_id,
-    const std::chrono::system_clock::time_point &stamp,
-    Mode mode) {
-  auto infer_start = std::chrono::system_clock::now();
-  std::vector<RuneObject> runes;
+DetectorNode::DetectorNode()
+: Node("buff_detector_node")
+{
+  image_topic_ = declare_parameter<std::string>("image_topic", "/image_raw");
+  rune_topic_ = declare_parameter<std::string>("rune_topic", "/rune_target");
+  runes_topic_ = declare_parameter<std::string>("runes_topic", "/rune_targets");
+  result_img_topic_ = declare_parameter<std::string>("result_img_topic", "/auto_buff/debug/result_img");
+  result_img_compressed_topic_ = declare_parameter<std::string>(
+    "result_img_compressed_topic", "/auto_buff/debug/result_img/compressed");
+  is_big_rune_ = declare_parameter<bool>("is_big_rune", true);
+  mode_managed_ = declare_parameter<bool>("mode_managed", true);
+  debug_view_ = declare_parameter<bool>("debug_view", false);
+  min_confidence_ = declare_parameter<double>("min_confidence", 0.35);
+  debug_jpeg_quality_ = declare_parameter<int>("debug_jpeg_quality", 70);
+  std::string default_model_path;
   try {
-    runes = st_detector_->detect(image, mode);
-  } catch (std::exception &e) {
-    LOG_ERROR(ConfigManager::instance()->logger(), "Detector Error:{}",
-              e.what());
+    default_model_path =
+      ament_index_cpp::get_package_share_directory("auto_buff") + "/model/yolox_rune_3.6m.onnx";
+  } catch (const std::exception &) {
+    default_model_path = "";
   }
-  auto infer_end = std::chrono::system_clock::now();
+  const auto model_path = declare_parameter<std::string>("model_path", default_model_path);
+  const auto device = declare_parameter<std::string>("device", "CPU");
+  const auto use_latency_mode = declare_parameter<bool>("use_latency_performance_mode", true);
+  const auto top_k = declare_parameter<int>("top_k", 30);
+  const auto nms_threshold = declare_parameter<double>("nms_threshold", 0.45);
+  const auto merge_conf_error = declare_parameter<double>("merge_conf_error", 0.2);
+  const auto merge_min_iou = declare_parameter<double>("merge_min_iou", 0.85);
 
-  std::stringstream infer_ss, camera_ss;
-  auto dt = std::chrono::duration_cast<std::chrono::duration<double>>(
-                infer_end - infer_start)
-                .count() *
-            1000;
-  auto camera_latency =
-      std::chrono::duration_cast<std::chrono::duration<double>>(infer_start -
-                                                                stamp)
-          .count() *
-      1000;
-  infer_ss << "Yolo: " << std::fixed << std::setprecision(2) << dt << "ms";
-  camera_ss << "Camera: " << std::fixed << std::setprecision(2)
-            << camera_latency << "ms";
-  auto infer_str = infer_ss.str();
-  auto camera_str = camera_ss.str();
-  auto debug_img_opt = this->afterDetect(image, runes, frame_id, stamp);
-  if (debug_img_opt.has_value()) {
-    const auto &img = debug_img_opt.value();
-    cv::putText(img, infer_str, cv::Point(10, 90), cv::FONT_HERSHEY_SIMPLEX,
-                1.0, cv::Scalar(0, 255, 0), 2);
-    cv::putText(img, camera_str, cv::Point(10, 120), cv::FONT_HERSHEY_SIMPLEX,
-                1.0, cv::Scalar(0, 255, 0), 2);
-    cv::Mat resize_img;
-    cv::resize(img, resize_img,
-               cv::Size(img.size().width / 2, img.size().height / 2));
-    cv::imshow("detector", resize_img);
-    cv::waitKey(ConfigManager::instance()->configs().step_by_step_debug ? 0
-                                                                        : 1);
+  if (model_path.empty()) {
+    throw std::runtime_error("Parameter 'model_path' is required for OpenVINO detector");
   }
+  YoloParams params;
+  params.model_path = model_path;
+  params.device = device;
+  params.use_latency_performance_mode = use_latency_mode;
+  params.threshold = static_cast<float>(min_confidence_);
+  params.top_k = top_k;
+  params.nms_threshold = static_cast<float>(nms_threshold);
+  params.merge_conf_error = static_cast<float>(merge_conf_error);
+  params.merge_min_iou = static_cast<float>(merge_min_iou);
+  yolo_ = std::make_unique<YOLO>(params);
+
+  rune_pub_ = create_publisher<rm_interfaces::msg::RuneTarget>(rune_topic_, rclcpp::SensorDataQoS());
+  runes_pub_ =
+    create_publisher<rm_interfaces::msg::RuneTargetArray>(runes_topic_, rclcpp::SensorDataQoS());
+  const auto debug_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+  result_img_pub_ =
+    create_publisher<sensor_msgs::msg::Image>(result_img_topic_, debug_qos);
+  result_img_compressed_pub_ = create_publisher<sensor_msgs::msg::CompressedImage>(
+    result_img_compressed_topic_, debug_qos);
+  image_sub_ = create_subscription<sensor_msgs::msg::Image>(
+    image_topic_, rclcpp::SensorDataQoS(),
+    std::bind(&DetectorNode::imageCallback, this, std::placeholders::_1));
+  set_mode_srv_ = create_service<rm_interfaces::srv::SetMode>(
+    "~/set_mode",
+    std::bind(&DetectorNode::onSetMode, this, std::placeholders::_1, std::placeholders::_2));
 }
 
-std::optional<cv::Mat> auto_buff::DetectorNode::afterDetect(
-    const cv::Mat &bgr_image, std::vector<RuneObject> &runes,
-    const std::string &frame_id,
-    const std::chrono::system_clock::time_point &stamp) {
-  if (runes.empty()) {
-    // LOG_INFO(ConfigManager::instance()->logger(),"runes empty");
-    publishHeartbeat(stamp);
-    return debug ? std::optional{bgr_image.clone()} : std::nullopt;
+void DetectorNode::imageCallback(const sensor_msgs::msg::Image::SharedPtr msg)
+{
+  if (!msg) {
+    return;
+  }
+  cv_bridge::CvImageConstPtr cv_ptr;
+  try {
+    cv_ptr = cv_bridge::toCvShare(msg, "bgr8");
+  } catch (const std::exception & e) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "cv_bridge failed: %s", e.what());
+    return;
+  }
+  const cv::Mat & bgr = cv_ptr->image;
+  if (bgr.empty()) {
+    return;
   }
 
-  cv::Mat result_img;
-  if (debug) {
-    result_img = bgr_image.clone();
-    for (const auto &rune : runes)
-      this->drawRune(rune, result_img, tools::Color::bgr::RED);
+  rm_interfaces::msg::RuneTarget out;
+  out.header = msg->header;
+  out.is_big_rune = is_big_rune_;
+  out.is_lost = true;
+  rm_interfaces::msg::RuneTargetArray out_array;
+  out_array.header = msg->header;
+
+  auto input_tensor = yolo_->preProcess(bgr);
+  auto request = yolo_->requestInfer(input_tensor);
+  request.infer();
+  auto runes = yolo_->postProcess(request.get_output_tensor());
+  for (const auto & rune : runes) {
+    if (rune.prob < min_confidence_) {
+      continue;
+    }
+    rm_interfaces::msg::RuneTarget t;
+    t.header = msg->header;
+    t.is_big_rune = is_big_rune_;
+    t.is_lost = false;
+    t.pts[0].x = rune.points.center.x; t.pts[0].y = rune.points.center.y;
+    t.pts[1].x = rune.points.bottom_right.x; t.pts[1].y = rune.points.bottom_right.y;
+    t.pts[2].x = rune.points.top_right.x; t.pts[2].y = rune.points.top_right.y;
+    t.pts[3].x = rune.points.top_left.x; t.pts[3].y = rune.points.top_left.y;
+    t.pts[4].x = rune.points.bottom_left.x; t.pts[4].y = rune.points.bottom_left.y;
+    out_array.targets.push_back(t);
+  }
+  runes_pub_->publish(out_array);
+
+  if (!runes.empty()) {
+    const auto best_it = std::max_element(
+      runes.begin(), runes.end(),
+      [](const RuneObject & a, const RuneObject & b) {return a.prob < b.prob;});
+    if (best_it != runes.end() && best_it->prob >= min_confidence_) {
+      const auto & pts = best_it->points;
+      out.is_lost = false;
+      out.pts[0].x = pts.center.x; out.pts[0].y = pts.center.y;
+      out.pts[1].x = pts.bottom_right.x; out.pts[1].y = pts.bottom_right.y;
+      out.pts[2].x = pts.top_right.x; out.pts[2].y = pts.top_right.y;
+      out.pts[3].x = pts.top_left.x; out.pts[3].y = pts.top_left.y;
+      out.pts[4].x = pts.bottom_left.x; out.pts[4].y = pts.bottom_left.y;
+    }
   }
 
-  for (auto &rune : runes) {
-    rune.frame_id = frame_id;
-    rune.stamp = stamp;
+  cv::Mat dbg;
+  if (debug_view_) {
+    dbg = bgr.clone();
   }
-  publishRunes(runes);
+  if (debug_view_) {
+    for (size_t i = 0; i < out_array.targets.size(); ++i) {
+      const auto & t = out_array.targets[i];
+      std::vector<cv::Point> poly = {
+        cv::Point(static_cast<int>(t.pts[1].x), static_cast<int>(t.pts[1].y)),
+        cv::Point(static_cast<int>(t.pts[2].x), static_cast<int>(t.pts[2].y)),
+        cv::Point(static_cast<int>(t.pts[3].x), static_cast<int>(t.pts[3].y)),
+        cv::Point(static_cast<int>(t.pts[4].x), static_cast<int>(t.pts[4].y))};
+      const cv::Scalar c = (i == 0) ? cv::Scalar(0, 255, 255) : cv::Scalar(255, 0, 0);
+      cv::polylines(dbg, poly, true, c, 2);
+      cv::circle(
+        dbg, cv::Point(static_cast<int>(t.pts[0].x), static_cast<int>(t.pts[0].y)), 4,
+        c, -1);
+    }
+    if (!out.is_lost) {
+      cv::circle(
+        dbg, cv::Point(static_cast<int>(out.pts[0].x), static_cast<int>(out.pts[0].y)), 6,
+        cv::Scalar(0, 0, 255), 2);
+    }
+  }
 
-  return debug ? std::optional{result_img} : std::nullopt;
+  if (debug_view_ && !dbg.empty()) {
+    result_img_pub_->publish(*cv_bridge::CvImage(msg->header, "bgr8", dbg).toImageMsg());
+    std::vector<uchar> jpg_buf;
+    std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, std::clamp(debug_jpeg_quality_, 20, 100)};
+    if (cv::imencode(".jpg", dbg, jpg_buf, params)) {
+      sensor_msgs::msg::CompressedImage cmsg;
+      cmsg.header = msg->header;
+      cmsg.format = "jpeg";
+      cmsg.data.assign(jpg_buf.begin(), jpg_buf.end());
+      result_img_compressed_pub_->publish(std::move(cmsg));
+    }
+  }
+
+  rune_pub_->publish(out);
 }
 
-void auto_buff::DetectorNode::drawRune(const RuneObject &rune, cv::Mat &image,
-                                       const cv::Scalar &color) {
-
-  // LOG_INFO(ConfigManager::instance()->logger(), "r_center x:{} y:{}",
-  //          rune.points.center.x, rune.points.center.y);
-  // LOG_INFO(ConfigManager::instance()->logger(), "top_left x:{} y:{}",
-  //          rune.points.top_left.x, rune.points.top_left.y);
-  // LOG_INFO(ConfigManager::instance()->logger(), "top_right x:{} y:{}",
-  //          rune.points.top_right.x, rune.points.top_right.y);
-  // LOG_INFO(ConfigManager::instance()->logger(), "bottom_left x:{} y:{}",
-  //          rune.points.bottom_left.x, rune.points.bottom_left.y);
-  // LOG_INFO(ConfigManager::instance()->logger(), "bottom_right x:{} y:{}",
-  //          rune.points.bottom_right.x, rune.points.bottom_right.y);
-
-  cv::polylines(image, rune.points.toVector2i(), true,
-                (rune.type == types::BuffBladeType::Inactivated)
-                    ? color
-                    : tools::Color::bgr::GREEN,
-                2, cv::LINE_AA);
-  cv::putText(image,
-              rfl::enum_to_string(rune.color) + " " +
-                  rfl::enum_to_string(rune.type) + " " +
-                  std::to_string(rune.prob),
-              (rune.points.top_right + rune.points.top_left +
-               rune.points.bottom_left + rune.points.bottom_right) *
-                  0.25,
-              cv::FONT_HERSHEY_SIMPLEX, 0.8, tools::Color::PURPLE, 2);
-}
-
-void auto_buff::DetectorNode::publishRunes(
-    const std::vector<RuneObject> &runes) {
-  for (const auto &rune : runes) {
-    this->rune_pub_.loan()
-        .and_then(
-            [&](iox::popo::Sample<msgs::BuffBlade, msgs::Header> &sample) {
-              sample.getUserHeader().frame_id = {iox::TruncateToCapacity,
-                                                 rune.frame_id.c_str()};
-              sample.getUserHeader().stamp_ns =
-                  tools::chronoPointToNanoSec(rune.stamp);
-              sample->color = static_cast<int>(rune.color);
-              sample->type = static_cast<int>(rune.type);
-              sample->confidence = rune.prob;
-              sample->points.r_center =
-                  msgs::Point2d(rune.points.center.x, rune.points.center.y);
-              sample->points.bottom_right = msgs::Point2d(
-                  rune.points.bottom_right.x, rune.points.bottom_right.y);
-              sample->points.top_right = msgs::Point2d(rune.points.top_right.x,
-                                                       rune.points.top_right.y);
-              sample->points.top_left =
-                  msgs::Point2d(rune.points.top_left.x, rune.points.top_left.y);
-              sample->points.bottom_left = msgs::Point2d(
-                  rune.points.bottom_left.x, rune.points.bottom_left.y);
-
-              sample->heart_beat = false;
-              sample.publish();
-              LOG_TRACE_L1(ConfigManager::instance()->logger(),
-                           "{} armor(s) published.", runes.size());
-            })
-        .or_else([&](auto) {
-          LOG_ERROR(ConfigManager::instance()->logger(),
-                    "armor publish failed!");
-        });
+void DetectorNode::onSetMode(
+  const std::shared_ptr<rm_interfaces::srv::SetMode::Request> request,
+  std::shared_ptr<rm_interfaces::srv::SetMode::Response> response)
+{
+  response->success = true;
+  if (!request) {
+    response->success = false;
+    response->message = "null request";
+    return;
   }
+  const int mode = static_cast<int>(request->mode);
+  if (!mode_managed_) {
+    response->message = "mode_managed=false, keep current is_big_rune";
+    return;
+  }
+
+  if (mode == 2 || mode == 3)
+  {
+    is_big_rune_ = false;
+    response->message = "switched to small rune";
+    return;
+  }
+  if (mode == 4 || mode == 5)
+  {
+    is_big_rune_ = true;
+    response->message = "switched to big rune";
+    return;
+  }
+  response->message = "mode is not rune mode, keep current rune size";
 }
 
-void auto_buff::DetectorNode::publishHeartbeat(
-    const std::chrono::system_clock::time_point &stamp) {
-  this->rune_pub_.loan()
-      .and_then([&](iox::popo::Sample<msgs::BuffBlade, msgs::Header> &sample) {
-        sample.getUserHeader().stamp_ns = tools::chronoPointToNanoSec(stamp);
-        sample->heart_beat = true;
-        sample.publish();
-        LOG_TRACE_L1(ConfigManager::instance()->logger(),
-                     "heart_beat published.");
-      })
-      .or_else([&](auto) {
-        LOG_ERROR(ConfigManager::instance()->logger(),
-                  "heart_beat publish failed!");
-      });
+}  // namespace auto_buff
+
+int main(int argc, char ** argv)
+{
+  rclcpp::init(argc, argv);
+  rclcpp::spin(std::make_shared<auto_buff::DetectorNode>());
+  rclcpp::shutdown();
+  return 0;
 }

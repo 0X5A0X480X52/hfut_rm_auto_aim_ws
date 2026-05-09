@@ -3,6 +3,7 @@
 相关调研：
 
 - `../JLU公共模块移植与ROS2替换调研.md`
+- `../Detector与PoseEstimator双节点迁移方案.md`
 
 文档索引：
 

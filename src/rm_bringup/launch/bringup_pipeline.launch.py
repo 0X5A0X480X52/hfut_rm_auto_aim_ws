@@ -26,6 +26,7 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch.substitutions import Command
 from launch_ros.parameter_descriptions import ParameterValue
+from launch.conditions import IfCondition
 
 sys.path.append(os.path.join(get_package_share_directory('rm_bringup'), 'launch'))
 
@@ -86,6 +87,11 @@ def generate_launch_description():
         'use_camera_detector_container',
         default_value=str(launch_params.get('use_camera_detector_container', True)).lower(),
         description='Put camera and detector in same container'
+    )
+    declare_enable_auto_buff = DeclareLaunchArgument(
+        'enable_auto_buff',
+        default_value=str(launch_params.get('enable_auto_buff', False)).lower(),
+        description='Enable auto_buff detector + pose_estimator pipeline'
     )
 
     # ── URDF 机器人描述 ──
@@ -173,6 +179,27 @@ def generate_launch_description():
             # 输出 cmd_gimbal 保持兼容原 serial_driver 订阅的话题名
             ('cmd_gimbal', '/armor_solver/cmd_gimbal'),
         ],
+    )
+
+    # ==================== AutoBuff 链路 (可选) ====================
+    buff_detector_node = Node(
+        package='auto_buff',
+        executable='buff_detector_node',
+        name='buff_detector',
+        output='both',
+        emulate_tty=True,
+        parameters=get_pkg_params_with_robot_override('auto_buff', 'buff_detector.yaml'),
+        condition=IfCondition(LaunchConfiguration('enable_auto_buff')),
+    )
+
+    buff_pose_estimator_node = Node(
+        package='auto_buff',
+        executable='buff_pose_estimator_node',
+        name='buff_pose_estimator',
+        output='both',
+        emulate_tty=True,
+        parameters=get_pkg_params_with_robot_override('auto_buff', 'buff_pose_estimator.yaml'),
+        condition=IfCondition(LaunchConfiguration('enable_auto_buff')),
     )
 
     # ==================== 相机+检测器 容器 ====================
@@ -374,6 +401,7 @@ def generate_launch_description():
         declare_namespace,
         declare_detector_type,
         declare_use_container,
+        declare_enable_auto_buff,
 
         robot_gimbal_publisher,
         push_namespace,
@@ -388,5 +416,7 @@ def generate_launch_description():
         launch_actions.append(delay_standalone)
 
     launch_actions.append(delay_gimbal_pipeline)
+    launch_actions.append(buff_detector_node)
+    launch_actions.append(buff_pose_estimator_node)
 
     return LaunchDescription(launch_actions)

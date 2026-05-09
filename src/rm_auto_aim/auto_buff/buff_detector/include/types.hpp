@@ -1,13 +1,20 @@
 #pragma once
-#include "types/EnemyColor.hpp"
-#include "types/BuffBladeType.hpp"
-
 #include "opencv2/core/types.hpp"
 
 #include <string>
 #include <chrono>
 
 namespace auto_buff {
+enum class EnemyColor {
+  Red = 0,
+  Blue = 1,
+};
+
+enum class BuffBladeType {
+  Inactivated = 0,
+  Activated = 1,
+};
+
 struct RunePoints {
   RunePoints operator+(const RunePoints &other) const;
   RunePoints operator/(const float &other) const;
@@ -31,8 +38,8 @@ struct RunePoints {
 };
 
 struct RuneObject {
-  types::EnemyColor color;
-  types::BuffBladeType type;
+  EnemyColor color;
+  BuffBladeType type;
   RunePoints points;
   float prob;
   cv::Rect box;

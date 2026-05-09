@@ -1,62 +1,49 @@
 #pragma once
-#include "detector.hpp"
-#include "hardware/camera_params_changer.hpp"
-#include "hardware/enemy_color_listener.hpp"
-#include "hardware/image_poller.hpp"
-#include "hardware/task_mode_listener.hpp"
-#include "msgs/BuffBlade.hpp"
-#include "msgs/Image.hpp"
-#include "single.hpp"
 
-// NOTE: 这个是iox发布的扇叶，参考auto_aim对同一帧识别到的多个装甲板的处理方法
-// 快速发布一帧识别到的所有扇叶就好，将缓冲队列当作vector使用
-// 因为tracker的帧率是远低于detector的，iox通信只能传递确知大小的结构体
-#include "types.hpp"
-
-#include <opencv2/core/types.hpp>
-
-#include <chrono>
-#include <memory>
-#include <optional>
 #include <string>
+#include <memory>
 
-namespace auto_buff {
-class DetectorNode : public Single<DetectorNode> {
-  friend class Single<DetectorNode>;
+#include "rclcpp/rclcpp.hpp"
+#include "rm_interfaces/msg/rune_target.hpp"
+#include "rm_interfaces/msg/rune_target_array.hpp"
+#include "rm_interfaces/srv/set_mode.hpp"
+#include "sensor_msgs/msg/image.hpp"
+#include "sensor_msgs/msg/compressed_image.hpp"
+#include "yolo.hpp"
 
-protected:
-  DetectorNode();
-  ~DetectorNode();
+namespace auto_buff
+{
 
+class DetectorNode : public rclcpp::Node
+{
 public:
-  int run();
+  DetectorNode();
 
 private:
-  void init();
-  void imageCallback(const cv::Mat &image, const std::string &frame_id,
-                     const std::chrono::system_clock::time_point &stamp, Mode mode);
-  std::optional<cv::Mat>
-  afterDetect(const cv::Mat &bgr_image, std::vector<RuneObject> &runes,
-              const std::string &frame_id,
-              const std::chrono::system_clock::time_point &stamp);
-  void publishRunes(const std::vector<RuneObject> &runes);
-  void publishHeartbeat(const std::chrono::system_clock::time_point &stamp);
-  void drawRune(const RuneObject &rune, cv::Mat &img, const cv::Scalar &color);
+  void imageCallback(const sensor_msgs::msg::Image::SharedPtr msg);
+  void onSetMode(
+    const std::shared_ptr<rm_interfaces::srv::SetMode::Request> request,
+    std::shared_ptr<rm_interfaces::srv::SetMode::Response> response);
 
-private:
-  hardware::CameraParamsChanger cam_params_changer_;
-  hardware::EnemyColorListener enemy_color_listener_;
-  hardware::TaskModeListener task_mode_listener_small_buff_;
-  hardware::TaskModeListener task_mode_listener_big_buff_;
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;
+  rclcpp::Publisher<rm_interfaces::msg::RuneTarget>::SharedPtr rune_pub_;
+  rclcpp::Publisher<rm_interfaces::msg::RuneTargetArray>::SharedPtr runes_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr result_img_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr result_img_compressed_pub_;
+  rclcpp::Service<rm_interfaces::srv::SetMode>::SharedPtr set_mode_srv_;
 
-  iox::popo::Publisher<msgs::BuffBlade, msgs::Header> rune_pub_;
+  std::string image_topic_;
+  std::string rune_topic_;
+  std::string runes_topic_;
+  std::string result_img_topic_;
+  std::string result_img_compressed_topic_;
+  bool is_big_rune_{true};
+  bool mode_managed_{true};
+  bool debug_view_{false};
+  float min_confidence_{0.35F};
+  int debug_jpeg_quality_{70};
 
-  std::unique_ptr<STDetector> st_detector_;
-  std::unique_ptr<MTDetector> mt_detector_;
-
-  std::unique_ptr<hardware::ImagePoller<msgs::Image1440x1080_8UC3>>
-      image_poller_;
-
-  bool debug;
+  std::unique_ptr<YOLO> yolo_;
 };
-} // namespace auto_buff
+
+}  // namespace auto_buff

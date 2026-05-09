@@ -21,7 +21,6 @@ gimbal_pipeline:
       strict_unknown_reject: true        # 严格拒绝未知 robot_id
       default_projection_mode: "yaw_plane" # yaw_plane | full_se3
       full_se3_ids: ["big_buff", "small_buff"]
-      full_se3_robot_types: []
     external_targets:
       enable: false
       buff:
@@ -29,8 +28,6 @@ gimbal_pipeline:
         topic: "/auto_buff/tracked_robot"
         timeout_s: 0.3
       allowed_ids_by_mode:
-        mode_0: []
-        mode_1: []
         mode_2: ["small_buff"]
         mode_3: ["small_buff"]
         mode_4: ["big_buff"]

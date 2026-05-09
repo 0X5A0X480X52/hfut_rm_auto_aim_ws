@@ -5,105 +5,70 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(ament_cmake REQUIRED)
-find_package(Eigen3 REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(ament_index_cpp REQUIRED)
+find_package(rm_interfaces REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 find_package(OpenCV REQUIRED)
-find_package(yaml-cpp REQUIRED)
-find_package(Ceres REQUIRED)
-find_package(GTSAM REQUIRED)
-find_package(Threads REQUIRED)
-find_package(iceoryx_posh REQUIRED)
-find_package(iceoryx_hoofs REQUIRED)
-
-# Header-only/system deps used directly by includes in this package.
-find_path(CXXOPTS_INCLUDE_DIR cxxopts.hpp)
-find_path(RFL_INCLUDE_DIR rfl.hpp)
-find_path(QUILL_INCLUDE_DIR quill/LogMacros.h)
-find_path(OPENVINO_INCLUDE_DIR openvino/openvino.hpp)
-
-set(AUTO_BUFF_MISSING_DEPS "")
-foreach(_dep
-    CXXOPTS_INCLUDE_DIR
-    RFL_INCLUDE_DIR
-    QUILL_INCLUDE_DIR
-    OPENVINO_INCLUDE_DIR)
-  if(NOT ${_dep})
-    list(APPEND AUTO_BUFF_MISSING_DEPS ${_dep})
-  endif()
-endforeach()
-
-if(AUTO_BUFF_MISSING_DEPS)
-  message(FATAL_ERROR
-    "auto_buff missing required header deps: ${AUTO_BUFF_MISSING_DEPS}. "
-    "Please install/provide cxxopts, reflect-cpp(rfl), quill, openvino dev headers.")
-endif()
-
-set(AUTO_BUFF_COMMON_INCLUDE_DIRS
-  ${CMAKE_CURRENT_SOURCE_DIR}/buff_detector/include
-  ${CMAKE_CURRENT_SOURCE_DIR}/buff_tracker/include
-  ${EIGEN3_INCLUDE_DIRS}
-  ${OpenCV_INCLUDE_DIRS}
-  ${CXXOPTS_INCLUDE_DIR}
-  ${RFL_INCLUDE_DIR}
-  ${QUILL_INCLUDE_DIR}
-  ${OPENVINO_INCLUDE_DIR}
-)
+find_package(OpenVINO REQUIRED COMPONENTS Runtime)
+find_package(cv_bridge REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 
 add_executable(buff_detector_node
   buff_detector/src/buff_detector_node.cpp
-  buff_detector/src/center_corrector.cpp
-  buff_detector/src/configs.cpp
-  buff_detector/src/detector.cpp
-  buff_detector/src/main.cpp
-  buff_detector/src/types.cpp
   buff_detector/src/yolo.cpp
+  buff_detector/src/types.cpp
 )
-target_include_directories(buff_detector_node PRIVATE ${AUTO_BUFF_COMMON_INCLUDE_DIRS})
-target_link_libraries(buff_detector_node
-  Eigen3::Eigen
-  ${OpenCV_LIBS}
-  yaml-cpp
-  iceoryx_posh::iceoryx_posh
-  iceoryx_hoofs::iceoryx_hoofs
-  Threads::Threads
+target_include_directories(buff_detector_node PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/buff_detector/include
 )
+ament_target_dependencies(buff_detector_node
+  rclcpp
+  ament_index_cpp
+  rm_interfaces
+  sensor_msgs
+  visualization_msgs
+  cv_bridge
+)
+target_link_libraries(buff_detector_node ${OpenCV_LIBS})
+target_link_libraries(buff_detector_node openvino::runtime)
 
-add_executable(buff_tracker_node
-  buff_tracker/src/buff_fitter.cpp
-  buff_tracker/src/factors.cpp
-  buff_tracker/src/main.cpp
-  buff_tracker/src/targets.cpp
-  buff_tracker/src/tracker_node.cpp
-  buff_tracker/src/trajectory.cpp
-  buff_tracker/src/types.cpp
+add_executable(buff_pose_estimator_node
+  src/ros2/buff_pose_estimator_node.cpp
 )
-target_include_directories(buff_tracker_node PRIVATE ${AUTO_BUFF_COMMON_INCLUDE_DIRS})
-target_link_libraries(buff_tracker_node
-  Eigen3::Eigen
-  ${OpenCV_LIBS}
-  yaml-cpp
-  Ceres::ceres
-  gtsam
-  iceoryx_posh::iceoryx_posh
-  iceoryx_hoofs::iceoryx_hoofs
-  Threads::Threads
+ament_target_dependencies(buff_pose_estimator_node
+  rclcpp
+  rm_interfaces
+  std_msgs
+  geometry_msgs
+  sensor_msgs
+  visualization_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
 )
+target_link_libraries(buff_pose_estimator_node ${OpenCV_LIBS})
 
 install(TARGETS
   buff_detector_node
-  buff_tracker_node
+  buff_pose_estimator_node
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 
 install(DIRECTORY
-  buff_detector/include/
-  buff_tracker/include/
-  DESTINATION include/${PROJECT_NAME}
+  config
+  launch
+  model
+  DESTINATION share/${PROJECT_NAME}
 )
 
-ament_export_include_directories(include)
 ament_package()

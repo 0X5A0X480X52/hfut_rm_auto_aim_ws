@@ -113,6 +113,11 @@ void RobotDescriptionFacade::registerDefaultBuilders()
     static_cast<uint8_t>(T::SENTRY),
     4);
 
+  auto buff_single_builder = createFixedProfileTrackedRobotBuilder(
+    "buff_single_builder",
+    static_cast<uint8_t>(T::UNKNOWN),
+    1);
+
   registerBuilder("1", hero_builder);
 
   registerBuilder("2", standard_builder);
@@ -123,6 +128,8 @@ void RobotDescriptionFacade::registerDefaultBuilders()
   registerBuilder("outpost", outpost_builder);
   registerBuilder("base", base_builder);
   registerBuilder("sentry", sentry_builder);
+  registerBuilder("big_buff", buff_single_builder);
+  registerBuilder("small_buff", buff_single_builder);
 }
 
 }  // namespace fyt::auto_aim::robot_description
