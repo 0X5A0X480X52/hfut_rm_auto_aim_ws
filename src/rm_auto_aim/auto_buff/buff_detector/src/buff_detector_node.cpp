@@ -13,6 +13,25 @@
 namespace auto_buff
 {
 
+namespace
+{
+int quantizeBladeSlot(const RunePoints & pts)
+{
+  const float cx = pts.center.x;
+  const float cy = pts.center.y;
+  const float bx = 0.25F * (pts.bottom_right.x + pts.top_right.x + pts.top_left.x + pts.bottom_left.x);
+  const float by = 0.25F * (pts.bottom_right.y + pts.top_right.y + pts.top_left.y + pts.bottom_left.y);
+  const double angle = std::atan2(static_cast<double>(by - cy), static_cast<double>(bx - cx));
+  constexpr double two_pi = 6.28318530717958647692;
+  double normalized = std::fmod(angle + two_pi, two_pi);
+  if (normalized < 0.0) {
+    normalized += two_pi;
+  }
+  const int slot = static_cast<int>(std::floor((normalized / two_pi) * 5.0 + 0.5)) % 5;
+  return std::clamp(slot, 0, 4);
+}
+}  // namespace
+
 DetectorNode::DetectorNode()
 : Node("buff_detector_node")
 {
@@ -93,6 +112,10 @@ void DetectorNode::imageCallback(const sensor_msgs::msg::Image::SharedPtr msg)
   out.header = msg->header;
   out.is_big_rune = is_big_rune_;
   out.is_lost = true;
+  out.blade_type = rm_interfaces::msg::RuneTarget::BLADE_UNKNOWN;
+  out.blade_slot_hint = -1;
+  out.confidence = 0.0F;
+  out.track_id = 0u;
   rm_interfaces::msg::RuneTargetArray out_array;
   out_array.header = msg->header;
 
@@ -108,6 +131,13 @@ void DetectorNode::imageCallback(const sensor_msgs::msg::Image::SharedPtr msg)
     t.header = msg->header;
     t.is_big_rune = is_big_rune_;
     t.is_lost = false;
+    t.blade_type =
+      (rune.type == BuffBladeType::Inactivated)
+      ? rm_interfaces::msg::RuneTarget::BLADE_INACTIVATED
+      : rm_interfaces::msg::RuneTarget::BLADE_ACTIVATED;
+    t.blade_slot_hint = quantizeBladeSlot(rune.points);
+    t.confidence = rune.prob;
+    t.track_id = static_cast<uint32_t>(out_array.targets.size() + 1u);
     t.pts[0].x = rune.points.center.x; t.pts[0].y = rune.points.center.y;
     t.pts[1].x = rune.points.bottom_right.x; t.pts[1].y = rune.points.bottom_right.y;
     t.pts[2].x = rune.points.top_right.x; t.pts[2].y = rune.points.top_right.y;
@@ -124,6 +154,13 @@ void DetectorNode::imageCallback(const sensor_msgs::msg::Image::SharedPtr msg)
     if (best_it != runes.end() && best_it->prob >= min_confidence_) {
       const auto & pts = best_it->points;
       out.is_lost = false;
+      out.blade_type =
+        (best_it->type == BuffBladeType::Inactivated)
+        ? rm_interfaces::msg::RuneTarget::BLADE_INACTIVATED
+        : rm_interfaces::msg::RuneTarget::BLADE_ACTIVATED;
+      out.blade_slot_hint = quantizeBladeSlot(best_it->points);
+      out.confidence = best_it->prob;
+      out.track_id = 1u;
       out.pts[0].x = pts.center.x; out.pts[0].y = pts.center.y;
       out.pts[1].x = pts.bottom_right.x; out.pts[1].y = pts.bottom_right.y;
       out.pts[2].x = pts.top_right.x; out.pts[2].y = pts.top_right.y;

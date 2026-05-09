@@ -96,3 +96,10 @@ uint8 representation_mode
 # 可见性信息
 bool is_visible
 int32 visible_armor_count
+
+# 模块可击打掩码（LSB 对应 index=0，bit=1 表示可击打）
+# 例如 5 扇叶目标中，mask=0b00101 表示 index 0 和 2 可击打
+uint32 engageable_mask
+
+# 可击打模块数量（建议与 engageable_mask 置位个数一致）
+int32 engageable_count

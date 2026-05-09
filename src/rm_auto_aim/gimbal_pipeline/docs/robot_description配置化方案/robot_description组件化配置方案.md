@@ -94,7 +94,7 @@ RobotDescriptionFacade
 |----------|------|----------|-------------|-----------|
 | `radial_symmetric` | 双半径 r1/r2, ±dza | 4 | 0°/90°/180°/270°，半径交替 r1/r2，z 交替 ±dza | norm4, sentry |
 | `tri_layer_z` | 单半径 r, dza, dzc | 3 | 同角度、三层 z（dzc+dza, dzc, dzc−dza） | outpost3, base |
-| `rotary_drum` | 鼓半径 R_drum, 扇叶角间距 | 3 (或5) | 绕 Y/drum 轴 120°（或72°）均布，扇叶法向径向朝外，半径固定 | big_buff, small_buff |
+| `rotary_drum` | 鼓半径 R_drum, 扇叶角间距 | 5 | 绕 Y/drum 轴 72°均布，扇叶法向径向朝外，半径固定 | big_buff, small_buff |
 | `custom_placement` | 显式 [x,y,z,rpy] 列表 | N | 直接使用配置中的显式偏移 | 特殊/自定义机器人 |
 
 关键设计：**布局策略是纯几何函数**，输入为 `(LayoutDef, TrackerDynamicParams) → [ModulePlacement]`。
@@ -113,10 +113,10 @@ RobotDescriptionFacade
 | `"outpost"` | outpost_3 | large_armor | tri_layer_z | dza/dzc from tracker | structured | yaw_plane |
 | `"sentry"` | sentry_4 | small_armor | radial_symmetric | r1/r2/dza from tracker | structured | yaw_plane |
 | `"base"` | base_3 | base_armor | tri_layer_z | dza/dzc from tracker | structured | yaw_plane |
-| `"big_buff"` | big_buff_3 | big_buff_blade | rotary_drum | R_drum from config, yaw from tracker | structured | full_se3 |
-| `"small_buff"` | small_buff_3 | small_buff_blade | rotary_drum | R_drum from config, yaw from tracker | structured | full_se3 |
+| `"big_buff"` | big_buff_5 | big_buff_blade | rotary_drum | R_drum from config, yaw from tracker | structured | full_se3 |
+| `"small_buff"` | small_buff_5 | small_buff_blade | rotary_drum | R_drum from config, yaw from tracker | structured | full_se3 |
 
-> **注意**：big_buff/small_buff 从当前 `num_armors=1 + AMBIGUOUS` **升级**为 `num_armors=3 + STRUCTURED`。当 tracker 无法提供多扇叶结构化状态时，降级为单板 ambiguous 模式。
+> **注意**：big_buff/small_buff 从当前 `num_armors=1 + AMBIGUOUS` **升级**为 `num_armors=5 + STRUCTURED`。当 tracker 无法提供多扇叶结构化状态时，降级为单板 ambiguous 模式。
 
 ### 3.5 击打约束机制（Engagement Constraints）
 
@@ -213,6 +213,26 @@ engagement_constraints:
 | 相位窗口 | **无现成实现** | 新增 `SpinPhaseGate`，在 fire_advice 中接入 |
 | 距离约束 | 散落在 selector 和 fire_advice 中 | 统一到 `EngagementConstraintEvaluator` |
 | cooldown | **无现成实现** | 新增 `HitCooldownTimer`，按 robot_id 维护 |
+
+#### 3.5.6 激活策略与掩码（新增）
+
+`engagement_constraints` 负责几何/可见性/相位等击打约束；比赛态下的"随机激活几块扇叶"不应混入约束评估，建议新增并行配置 `activation_policy`：
+
+```yaml
+activation_policy:
+  mode: external_mask              # external_mask | deterministic | random_sim
+  module_count: 5
+  active_count: 2                  # big_buff=2, small_buff=1
+  source: /auto_buff/engagement_state
+  mask_field: active_mask
+  ttl_ms: 150
+```
+
+设计要点：
+
+- 上游 `auto_buff` 始终发布完整五扇叶结构化状态（`num_armors=5`），激活信息通过 `active_mask` 表达。
+- `selector/fire_advice` 先按掩码过滤候选扇叶，再应用 `engagement_constraints`。
+- 无掩码或掩码超时时，降级为"全不可击打"或"仅保留最近稳定掩码"，由策略参数控制。
 
 ---
 
@@ -391,16 +411,16 @@ assemblies:
       - module_spin_phase
       - center_velocity
 
-  # ── Big Buff（旋鼓型，3 圆形扇叶） ──
-  big_buff_3:
+  # ── Big Buff（旋鼓型，5 圆形扇叶） ──
+  big_buff_5:
     robot_type: UNKNOWN
     representation_default: structured
     projection_preferred: full_se3
     engagement_mode: rotating        # 扇叶随鼓旋转
     layout:
       type: rotary_drum
-      count: 3
-      angular_pitch_deg: 120.0
+      count: 5
+      angular_pitch_deg: 72.0
       drum_radius: 0.28
       radius_source: config
       normal_direction: radial_outward
@@ -414,6 +434,19 @@ assemblies:
         active_phase_span_deg: 60.0       # 扇叶法向±30°内可击打
         require_facing_self: true
       rules: { cooldown_after_hit_ms: 500 }
+    activation_policy:
+      mode: external_mask
+      module_count: 5
+      active_count: 2
+      source_topic: /auto_buff/engagement_state
+      mask_field: active_mask
+      ttl_ms: 150
+    kinematic_constraint:
+      center_fixed_prior: true
+      roll_only: true
+      pitch_prior_rad: 0.0
+      yaw_prior_rad: 0.0
+      center_prior_sigma_m: 0.02
     known_parameters:
       - center_pose
       - center_velocity
@@ -422,16 +455,16 @@ assemblies:
       - module_spin_phase
       - module_state
 
-  # ── Small Buff（旋鼓型，3 圆形扇叶） ──
-  small_buff_3:
+  # ── Small Buff（旋鼓型，5 圆形扇叶） ──
+  small_buff_5:
     robot_type: UNKNOWN
     representation_default: structured
     projection_preferred: full_se3
     engagement_mode: rotating
     layout:
       type: rotary_drum
-      count: 3
-      angular_pitch_deg: 120.0
+      count: 5
+      angular_pitch_deg: 72.0
       drum_radius: 0.20
       radius_source: config
       normal_direction: radial_outward
@@ -445,6 +478,19 @@ assemblies:
         active_phase_span_deg: 60.0
         require_facing_self: true
       rules: { cooldown_after_hit_ms: 500 }
+    activation_policy:
+      mode: external_mask
+      module_count: 5
+      active_count: 1
+      source_topic: /auto_buff/engagement_state
+      mask_field: active_mask
+      ttl_ms: 150
+    kinematic_constraint:
+      center_fixed_prior: true
+      roll_only: true
+      pitch_prior_rad: 0.0
+      yaw_prior_rad: 0.0
+      center_prior_sigma_m: 0.02
     known_parameters:
       - center_pose
       - center_velocity
@@ -463,8 +509,8 @@ id_mapping:
   outpost: outpost_3
   sentry: sentry_4
   base: base_3
-  big_buff: big_buff_3
-  small_buff: small_buff_3
+  big_buff: big_buff_5
+  small_buff: small_buff_5
 ```
 
 ---
@@ -531,7 +577,7 @@ struct LayoutDef {
   RadiusSource radius_source{RadiusSource::TRACKER};
   RadiusSource z_offset_source{RadiusSource::TRACKER};
   double drum_radius{0.0};                  // ROTARY_DRUM 专用
-  double angular_pitch_deg{120.0};          // ROTARY_DRUM 专用
+  double angular_pitch_deg{72.0};           // ROTARY_DRUM 专用（五扇叶）
   std::string normal_direction;             // "radial_outward" | "tangential"
   // CUSTOM_PLACEMENT 专用：显式偏移列表
   std::vector<std::array<double, 6>> custom_offsets; // {x,y,z,r,p,y}
@@ -584,6 +630,23 @@ struct EngagementConstraints {
   RuleConstraint rules;
 };
 
+struct ActivationPolicy {
+  std::string mode{"external_mask"};   // external_mask | deterministic | random_sim
+  int module_count{0};                 // 典型值: 5
+  int active_count{0};                 // big=2, small=1
+  std::string source_topic;            // 例: /auto_buff/engagement_state
+  std::string mask_field{"active_mask"};
+  int ttl_ms{150};
+};
+
+struct KinematicConstraint {
+  bool center_fixed_prior{false};      // 是否启用中心固定先验
+  bool roll_only{false};               // true: 仅允许 roll 分量
+  double pitch_prior_rad{0.0};         // odom 系先验（buff: 0）
+  double yaw_prior_rad{0.0};           // odom 系先验（buff: 0）
+  double center_prior_sigma_m{0.02};   // 中心固定先验方差（软约束）
+};
+
 struct RobotAssemblyDef {
   std::string name;
   uint8_t robot_type;
@@ -593,6 +656,8 @@ struct RobotAssemblyDef {
   LayoutDef layout;
   std::string module_ref;               // → PrimitiveDef::name
   EngagementConstraints engagement_constraints;
+  ActivationPolicy activation_policy;   // 仅 buff 等需要激活掩码的目标
+  KinematicConstraint kinematic_constraint;
   std::vector<std::string> known_parameters;
   std::vector<std::string> unknown_parameters;
 };
@@ -842,9 +907,68 @@ robot.num_armors = 1;
 
 升级后行为：
 
-- **tracker 提供结构化多扇叶状态**：builder 使用 `ROTARY_DRUM` 布局生成 3 个 armors_offset，`representation_mode = STRUCTURED_ROBOT`。
+- **auto_buff 始终发布完整五扇叶状态**：`representation_mode = STRUCTURED_ROBOT`，`num_armors = 5`，`armors_offset.size() = 5`。
+- **激活信息独立发布**：新增 `BuffEngagementState`（或等效消息），包含 `active_mask`、`active_count`、`mode(big/small)`、`phase/omega`。
+- **tracker 提供结构化多扇叶状态**：builder 使用 `ROTARY_DRUM` 布局生成 5 个 armors_offset，几何完整性不受激活数量影响。
 - **tracker 处于降级模式**（`is_ambiguous_single_mode() == true`）：builder 回退到单板零偏移 ambiguous 表示。
-- `BuffTargetAdapter` 移除强制 `REP_AMBIGUOUS_SINGLE_ARMOR` 行，改为尊重上游 tracker 的判断。
+- `BuffTargetAdapter` 移除强制 `REP_AMBIGUOUS_SINGLE_ARMOR` 行，改为尊重上游 tracker 的结构化输出，并聚合 `active_mask` 到下游可查询缓存。
+
+推荐链路：
+
+1. `auto_buff/tracked_robot_full`：发布完整五扇叶 `TrackedRobot`。
+2. `auto_buff/engagement_state`：发布激活掩码与时效（大符随机激活2块，小符随机激活1块由上游实时给定）。
+3. `gimbal_pipeline::BuffTargetAdapter`：按时间戳聚合两路消息，对控制侧输出"完整状态 + 激活掩码视图"。
+
+#### 6.2.1 状态模型细化（基于中心固定 + 仅 roll）
+
+大小符统一采用受限状态模型：
+
+- 状态向量：`x = [cx, cy, cz, roll, vroll]`（big_buff 可附加 `a/omega/c/d`）。
+- odom 姿态先验：`pitch=0, yaw=0`，仅 `roll` 随时间演化。
+- 中心先验：`center_fixed_prior=true`，以软约束形式维持中心稳定（而不是硬编码锁死）。
+- 几何重建：`blade_i_roll = roll + i * 72deg`，`i∈[0..4]`。
+
+对应到 `TrackedRobot`：
+
+1. `center_pose.position = [cx,cy,cz]`
+2. `center_pose.orientation = quat(roll, 0, 0)`（RPY 顺序）
+3. `num_armors=5`，`armors_offset` 全量发布
+4. `representation_mode=REP_STRUCTURED_ROBOT`
+
+#### 6.2.2 auto_buff 侧改造步骤
+
+1. 在 tracker 输出层增加 `TrackedRobot(full)` 发布器，替代当前仅 `AimCommand` 的状态暴露。
+2. 将 `BuffState` 映射为五扇叶 offset：
+   - `position`: 由 `drum_radius` + `roll+i*72deg` 生成
+   - `orientation`: `quat(roll+i*72deg, 0, 0)` 或与法向一致的等价表达
+3. 新增 `BuffEngagementState` 发布：
+   - `active_mask`（5bit）
+   - `active_count`（big=2/small=1）
+   - `mode`、`stamp`、`ttl_ms`
+4. 兼容保留：老 `AimCommand` 输出不删，便于灰度切换。
+
+#### 6.2.3 BuffTargetAdapter 侧改造步骤
+
+1. 删除强制改写为 ambiguous 的逻辑（`representation_mode/num_armors` 不再覆盖）。
+2. 增加第二订阅：`/auto_buff/engagement_state`。
+3. 以 `stamp + timeout` 聚合两路数据，形成内部快照：
+   - `TrackedRobot full_robot`
+   - `uint8 active_mask`
+   - `bool mask_valid`
+4. 对外提供统一查询接口（供 selector/fire_advice）：
+   - `latestValidRobot(now)`
+   - `latestValidActivationMask(now)`
+5. 超时降级策略配置化：
+   - `mask_timeout_policy = reject_all | keep_last | fallback_single`
+   - 默认 `reject_all`，避免误击发。
+
+#### 6.2.4 对 norm4/outpost3 的兼容边界（仅优化不破坏）
+
+- `norm4/outpost3` 不配置 `activation_policy`，默认空策略，无掩码依赖。
+- `kinematic_constraint.roll_only=false`（沿用现有 yaw-plane/full-se3 逻辑）。
+- `layout_generator` 的 `RADIAL_SYMMETRIC/TRI_LAYER_Z` 路径不改公式，保持数值一致。
+- `fire_advice` 仅在 `isRotatingTarget(robot_id)==true` 时启用相位与掩码分支。
+- `strict_unknown_reject` 与 fallback builder 语义不变。
 
 ### 6.3 fire_advice 概率链路接入
 
@@ -977,7 +1101,9 @@ for each candidate robot:
 
 4. **BuffTargetAdapter 升级**
    - 移除强制 ambiguous 行为，仅在 tracker 降级时设置 ambiguous。
-   - big_buff/small_buff 默认输出 structured (3 扇叶)。
+   - big_buff/small_buff 默认输出 structured (5 扇叶)。
+   - 聚合 `active_mask`，并提供超时降级策略。
+   - 按 `kinematic_constraint` 校验并同步 `center_pose.orientation`（仅 roll 有效）。
 
 5. **fire_advice 概率链路接入**
    - 在 `ProbabilityConfig` 中增加 `enable_profile: false` 开关。
@@ -1003,17 +1129,20 @@ for each candidate robot:
 
 | # | 标准 | 验证方式 |
 |---|------|---------|
-| 1 | `big_buff`/`small_buff` 默认输出 `representation_mode=STRUCTURED_ROBOT`，`num_armors=3`，`armors_offset` 包含 3 个圆形扇叶的有效偏移 | 单元测试 + 运行时 rostopic echo |
+| 1 | `big_buff`/`small_buff` 默认输出 `representation_mode=STRUCTURED_ROBOT`，`num_armors=5`，`armors_offset` 包含 5 个圆形扇叶的有效偏移 | 单元测试 + 运行时 rostopic echo |
 | 2 | big_buff/small_buff 的 PrimitiveDef 形状为 `CIRCLE`，`radius` 字段正确，概率模型使用圆形命中概率公式 | 单元测试 |
 | 3 | 旧链路关闭 profile 概率开关时，`fire_advice` 的 p_hit 与 fire_state 与当前完全一致 | 回归测试（录制 bag 回放对比） |
 | 4 | 打开 profile 概率增强后，buff 的 `fire_state` 抖动减少（`fire_state` 翻转频率下降 ≥20%） | 统计对比测试 |
 | 5 | `EngagementConstraintEvaluator` 正确过滤静止目标（outpost/base 速度阈值=0）vs 运动目标（norm4/sentry）vs 旋转目标（buff 相位约束） | 单元测试每种模式 |
 | 6 | 朝向约束：front_hemisphere 模式下，背对自车的模块 confidence_scale=0 | 单元测试 |
 | 7 | 旋转相位约束：扇叶背对自车时 `is_engageable=false`，正对时 `is_engageable=true` | 单元测试（模拟 phase 角度） |
-| 8 | YAML 配置错误（缺失必填字段、无效枚举值、dangling 引用）在启动阶段输出明确错误并禁止构建 | 注入错误配置，检查日志 |
-| 9 | `strict_unknown_reject=false` 时未知 robot_id 回退到 STANDARD_4 builder，行为不变 | 单元测试 |
-| 10 | YAML 配置缺失时整个系统回退到 FixedProfileTrackedRobotBuilder，行为不变 | 删除 YAML 文件后运行回归测试 |
-| 11 | 布局生成器输出与当前 `generateArmorsOffsetFromProfile()` 的 norm4/outpost3 结果数值一致（1e-9 容差） | 单元测试 |
+| 8 | 激活掩码约束：`big_buff` 任意时刻仅 2/5 扇叶可击打，`small_buff` 仅 1/5 扇叶可击打；掩码超时触发降级策略 | 消息回放 + 单元测试 |
+| 9 | YAML 配置错误（缺失必填字段、无效枚举值、dangling 引用）在启动阶段输出明确错误并禁止构建 | 注入错误配置，检查日志 |
+| 10 | `strict_unknown_reject=false` 时未知 robot_id 回退到 STANDARD_4 builder，行为不变 | 单元测试 |
+| 11 | YAML 配置缺失时整个系统回退到 FixedProfileTrackedRobotBuilder，行为不变 | 删除 YAML 文件后运行回归测试 |
+| 12 | 布局生成器输出与当前 `generateArmorsOffsetFromProfile()` 的 norm4/outpost3 结果数值一致（1e-9 容差） | 单元测试 |
+| 13 | buff 的 `center_pose.orientation` 满足 roll-only 约束（pitch/yaw 近零，偏差不超过配置阈值） | bag 回放 + 断言检查 |
+| 14 | norm4/outpost3 在关闭 buff 外部输入时控制输出与基线一致 | A/B 回归对比 |
 
 ---
 
@@ -1028,11 +1157,11 @@ for each candidate robot:
 ### B. 为什么 buff 不继续沿用"单板 ambiguous"表示？
 
 当前 `num_armors=1 + REP_AMBIGUOUS_SINGLE_ARMOR` 意味着：
-- 下游无法区分"这其实是一个有 3 个扇叶的鼓"与"只有一个装甲板的目标"。
+- 下游无法区分"这其实是一个有 5 个扇叶的鼓"与"只有一个装甲板的目标"。
 - 概率模型无法利用扇叶间距和旋转相位信息优化命中概率。
 - selector 不能按模块粒度做目标选择。
 
-升级为 3 扇叶结构化表示后，概率模型可以：
+升级为 5 扇叶结构化表示后，概率模型可以：
 - 知道每个扇叶的独立位置和法向。
 - 按 confidence_weight 对扇叶命中概率加权融合。
 - 在扇叶旋转时预测哪个扇叶即将进入可击打姿态。

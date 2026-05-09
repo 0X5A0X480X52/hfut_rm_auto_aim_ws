@@ -2,15 +2,10 @@
 #include "buff_fitter.hpp"
 #include "configs.hpp"
 #include "factors.hpp"
-#include "math/angle_tools.hpp"
-#include "rfl/enums.hpp"
 #include "types.hpp"
 
 #include "opencv2/calib3d.hpp"
 #include "opencv2/core/types.hpp"
-#include "quill/LogMacros.h"
-#include "quill/Logger.h"
-#include "types/BuffBladeType.hpp"
 #include <gtsam/base/Vector.h>
 #include <gtsam/base/types.h>
 #include <gtsam/geometry/Point3.h>
@@ -25,20 +20,60 @@
 #include <gtsam/nonlinear/Values.h>
 #include <opencv2/core/eigen.hpp>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <vector>
 
 using namespace gtsam::symbol_shorthand;
 
-auto_buff::BuffTarget::BuffTarget(quill::Logger *logger,
+namespace {
+
+// Inlined from tools/math/angle_tools.hpp
+inline double angle2Radian(double angle) {
+  return angle * M_PI / 180.0;
+}
+
+inline double limitRadian(double radian,
+                          std::pair<double, double> range = {
+                              -M_PI, M_PI}) {
+  const double low = range.first;
+  const double high = range.second;
+  const double width = high - low;
+  radian = std::fmod(radian - low, width);
+  if (radian < 0.0)
+    radian += width;
+  return radian + low;
+}
+
+inline Eigen::Vector3d rotationMatrixToRPY(const Eigen::Matrix3d &R) {
+  const double yaw = std::atan2(R(1, 0), R(0, 0));
+  const double pitch = std::atan2(-R(2, 0), std::hypot(R(2, 1), R(2, 2)));
+  const double roll = std::atan2(R(2, 1), R(2, 2));
+  return {roll, pitch, yaw};
+}
+
+const char *trackStateToString(auto_buff::TrackState::State s) {
+  switch (s) {
+  case auto_buff::TrackState::State::LOST: return "LOST";
+  case auto_buff::TrackState::State::TEMPLOST: return "TEMPLOST";
+  case auto_buff::TrackState::State::TRACKING: return "TRACKING";
+  }
+  return "UNKNOWN";
+}
+
+} // namespace
+
+auto_buff::BuffTarget::BuffTarget(rclcpp::Logger logger,
                                   const BuffBladeMatchConfig &match_conf,
                                   const BuffBladeNoiseConfig &blade_config,
                                   const cv::Mat &camera_matrix,
                                   const cv::Mat &distortion_coefficients)
-    : logger_(logger), match_config_(match_conf), blade_config_(blade_config),
-      camera_matrix_(camera_matrix),
+    : logger_(std::move(logger)), match_config_(match_conf),
+      blade_config_(blade_config), camera_matrix_(camera_matrix),
       distortion_coefficients_(distortion_coefficients) {}
 
 double auto_buff::BuffTarget::get(const std::string &str) const { return 0; }
@@ -63,7 +98,7 @@ auto_buff::BuffTarget::solvePNP(const BuffBlade &blade) const {
   cv::Rodrigues(rvec, R_cv);
   Eigen::Matrix3d R = Eigen::Matrix3d::Zero();
   cv::cv2eigen(R_cv, R);
-  Eigen::Vector3d rpy = tools::rotationMatrixToRPY(R);
+  Eigen::Vector3d rpy = rotationMatrixToRPY(R);
   result.type = blade.type;
   result.roll = gtsam::Rot2::fromAngle(rpy(0));
   result.pitch = rpy(1);
@@ -74,13 +109,9 @@ auto_buff::BuffTarget::solvePNP(const BuffBlade &blade) const {
 
 auto_buff::BuffState auto_buff::BuffTarget::getTargetStateFromBlade(
     const BladePositionRPYPoints &blade) {
-  // Eigen::Vector3d center_position;
-  // double center_roll;
-  // std::array<bool, 5> inactivated_flag{false, false, false, false, false};
   BuffState state;
   state.center_position = blade.position;
   state.center_roll = blade.roll.theta();
-  // 即假设当前是零号位的扇叶
   return state;
 }
 
@@ -93,12 +124,14 @@ std::optional<auto_buff::BuffMatchResult> auto_buff::BuffTarget::matchBlade(
     auto roll_diff = std::abs(blade_odom.roll.localCoordinates(blade.roll).x());
     if (distance <= match_config_.max_match_distance_m &&
         roll_diff <=
-            tools::angle2Radian(match_config_.max_match_roll_diff_degree))
+            angle2Radian(match_config_.max_match_roll_diff_degree))
       results.emplace_back(static_cast<BuffBladeIndex>(i), distance, roll_diff);
     i++;
   }
-  // 选择roll误差最小的
-  std::ranges::sort(results, std::ranges::less{}, &BuffMatchResult::roll_diff);
+  std::sort(results.begin(), results.end(),
+            [](const BuffMatchResult &a, const BuffMatchResult &b) {
+              return a.roll_diff < b.roll_diff;
+            });
   return results.empty() ? std::nullopt : std::optional{results.front()};
 }
 
@@ -115,11 +148,11 @@ auto_buff::BuffTarget::matchBlades(
   for (const auto &blade : blades_camera)
     if (auto match_result_opt =
             matchBlade(state, blade.transform(T_camera_to_odom));
-        match_result_opt.has_value()) { // 匹配成功
+        match_result_opt.has_value()) {
       if (auto index = match_result_opt->index;
-          !used_index.at(static_cast<int>(index))) { // 不是重复匹配
+          !used_index.at(static_cast<int>(index))) {
         match_result.emplace_back(blade, index);
-        used_index.at(static_cast<int>(index)) = true; // 标记已经匹配
+        used_index.at(static_cast<int>(index)) = true;
       }
     }
   return match_result;
@@ -183,7 +216,7 @@ void auto_buff::BuffTarget::addBladeValuesFactors(
             blade_config_.position_noise_m.x,
             blade_config_.position_noise_m.y,
             blade_config_.position_noise_m.z,
-            tools::angle2Radian(blade_config_.roll_noise_degree),
+            angle2Radian(blade_config_.roll_noise_degree),
         }),
         blade_pose_key,
         R(k),
@@ -192,15 +225,15 @@ void auto_buff::BuffTarget::addBladeValuesFactors(
         index,
     });
   }
-  LOG_TRACE_L1(logger_, "[Buff Target]: add {} buff factors. k = {}.",
+  RCLCPP_DEBUG(logger_, "[Buff Target]: add %zu buff factors. k = %lu.",
                blades_camera_indexs.size(), k);
 }
 
 auto_buff::SmallBuffTarget::SmallBuffTarget(
-    quill::Logger *logger, const SmallBuffConfig &config,
+    rclcpp::Logger logger, const SmallBuffConfig &config,
     const cv::Mat &camera_matrix, const cv::Mat &distortion_coefficients)
-    : BuffTarget(logger, config.match_conf, config.blade_conf, camera_matrix,
-                 distortion_coefficients),
+    : BuffTarget(std::move(logger), config.match_conf, config.blade_conf,
+                 camera_matrix, distortion_coefficients),
       config_(config) {
   track_state_.state = TrackState::State::LOST;
   track_state_.stamp_last_update = std::chrono::system_clock::from_time_t(0);
@@ -219,7 +252,7 @@ auto_buff::SmallBuffState
 auto_buff::SmallBuffTarget::predictBuffState(const BuffState &state,
                                              double vroll, double dt) {
   SmallBuffState state_pre{state, vroll};
-  state_pre.center_roll = tools::limitRadian(state.center_roll + vroll * dt);
+  state_pre.center_roll = limitRadian(state.center_roll + vroll * dt);
   return state_pre;
 }
 
@@ -256,7 +289,7 @@ void auto_buff::SmallBuffTarget::addMotionValuesFactors(
                    }));
     graph.addPrior(R(0), gtsam::Rot2::fromAngle(state.center_roll),
                    gtsam::noiseModel::Isotropic::Sigma(
-                       1, tools::angle2Radian(
+                       1, angle2Radian(
                               config_.center_conf.roll_prior_noise_degree)));
     graph.addPrior(W(0), state.center_vroll,
                    gtsam::noiseModel::Isotropic::Sigma(
@@ -273,7 +306,7 @@ void auto_buff::SmallBuffTarget::addMotionValuesFactors(
     });
     graph.add(RollFactor{
         gtsam::noiseModel::Isotropic::Sigma(
-            1, tools::angle2Radian(config_.center_conf.roll_noise_degree)),
+            1, angle2Radian(config_.center_conf.roll_noise_degree)),
         R(k - 1),
         W(k - 1),
         R(k),
@@ -286,8 +319,8 @@ void auto_buff::SmallBuffTarget::addMotionValuesFactors(
         W(k),
     });
   }
-  LOG_TRACE_L1(logger_,
-               "[SmallBuff]: add motion values factors. k = {}, dt = {}.", k,
+  RCLCPP_DEBUG(logger_,
+               "[SmallBuff]: add motion values factors. k = %lu, dt = %.3f.", k,
                dt);
 }
 
@@ -306,8 +339,8 @@ auto_buff::TrackState::State auto_buff::SmallBuffTarget::track(
       update(blades_camera, dt, T_camera_to_odom);
   if (updated_track_state == TrackState::State::TRACKING) {
     if (track_state_.state != TrackState::State::TRACKING) {
-      LOG_INFO(logger_, "[SmallBuff]: {} -> TRACKING. dt{}, k{}.",
-               rfl::enum_to_string(track_state_.state), dt, track_state_.k);
+      RCLCPP_INFO(logger_, "[SmallBuff]: %s -> TRACKING. dt=%.3f, k=%lu.",
+                  trackStateToString(track_state_.state), dt, track_state_.k);
     }
     std::scoped_lock lk{state_mtx_};
     target_state_ = estimated_target_state;
@@ -317,8 +350,8 @@ auto_buff::TrackState::State auto_buff::SmallBuffTarget::track(
     track_state_.k += 1;
   } else if (updated_track_state == TrackState::State::TEMPLOST) {
     if (track_state_.state != TrackState::State::TEMPLOST) {
-      LOG_INFO(logger_, "[SmallBuff]: TRACKING -> TEMPLOST. dt{}, k{}.", dt,
-               track_state_.k);
+      RCLCPP_INFO(logger_, "[SmallBuff]: TRACKING -> TEMPLOST. dt=%.3f, k=%lu.",
+                  dt, track_state_.k);
     }
     std::scoped_lock lk{state_mtx_};
     target_state_ = estimated_target_state;
@@ -327,8 +360,8 @@ auto_buff::TrackState::State auto_buff::SmallBuffTarget::track(
     track_state_.k += 1;
   } else if (updated_track_state == TrackState::State::LOST) {
     if (track_state_.state != TrackState::State::LOST) {
-      LOG_INFO(logger_, "[SmallBuff]: {} -> LOST. dt{}, k{}.",
-               rfl::enum_to_string(track_state_.state), dt, track_state_.k);
+      RCLCPP_INFO(logger_, "[SmallBuff]: %s -> LOST. dt=%.3f, k=%lu.",
+                  trackStateToString(track_state_.state), dt, track_state_.k);
     }
     std::scoped_lock lk{state_mtx_};
     target_state_ = SmallBuffState{};
@@ -349,8 +382,8 @@ auto_buff::SmallBuffTarget::update(
           .count();
   if (track_state_.state != TrackState::State::LOST &&
       dt + dt_tracking_to_update > config_.lost_threshold_sec) {
-    LOG_INFO(logger_, "[SmallBuff]: Time out! dt{}.",
-             dt + dt_tracking_to_update);
+    RCLCPP_INFO(logger_, "[SmallBuff]: Time out! dt=%.3f.",
+                dt + dt_tracking_to_update);
     return {{}, TrackState::State::LOST};
   }
   auto target_state = predictBuffState(dt);
@@ -361,18 +394,17 @@ auto_buff::SmallBuffTarget::update(
       target_state =
           SmallBuffState{getTargetStateFromBlade(
                              blades_camera.front().transform(T_camera_to_odom)),
-                         0}; // 先假设零速
+                         0};
   }
   auto matched_blades =
       matchBlades(target_state, blades_camera, T_camera_to_odom);
   if (matched_blades.size() < blades_camera.size()) {
-    LOG_DEBUG(logger_, "[SmallBuff]: Miss match {} armors! k = {}.",
-              blades_camera.size() - matched_blades.size(), track_state_.k);
+    RCLCPP_DEBUG(logger_, "[SmallBuff]: Miss match %zu armors! k = %lu.",
+                 blades_camera.size() - matched_blades.size(), track_state_.k);
   }
-  // 更新待击打扇叶
   target_state.inactivated_flag.fill(false);
   for (const auto &[blade, index] : matched_blades)
-    if (blade.type == types::BuffBladeType::Inactivated)
+    if (blade.type == BuffBladeType::Inactivated)
       target_state.inactivated_flag.at(static_cast<int>(index)) = true;
 
   gtsam::Values values;
@@ -392,13 +424,15 @@ auto_buff::SmallBuffTarget::update(
     return {target_state, matched_blades.empty() ? TrackState::State::TEMPLOST
                                                  : TrackState::State::TRACKING};
   } catch (const std::exception &e) {
-    LOG_ERROR(logger_, "[SmallBuff]: {}\ncurrent k: {}.", e.what(),
-              track_state_.k);
+    RCLCPP_ERROR(logger_, "[SmallBuff]: %s\ncurrent k: %lu.", e.what(),
+                 track_state_.k);
     return {{}, TrackState::State::LOST};
   }
 }
 
-auto_buff::BigBuffTarget::BigBuffTarget(quill::Logger *logger,
+// ---- BigBuffTarget ----
+
+auto_buff::BigBuffTarget::BigBuffTarget(rclcpp::Logger logger,
                                         const BigBuffConfig &config,
                                         const cv::Mat &camera_matrix,
                                         const cv::Mat &distortion_coefficients)
@@ -430,7 +464,6 @@ auto_buff::BigBuffTarget::predictBuffState(double dt) const {
 std::pair<auto_buff::BuffState, auto_buff::TrackState>
 auto_buff::BigBuffTarget::getTargetTrackState() const {
   std::scoped_lock lk{state_mtx_};
-  // XXX: 没有人类了
   return {
       target_state_.getStateWithPredictFunc(
           [dt_from_start = target_state_.dt_from_start, a = target_state_.a,
@@ -463,8 +496,6 @@ double auto_buff::BigBuffTarget::get(const std::string &str) const {
     return target_state_.a;
   if (str == "omega")
     return target_state_.omega;
-  // if (str == "b")
-  //   return target_state_.b;
   if (str == "c")
     return target_state_.c;
   if (str == "d")
@@ -489,7 +520,7 @@ void auto_buff::BigBuffTarget::addMotionValuesFactors(
                    }));
     graph.addPrior(R(0), gtsam::Rot2::fromAngle(state.center_roll),
                    gtsam::noiseModel::Isotropic::Sigma(
-                       1, tools::angle2Radian(
+                       1, angle2Radian(
                               config_.center_conf.roll_prior_noise_degree)));
     graph.addPrior(W(0), 0.0,
                    gtsam::noiseModel::Isotropic::Sigma(
@@ -506,7 +537,7 @@ void auto_buff::BigBuffTarget::addMotionValuesFactors(
     });
     graph.add(RollFactor{
         gtsam::noiseModel::Isotropic::Sigma(
-            1, tools::angle2Radian(config_.center_conf.roll_noise_degree)),
+            1, angle2Radian(config_.center_conf.roll_noise_degree)),
         R(k - 1),
         W(k - 1),
         R(k),
@@ -519,8 +550,9 @@ void auto_buff::BigBuffTarget::addMotionValuesFactors(
         W(k),
     });
   }
-  LOG_TRACE_L1(logger_,
-               "[BigBuff]: add motion values factors. k = {}, dt = {}.", k, dt);
+  RCLCPP_DEBUG(logger_,
+               "[BigBuff]: add motion values factors. k = %lu, dt = %.3f.", k,
+               dt);
 }
 
 std::pair<auto_buff::BigBuffState, auto_buff::TrackState::State>
@@ -533,7 +565,8 @@ auto_buff::BigBuffTarget::update(
           .count();
   if (track_state_.state != TrackState::State::LOST &&
       dt + dt_tracking_to_update > config_.lost_threshold_sec) {
-    LOG_INFO(logger_, "[BigBuff]: Time out! dt{}.", dt + dt_tracking_to_update);
+    RCLCPP_INFO(logger_, "[BigBuff]: Time out! dt=%.3f.",
+                dt + dt_tracking_to_update);
     return {{}, TrackState::State::LOST};
   }
   auto target_state = target_state_;
@@ -546,7 +579,7 @@ auto_buff::BigBuffTarget::update(
       target_state = BigBuffState{
           getTargetStateFromBlade(
               blades_camera.front().transform(T_camera_to_odom)),
-          0.0, // 初始时刻时间为0
+          0.0,
           0.9125,
           1.942,
           0,
@@ -557,13 +590,12 @@ auto_buff::BigBuffTarget::update(
   auto matched_blades =
       matchBlades(target_state, blades_camera, T_camera_to_odom);
   if (matched_blades.size() < blades_camera.size()) {
-    LOG_DEBUG(logger_, "[BigBuff]: Miss match {} armors! k = {}.",
-              blades_camera.size() - matched_blades.size(), track_state_.k);
+    RCLCPP_DEBUG(logger_, "[BigBuff]: Miss match %zu armors! k = %lu.",
+                 blades_camera.size() - matched_blades.size(), track_state_.k);
   }
-  // 更新待击打扇叶
   target_state.inactivated_flag.fill(false);
   for (const auto &[blade, index] : matched_blades)
-    if (blade.type == types::BuffBladeType::Inactivated)
+    if (blade.type == BuffBladeType::Inactivated)
       target_state.inactivated_flag.at(static_cast<int>(index)) = true;
 
   gtsam::Values values;
@@ -581,29 +613,23 @@ auto_buff::BigBuffTarget::update(
     target_state.center_vroll =
         isam2_.calculateEstimate<double>(W(track_state_.k));
   } catch (const std::exception &e) {
-    LOG_ERROR(logger_, "[BigBuff]: {}\ncurrent k: {}.", e.what(),
-              track_state_.k);
+    RCLCPP_ERROR(logger_, "[BigBuff]: %s\ncurrent k: %lu.", e.what(),
+                 track_state_.k);
     return {{}, TrackState::State::LOST};
   }
 
-  // 更新ceres拟合器
   if (auto fit_result_opt = this->fitter_.update(track_state_.k == 0 ? 0 : dt,
                                                  target_state.center_roll,
                                                  target_state.center_vroll);
       fit_result_opt.has_value()) {
     auto [param, direction, dt_start_to_update, dt_start_to_fit] =
         fit_result_opt.value();
-    // target_state.a = param[0];
-    // target_state.omega = param[1];
-    // // target_state.b = param[2];
-    // target_state.c = param[2];
-    // target_state.d = param[3];
     target_state = predictBuffState(
         target_state, dt_start_to_update - dt_start_to_fit, dt_start_to_fit,
         param[0], param[1], param[2], param[3], target_state.center_vroll);
   } else {
     target_state.dt_from_start += dt;
-    LOG_DEBUG(logger_, "[BigBuff]: Fitter not converged.");
+    RCLCPP_DEBUG(logger_, "[BigBuff]: Fitter not converged.");
   }
   return {target_state, matched_blades.empty() ? TrackState::State::TEMPLOST
                                                : TrackState::State::TRACKING};
@@ -624,8 +650,8 @@ auto_buff::TrackState::State auto_buff::BigBuffTarget::track(
       update(blades_camera, dt, T_camera_to_odom);
   if (updated_track_state == TrackState::State::TRACKING) {
     if (track_state_.state != TrackState::State::TRACKING) {
-      LOG_INFO(logger_, "[BigBuff]: {} -> TRACKING. dt{}, k{}.",
-               rfl::enum_to_string(track_state_.state), dt, track_state_.k);
+      RCLCPP_INFO(logger_, "[BigBuff]: %s -> TRACKING. dt=%.3f, k=%lu.",
+                  trackStateToString(track_state_.state), dt, track_state_.k);
     }
     std::scoped_lock lk{state_mtx_};
     target_state_ = estimated_target_state;
@@ -635,8 +661,8 @@ auto_buff::TrackState::State auto_buff::BigBuffTarget::track(
     track_state_.k += 1;
   } else if (updated_track_state == TrackState::State::TEMPLOST) {
     if (track_state_.state != TrackState::State::TEMPLOST) {
-      LOG_INFO(logger_, "[BigBuff]: TRACKING -> TEMPLOST. dt{}, k{}.", dt,
-               track_state_.k);
+      RCLCPP_INFO(logger_, "[BigBuff]: TRACKING -> TEMPLOST. dt=%.3f, k=%lu.",
+                  dt, track_state_.k);
     }
     std::scoped_lock lk{state_mtx_};
     target_state_ = estimated_target_state;
@@ -645,15 +671,15 @@ auto_buff::TrackState::State auto_buff::BigBuffTarget::track(
     track_state_.k += 1;
   } else if (updated_track_state == TrackState::State::LOST) {
     if (track_state_.state != TrackState::State::LOST) {
-      LOG_INFO(logger_, "[BigBuff]: {} -> LOST. dt{}, k{}.",
-               rfl::enum_to_string(track_state_.state), dt, track_state_.k);
+      RCLCPP_INFO(logger_, "[BigBuff]: %s -> LOST. dt=%.3f, k=%lu.",
+                  trackStateToString(track_state_.state), dt, track_state_.k);
     }
     std::scoped_lock lk{state_mtx_};
     target_state_ = BigBuffState{};
     track_state_.state = TrackState::State::LOST;
     track_state_.k = 0;
     isam2_ = gtsam::ISAM2{};
-    fitter_.reset(); // 重置拟合器
+    fitter_.reset();
   }
   return track_state_.state;
 }

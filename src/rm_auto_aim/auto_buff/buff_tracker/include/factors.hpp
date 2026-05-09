@@ -1,8 +1,7 @@
 #pragma once
 
 #include "types.hpp"
-#include <gtsam/base/Vector.h>
-#include <gtsam/base/numericalDerivative.h>
+#include <gtsam/base/Matrix.h>
 #include <gtsam/base/types.h>
 #include <gtsam/geometry/Cal3DS2.h>
 #include <gtsam/geometry/PinholeCamera.h>
@@ -11,14 +10,17 @@
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/geometry/Rot2.h>
 #include <gtsam/linear/NoiseModel.h>
-#include <gtsam/nonlinear/NoiseModelFactorN.h>
 #include <gtsam/nonlinear/NonlinearFactor.h>
-#include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <opencv2/core.hpp>
+
+#include <boost/optional.hpp>
 
 namespace auto_buff {
 
-// 零速模型，仅做帧间约束
+// Compatibility: OptionalMatrixType = boost::optional<Matrix&>
+using OptionalMatrixH = boost::optional<gtsam::Matrix&>;
+
+// Zero velocity position consistency factor
 class ConstPositionFactor
     : public gtsam::NoiseModelFactorN<gtsam::Point3, gtsam::Point3> {
   using Base = gtsam::NoiseModelFactorN<gtsam::Point3, gtsam::Point3>;
@@ -29,11 +31,11 @@ public:
 
   gtsam::Vector evaluateError(const gtsam::Point3 &x_pre,
                               const gtsam::Point3 &x_cur,
-                              gtsam::OptionalMatrixType H1,
-                              gtsam::OptionalMatrixType H2) const override;
+                              OptionalMatrixH H1,
+                              OptionalMatrixH H2) const override;
 };
 
-// NOTE: 这个是给小符用的匀速约束（和auto_aim的一样），大符的再说
+// Constant angular velocity constraint for small buff
 class RollFactor
     : public gtsam::NoiseModelFactorN<gtsam::Rot2, double, gtsam::Rot2> {
   using Base = gtsam::NoiseModelFactorN<gtsam::Rot2, double, gtsam::Rot2>;
@@ -43,15 +45,15 @@ public:
              gtsam::Key w_pre, gtsam::Key r_cur, double dt);
   gtsam::Vector evaluateError(const gtsam::Rot2 &r_pre, const double &w_pre,
                               const gtsam::Rot2 &r_cur,
-                              gtsam::OptionalMatrixType H1,
-                              gtsam::OptionalMatrixType H2,
-                              gtsam::OptionalMatrixType H3) const override;
+                              OptionalMatrixH H1,
+                              OptionalMatrixH H2,
+                              OptionalMatrixH H3) const override;
 
 private:
   double dt_;
 };
 
-// NOTE: 这个是给小符用的匀速约束（和auto_aim的一样），大符的再说
+// Constant vroll constraint
 class ConstVRollFactor : public gtsam::NoiseModelFactorN<double, double> {
   using Base = gtsam::NoiseModelFactorN<double, double>;
 
@@ -60,15 +62,11 @@ public:
                    gtsam::Key w_cur);
 
   gtsam::Vector evaluateError(const double &w_pre, const double &w_cur,
-                              gtsam::OptionalMatrixType H1,
-                              gtsam::OptionalMatrixType H2) const override;
+                              OptionalMatrixH H1,
+                              OptionalMatrixH H2) const override;
 };
 
-// NOTE:
-// 一个扇叶对应着五个keypoint，N个观测会产生N*5个重投影因子，优化N个扇叶位姿
-// 重投影因子只需要知道自身的点编号（用来访问世界点）
-// 从每个重投影因子优化的扇叶的位姿约束整个风车位姿是下面的因子干的活
-// 即这个类不需要BladeIndex
+// Reprojection factor for a single blade's keypoints
 class BuffBladeReprojFactor : public gtsam::NoiseModelFactorN<gtsam::Pose3> {
   using Base = gtsam::NoiseModelFactorN<gtsam::Pose3>;
 
@@ -80,7 +78,7 @@ public:
                         BuffPointPosition point_position,
                         Eigen::Vector2d px_point);
   gtsam::Vector evaluateError(const gtsam::Pose3 &armor_pose_camera,
-                              gtsam::OptionalMatrixType H) const override;
+                              OptionalMatrixH H) const override;
 
 private:
   gtsam::Point2 px_point_;
@@ -88,7 +86,7 @@ private:
   gtsam::Cal3DS2 calib_;
 };
 
-// NOTE: 每一个扇叶约束因子连接一个扇叶和roll xyz，每一帧可能添加0-5个约束因子
+// Constraint connecting a blade to the buff center (roll + xyz)
 class BuffBladeFactor
     : public gtsam::NoiseModelFactorN<gtsam::Pose3, gtsam::Rot2,
                                       gtsam::Point3> {
@@ -102,13 +100,12 @@ public:
                   const Eigen::Isometry3d &T_camera_to_odom,
                   BuffBladeIndex blade_index);
 
-  // 返回的误差定义为{x y z roll}
   gtsam::Vector evaluateError(const gtsam::Pose3 &buff_blade_pose_camera,
                               const gtsam::Rot2 &center_roll,
                               const gtsam::Point3 &center_point,
-                              gtsam::OptionalMatrixType H1,
-                              gtsam::OptionalMatrixType H2,
-                              gtsam::OptionalMatrixType H3) const override;
+                              OptionalMatrixH H1,
+                              OptionalMatrixH H2,
+                              OptionalMatrixH H3) const override;
 
 private:
   Eigen::Isometry3d T_camera_to_odom_;

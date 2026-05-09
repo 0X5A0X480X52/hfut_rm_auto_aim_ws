@@ -2,9 +2,9 @@
 
 #include "buff_fitter.hpp"
 #include "configs.hpp"
-#include "quill/Logger.h"
 #include "types.hpp"
 
+#include <rclcpp/rclcpp.hpp>
 #include <gtsam/base/types.h>
 #include <gtsam/nonlinear/ISAM2.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
@@ -14,11 +14,12 @@
 #include <optional>
 #include <utility>
 #include <vector>
+
 namespace auto_buff {
 
 class BuffTarget {
 public:
-  BuffTarget(quill::Logger *logger, const BuffBladeMatchConfig &match_conf,
+  BuffTarget(rclcpp::Logger logger, const BuffBladeMatchConfig &match_conf,
              const BuffBladeNoiseConfig &blade_config,
              const cv::Mat &camera_matrix,
              const cv::Mat &distortion_coefficients);
@@ -31,7 +32,7 @@ public:
   virtual std::pair<BuffState, TrackState> getTargetTrackState() const = 0;
 
 protected:
-  quill::Logger *logger_;
+  rclcpp::Logger logger_;
   static BuffState getTargetStateFromBlade(const BladePositionRPYPoints &blade);
   std::optional<BladePositionRPYPoints> solvePNP(const BuffBlade &blade) const;
   std::vector<std::pair<BladePositionRPYPoints, BuffBladeIndex>>
@@ -62,7 +63,7 @@ private:
 
 class SmallBuffTarget : public BuffTarget {
 public:
-  SmallBuffTarget(quill::Logger *logger, const SmallBuffConfig &config,
+  SmallBuffTarget(rclcpp::Logger logger, const SmallBuffConfig &config,
                   const cv::Mat &camera_matrix,
                   const cv::Mat &distortion_coefficients);
   std::pair<BuffState, TrackState> getTargetTrackState() const override;
@@ -80,11 +81,9 @@ private:
                               const SmallBuffState &state, std::uint64_t k,
                               double dt) const;
   SmallBuffState predictBuffState(double dt) const;
-  // 用来注入到BuffState里，最好设成static
   static SmallBuffState predictBuffState(const BuffState &state, double vroll,
                                          double dt);
 
-  // quill::Logger *logger_; 在基类里
   SmallBuffConfig config_;
 
   mutable std::mutex state_mtx_;
@@ -95,7 +94,7 @@ private:
 
 class BigBuffTarget : public BuffTarget {
 public:
-  BigBuffTarget(quill::Logger *logger, const BigBuffConfig &config,
+  BigBuffTarget(rclcpp::Logger logger, const BigBuffConfig &config,
                 const cv::Mat &camera_matrix,
                 const cv::Mat &distortion_coefficients);
   std::pair<BuffState, TrackState> getTargetTrackState() const override;
@@ -114,13 +113,11 @@ private:
                               double dt) const;
 
   BigBuffState predictBuffState(double dt) const;
-  // 用来注入到BuffState里，最好设成static
   static BigBuffState predictBuffState(const BuffState &state, double dt,
                                        double dt_from_start, double a,
                                        double omega, double c, double d,
                                        double vroll);
 
-  // quill::Logger *logger_; 在基类里
   BigBuffConfig config_;
 
   mutable std::mutex state_mtx_;

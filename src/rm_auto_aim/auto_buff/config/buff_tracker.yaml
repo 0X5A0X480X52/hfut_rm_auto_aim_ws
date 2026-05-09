@@ -1,0 +1,59 @@
+/**:
+  ros__parameters:
+    rune_target_topic: "/rune_targets"
+    camera_info_topic: "/camera_info"
+    serial_state_topic: "/serial_receive_data"
+    output_topic: "/auto_buff/buff_tracker_state"
+    odom_frame_id: "odom"
+    tf_timeout_s: 0.02
+    enable_small_buff: true
+    enable_big_buff: true
+    force_task_mode: 0
+    publish_rate_hz: 200.0
+
+    # Small Buff Config
+    small.match.max_match_distance_m: 1.0
+    small.match.max_match_roll_diff_degree: 30.0
+    small.blade.pixel_error_x: 5.0
+    small.blade.pixel_error_y: 5.0
+    small.blade.position_noise_x: 0.03
+    small.blade.position_noise_y: 0.03
+    small.blade.position_noise_z: 0.03
+    small.blade.roll_noise_degree: 2.0
+    small.center.position_consistency_noise_x: 0.01
+    small.center.position_consistency_noise_y: 0.01
+    small.center.position_consistency_noise_z: 0.01
+    small.center.roll_noise_degree: 3.0
+    small.center.vroll_noise_rad: 0.10
+    small.center.position_prior_noise_x: 0.10
+    small.center.position_prior_noise_y: 0.10
+    small.center.position_prior_noise_z: 0.10
+    small.center.roll_prior_noise_degree: 30.0
+    small.center.vroll_prior_noise_rad: 6.0
+    small.lost_threshold_sec: 0.8
+
+    # Big Buff Config
+    big.fitter.queue_upper_limit: 200
+    big.fitter.queue_lower_limit: 100
+    big.fitter.param_lower_bound_scale: 1.0
+    big.fitter.param_upper_bound_scale: 1.0
+    big.fitter.curve_fitting_interval_time_ms: 20
+    big.match.max_match_distance_m: 1.0
+    big.match.max_match_roll_diff_degree: 30.0
+    big.blade.pixel_error_x: 5.0
+    big.blade.pixel_error_y: 5.0
+    big.blade.position_noise_x: 0.03
+    big.blade.position_noise_y: 0.03
+    big.blade.position_noise_z: 0.03
+    big.blade.roll_noise_degree: 2.0
+    big.center.position_consistency_noise_x: 0.01
+    big.center.position_consistency_noise_y: 0.01
+    big.center.position_consistency_noise_z: 0.01
+    big.center.roll_noise_degree: 3.0
+    big.center.vroll_noise_rad: 0.10
+    big.center.position_prior_noise_x: 0.10
+    big.center.position_prior_noise_y: 0.10
+    big.center.position_prior_noise_z: 0.10
+    big.center.roll_prior_noise_degree: 30.0
+    big.center.vroll_prior_noise_rad: 6.0
+    big.lost_threshold_sec: 1.0

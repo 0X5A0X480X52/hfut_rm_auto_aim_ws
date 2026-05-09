@@ -1,42 +1,62 @@
 #include "types.hpp"
-#include "basic/time_tools.hpp"
-#include "math/angle_tools.hpp"
-#include "types/BuffBladeType.hpp"
-#include "types/EnemyColor.hpp"
 
 #include <gtsam/geometry/Rot2.h>
 
 #include <array>
 #include <cmath>
 #include <functional>
-#include <numbers>
 
-auto_buff::BuffBlade::BuffBlade(
-    const iox::popo::Sample<const msgs::BuffBlade, const msgs::Header> &sample)
-    : frame_id(sample.getUserHeader().frame_id.c_str()),
-      stamp(tools::nanoSecToChronoPoint(sample.getUserHeader().stamp_ns)),
-      heart_beat(sample->heart_beat),
-      color(static_cast<types::EnemyColor>(sample->color)),
-      type(static_cast<types::BuffBladeType>(sample->type)),
-      confidence(sample->confidence),
+namespace {
+
+// Inlined from tools/math/angle_tools.hpp
+Eigen::Quaterniond rpyToQuaterniond(const Eigen::Vector3d &rpy_angle) {
+  Eigen::AngleAxisd roll(rpy_angle.x(), Eigen::Vector3d::UnitX());
+  Eigen::AngleAxisd pitch(rpy_angle.y(), Eigen::Vector3d::UnitY());
+  Eigen::AngleAxisd yaw(rpy_angle.z(), Eigen::Vector3d::UnitZ());
+  Eigen::Quaterniond q{yaw * pitch * roll};
+  q.normalize();
+  return q;
+}
+
+Eigen::Vector3d rotationMatrixToRPY(const Eigen::Matrix3d &R) {
+  const double yaw = std::atan2(R(1, 0), R(0, 0));
+  const double pitch = std::atan2(-R(2, 0), std::hypot(R(2, 1), R(2, 2)));
+  const double roll = std::atan2(R(2, 1), R(2, 2));
+  return {roll, pitch, yaw};
+}
+
+} // namespace
+
+auto_buff::BuffBlade::BuffBlade(const rm_interfaces::msg::RuneTarget &msg)
+    : frame_id(msg.header.frame_id),
+      stamp(std::chrono::nanoseconds{
+          static_cast<int64_t>(msg.header.stamp.sec) * 1'000'000'000LL +
+          static_cast<int64_t>(msg.header.stamp.nanosec)}),
+      heart_beat(!msg.is_lost),
+      color(EnemyColor::Blue),
+      type(msg.blade_type == rm_interfaces::msg::RuneTarget::BLADE_INACTIVATED
+               ? BuffBladeType::Inactivated
+               : msg.blade_type == rm_interfaces::msg::RuneTarget::BLADE_ACTIVATED
+                     ? BuffBladeType::Activated
+                     : BuffBladeType::Unknown),
+      confidence(msg.confidence),
       points({
-          .r_center = {static_cast<float>(sample->points.r_center.x),
-                       static_cast<float>(sample->points.r_center.y)},
-          .bottom_right = {static_cast<float>(sample->points.bottom_right.x),
-                           static_cast<float>(sample->points.bottom_right.y)},
-          .top_right = {static_cast<float>(sample->points.top_right.x),
-                        static_cast<float>(sample->points.top_right.y)},
-          .top_left = {static_cast<float>(sample->points.top_left.x),
-                       static_cast<float>(sample->points.top_left.y)},
-          .bottom_left = {static_cast<float>(sample->points.bottom_left.x),
-                          static_cast<float>(sample->points.bottom_left.y)},
+          .r_center = {static_cast<float>(msg.pts[0].x),
+                       static_cast<float>(msg.pts[0].y)},
+          .bottom_right = {static_cast<float>(msg.pts[1].x),
+                           static_cast<float>(msg.pts[1].y)},
+          .top_right = {static_cast<float>(msg.pts[2].x),
+                        static_cast<float>(msg.pts[2].y)},
+          .top_left = {static_cast<float>(msg.pts[3].x),
+                       static_cast<float>(msg.pts[3].y)},
+          .bottom_left = {static_cast<float>(msg.pts[4].x),
+                          static_cast<float>(msg.pts[4].y)},
       }) {}
 
 Eigen::Vector3d auto_buff::BladePositionRoll::getHitPosition() const {
   auto z_hit = std::cos(this->roll.theta()) * BUFF_RADIUS + this->position.z();
   auto horizontal_bias = -std::sin(this->roll.theta()) * BUFF_RADIUS;
   auto center_aim_yaw = std::atan2(this->position.y(), this->position.x());
-  // XXX: 这里需要再检查下
   auto x_hit = this->position.x() - horizontal_bias * std::sin(center_aim_yaw);
   auto y_hit = this->position.y() + horizontal_bias * std::cos(center_aim_yaw);
   return {x_hit, y_hit, z_hit};
@@ -58,17 +78,17 @@ auto_buff::BuffState::blades() const {
   std::array<BladePositionRoll, 5> blades;
   for (int i = 0; i < 5; i++) {
     blades.at(i) = BladePositionRoll{
-        .type = inactivated_flag.at(i) ? types::BuffBladeType::Inactivated
-                                       : types::BuffBladeType::Activated,
+        .type = inactivated_flag.at(i) ? BuffBladeType::Inactivated
+                                       : BuffBladeType::Activated,
         .position = center_position,
-        .roll = center_roll + i * 2 * std::numbers::pi / 5,
+        .roll = center_roll + i * 2 * M_PI / 5,
     };
   }
   return blades;
 }
 
 Eigen::Quaterniond auto_buff::BladePositionRPYPoints::getRotation() const {
-  return tools::rpyToQuaterniond({roll.theta(), pitch, yaw});
+  return rpyToQuaterniond({roll.theta(), pitch, yaw});
 }
 
 auto_buff::BladePositionRPYPoints
@@ -77,8 +97,7 @@ auto_buff::BladePositionRPYPoints::transform(const Eigen::Isometry3d &T) const {
   pose.pretranslate(this->position);
   pose.rotate(this->getRotation());
   auto result = T * pose;
-  auto rpy = tools::rotationMatrixToRPY(result.rotation());
-  // HACK: 这里发生的拷贝太多了！！！
+  auto rpy = rotationMatrixToRPY(result.rotation());
   BladePositionRPYPoints blade{*this};
   blade.position = result.translation();
   blade.roll = gtsam::Rot2::fromAngle(rpy(0));

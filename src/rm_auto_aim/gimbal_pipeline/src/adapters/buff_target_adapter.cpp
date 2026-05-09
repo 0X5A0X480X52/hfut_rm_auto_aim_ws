@@ -60,8 +60,6 @@ rm_interfaces::msg::TrackedRobot BuffTargetAdapter::normalizeBuffRobot(
   auto robot = robot_description::TrackedRobotUsage::normalizeState(msg);
   robot.header.frame_id = config_.target_frame;
 
-  robot.representation_mode = rm_interfaces::msg::TrackedRobot::REP_AMBIGUOUS_SINGLE_ARMOR;
-  robot.num_armors = 1;
   robot.track_state = rm_interfaces::msg::TrackedRobot::TRACKING;
   robot.is_visible = true;
   robot.visible_armor_count = std::max(robot.visible_armor_count, 1);
@@ -80,6 +78,19 @@ rm_interfaces::msg::TrackedRobot BuffTargetAdapter::normalizeBuffRobot(
     zero_offset.orientation.y = 0.0;
     zero_offset.orientation.z = 0.0;
     robot.armors_offset.push_back(zero_offset);
+    robot.representation_mode = rm_interfaces::msg::TrackedRobot::REP_AMBIGUOUS_SINGLE_ARMOR;
+    robot.num_armors = 1;
+    robot.engageable_mask = 0x1u;
+    robot.engageable_count = 1;
+  } else {
+    robot.num_armors = std::max(robot.num_armors, static_cast<int32_t>(robot.armors_offset.size()));
+    if (robot.num_armors >= 3) {
+      robot.representation_mode = rm_interfaces::msg::TrackedRobot::REP_STRUCTURED_ROBOT;
+    }
+    if (robot.engageable_count <= 0) {
+      robot.engageable_count = 1;
+      robot.engageable_mask = 0x1u;
+    }
   }
 
   return robot;
