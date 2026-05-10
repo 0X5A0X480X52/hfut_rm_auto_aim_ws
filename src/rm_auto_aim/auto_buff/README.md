@@ -36,3 +36,20 @@
 
 - `buff_detector/` 与 `buff_tracker/` 下旧 JLU 代码已保留作迁移参考，但当前不参与编译。
 - 依赖收敛和替换决策见：`docs/JLU公共模块移植与ROS2替换调研.md`
+
+## 安装 gtsam 库
+
+```bash
+git clone https://github.com/borglab/gtsam.git
+cd gtsam
+git checkout 4.2
+
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DGTSAM_WITH_TBB=ON \
+  -DGTSAM_BUILD_EXAMPLES_ALWAYS=OFF
+
+cmake --build build -j$(nproc)
+sudo cmake --install build
+sudo ldconfig
+```
