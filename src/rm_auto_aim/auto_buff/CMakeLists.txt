@@ -25,6 +25,7 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(GTSAM REQUIRED)
 find_package(Ceres REQUIRED)
+find_package(absl REQUIRED COMPONENTS check)
 
 add_executable(buff_detector_node
   buff_detector/src/buff_detector_node.cpp
