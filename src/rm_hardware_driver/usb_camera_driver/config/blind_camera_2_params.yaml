@@ -1,0 +1,25 @@
+/**:
+  ros__parameters:
+    # Camera identification (相机标识)
+    camera_name: "blind_camera_2"
+
+    # Image resolution (图像分辨率)
+    width: 640
+    height: 480
+
+    # Frame rate (帧率)
+    fps: 50.0
+
+    # Frame id for published Image (发布图像的frame_id)
+    frame_id: "blind_camera_2_optical_frame"
+
+    # Exposure settings (曝光设置)
+    auto_exposure: false      # true=自动曝光, false=手动曝光
+    exposure: 20             # 曝光值 (手动模式有效，范围10-2500，单位100µs)
+                              # 注意: 60fps下exposure应<=156 (15.6ms)，超过会触发降帧
+                              # 设为0关闭exposure_dynamic_framerate可防止降帧
+    exposure_dynamic_framerate: false  # true=允许为长曝光降低帧率, false=保持帧率不变
+    white_balance_automatic: true     # true=自动白平衡(推荐), false=手动白平衡
+
+    # QoS settings (服务质量设置)
+    use_sensor_data_qos: false

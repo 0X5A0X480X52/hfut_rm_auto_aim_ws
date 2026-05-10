@@ -1,11 +1,10 @@
 // std
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <filesystem>
 #include <functional>
-#include <map>
 #include <memory>
-#include <numeric>
 #include <string>
 #include <vector>
 // ros2
@@ -13,7 +12,10 @@
 
 #include <image_transport/image_transport.hpp>
 #include <rclcpp/qos.hpp>
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Quaternion.h>
 // third party
+#include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
@@ -33,20 +35,25 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
   FYT_REGISTER_LOGGER("blind_detector", "~/fyt2024-log", INFO);
   FYT_INFO("blind_detector", "Starting BlindArmorDetectorNode!");
 
-  // 动态获取摄像头名称前缀 (e.g., "left" or "right")
-  camera_name_ = this->declare_parameter<std::string>("camera_name", "left");
-  camera_yaw_ = this->declare_parameter("camera_yaw",0.0);
+  // 直接从 TF 查询 camera_optical_frame → odom 的变换
+  odom_frame_ = this->declare_parameter("target_frame", "odom");
+  camera_frame_id_ = this->declare_parameter("camera_frame_id", "blind_camera_1_optical_frame");
+
+  camera_fx_ = static_cast<float>(image_width_);
+  camera_fy_ = static_cast<float>(image_width_);
+  cx_ = image_width_ / 2.0f;
+  cy_ = image_height_ / 2.0f;
 
   // 初始化 Detector
   detector_ = initDetector();
 
-  // 构建话题名称
-  const std::string img_topic = camera_name_ + "_image_raw";
-  const std::string armors_topic = std::string("blind_detector/") + camera_name_ + "/blind";
+  // 构建话题名称 (相对话题名，在命名空间下解析)
+  const std::string img_topic = "image_raw";
+  const std::string blinds_topic = "blinds";
 
   //Targets Publisher
-  blind_pub_ = this->create_publisher<rm_interfaces::msg::Blind>(
-    armors_topic, rclcpp::SensorDataQoS());
+  blinds_pub_ = this->create_publisher<rm_interfaces::msg::Blinds>(
+    blinds_topic, rclcpp::SensorDataQoS());
 
   // Debug 参数
   debug_ = this->declare_parameter("debug", true);
@@ -61,15 +68,30 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
         debug_ ? createDebugPublishers() : destroyDebugPublishers();
       });
 
-  // Image Subscription
-  img_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
-      img_topic,
-      rclcpp::SensorDataQoS(),
-      std::bind(&ArmorDetectorNode::imageCallback, this, std::placeholders::_1));
+  // tf2 buffer + listener
+  tf2_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+  auto timer_interface = std::make_shared<tf2_ros::CreateTimerROS>(
+      this->get_node_base_interface(), this->get_node_timers_interface());
+  tf2_buffer_->setCreateTimerInterface(timer_interface);
+  tf2_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
 
-  // Set Mode 服务
+  // Image subscription via tf2_ros::MessageFilter, synchronized with TF
+  img_mf_sub_.subscribe(this, img_topic, rmw_qos_profile_sensor_data);
+  tf2_filter_ = std::make_shared<tf2_ros::MessageFilter<sensor_msgs::msg::Image>>(
+      img_mf_sub_, *tf2_buffer_, odom_frame_,
+      /*queue_size=*/10,
+      get_node_logging_interface(), get_node_clock_interface(),
+      std::chrono::duration<int>(1));
+  tf2_filter_->registerCallback(&ArmorDetectorNode::imageCallback, this);
+
+  // Camera info subscription (for undistortion map, same namespace as image)
+  cam_info_sub_ = this->create_subscription<sensor_msgs::msg::CameraInfo>(
+      "camera_info", rclcpp::SensorDataQoS(),
+      std::bind(&ArmorDetectorNode::cameraInfoCallback, this, std::placeholders::_1));
+
+  // Set Mode 服务 (节点私有服务，在命名空间下解析)
   set_mode_srv_ = this->create_service<rm_interfaces::srv::SetMode>(
-      camera_name_+"/blind_detector/set_mode",
+      "~/set_mode",
       std::bind(&ArmorDetectorNode::setModeCallback, this,
                 std::placeholders::_1, std::placeholders::_2));
 
@@ -80,56 +102,87 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
 void ArmorDetectorNode::imageCallback(
     const sensor_msgs::msg::Image::ConstSharedPtr img_msg) {
 
+  geometry_msgs::msg::TransformStamped odom_to_camera;
+  if (tf2_buffer_->canTransform(
+          odom_frame_, camera_frame_id_, img_msg->header.stamp,
+          tf2::durationFromSec(0.02))) {
+    odom_to_camera = tf2_buffer_->lookupTransform(
+        odom_frame_, camera_frame_id_, img_msg->header.stamp);
+  } else {
+    FYT_WARN("blind_detector", "TF at image timestamp {}.{}s not available, "
+             "fallback to latest transform",
+             img_msg->header.stamp.sec, img_msg->header.stamp.nanosec);
+    try {
+      odom_to_camera = tf2_buffer_->lookupTransform(
+          odom_frame_, camera_frame_id_, tf2::TimePointZero);
+    } catch (const tf2::TransformException &ex) {
+      FYT_WARN("blind_detector", "TF lookup failed: {}", ex.what());
+      return;
+    }
+  }
+  // odom_to_camera 已经包含 URDF 中的安装偏移 + 光学帧变换，
+  // 其表示的旋转就是 camera_optical_frame 在 odom 中的朝向。
+  tf2::Quaternion q;
+  tf2::fromMsg(odom_to_camera.transform.rotation, q);
+  // 将光学帧光轴 (+Z) 旋转到 odom 坐标系，计算 yaw/pitch
+  tf2::Vector3 optical_axis(0, 0, 1);
+  tf2::Vector3 axis_odom = tf2::quatRotate(q, optical_axis);
+  double camera_yaw = std::atan2(axis_odom.y(), axis_odom.x()) * 180.0 / M_PI;
+  double camera_pitch = std::atan2(axis_odom.z(),
+      std::sqrt(axis_odom.x() * axis_odom.x() + axis_odom.y() * axis_odom.y())) * 180.0 / M_PI;
+
   // Detect armors
   auto armors = detectArmors(img_msg);
 
-  // Init message
-  std::string best_number = "-1";
-  float best_yaw = 0.0;
-  float best_confi = 0.0;
+  // 发布结果，由下游 gimbal_pipeline 选择目标
+  blinds_msg_.header = img_msg->header;
+  blinds_msg_.blinds.clear();
+  blinds_msg_.blinds.reserve(armors.size());
 
   for (auto &armor : armors) {
-    // 1. 计算目标在机器人坐标系中的yaw角
-    // 公式：yaw = 相机中心yaw + (归一化位置 - 0.5) * 水平视场角
-    float normalized_x = static_cast<double>(armor.center.x) / 1600.0;
-    float yaw = camera_yaw_ - (normalized_x - 0.5) * 96.0; 
-    float abs_yaw = std::abs(yaw);
+    // 使用针孔模型从像素坐标计算角度偏移，比线性 FOV 映射更精确
+    float dx = armor.center.x - cx_;
+    float dy = armor.center.y - cy_;
+    float yaw_offset_rad = std::atan2(dx, camera_fx_);
+    float pitch_offset_rad = std::atan2(dy, camera_fy_);
+    float yaw = camera_yaw - yaw_offset_rad * 180.0f / static_cast<float>(M_PI);
+    float pitch = camera_pitch - pitch_offset_rad * 180.0f / static_cast<float>(M_PI);
 
-    // 2. 优先级比较
-    bool is_better = false;
-    if (best_number == "-1") { // 首次有效目标
-      is_better = true;
-    } else {
-      bool current_is_priority1 = (armor.classfication_result == "1");
-      bool best_is_priority1 = (best_number == "1");
+    // 距离估算：分别用装甲板宽度和高度通过针孔模型估算，最后取平均
+    float distance = -1.0f;
+    if (armor.type != ArmorType::INVALID) {
+      // 透视补偿：目标偏离光轴时像素宽度/高度被压缩
+      float cos_angle_x = std::cos(yaw_offset_rad);
+      float cos_angle_y = std::cos(pitch_offset_rad);
 
-      if (current_is_priority1 && !best_is_priority1) {
-        is_better = true; // 当前类型1 > 其他类型
-      } else if (!current_is_priority1 && best_is_priority1) {
-        is_better = false; // 当前类型非1 < 类型1
-      } else { // 同类优先级
-        if (abs_yaw < abs(best_yaw)) {
-          is_better = true;
-        } else if (abs_yaw == abs(best_yaw)) {
-          // 若yaw相同，可选比较置信度（假设armor.confidence存在）
-          is_better = (armor.confidence > best_confi);
+      // 宽度估算（需知 small/large 类型）
+      float pixel_width = armor.right_light.center.x - armor.left_light.center.x;
+      if (pixel_width >= 1.0f) {
+        float real_width = (armor.type == ArmorType::SMALL) ? SMALL_ARMOR_WIDTH : LARGE_ARMOR_WIDTH;
+        distance = camera_fx_ * real_width / pixel_width * cos_angle_x;
+      }
+      // 高度估算（左右灯条长度取平均，small/large 高度相同）+ 取平均
+      float pixel_height = (armor.left_light.length + armor.right_light.length) / 2.0f;
+      if (pixel_height >= 1.0f) {
+        float dist_from_height = camera_fy_ * SMALL_ARMOR_HEIGHT / pixel_height * cos_angle_y;
+        if (distance >= 0.0f) {
+          distance = (distance + dist_from_height) / 2.0f;
+        } else {
+          distance = dist_from_height;
         }
       }
     }
 
-    // 3. 更新最佳目标
-    if (is_better) {
-      best_number = armor.classfication_result;
-      best_yaw = yaw;
-      best_confi = armor.confidence; // 假设存在confidence字段
-    }
+    rm_interfaces::msg::Blind b;
+    b.number = armor.classfication_result;
+    b.yaw = yaw;
+    b.pitch = pitch;
+    b.confi = armor.confidence;
+    b.distance = distance;
+    blinds_msg_.blinds.push_back(b);
   }
-  blind_msg_.header = img_msg->header;
-  blind_msg_.is_left = (camera_name_ == "left")?true:false;
-  blind_msg_.number = best_number;
-  blind_msg_.yaw = best_yaw;
-  blind_msg_.confi = best_confi;
-  blind_pub_->publish(blind_msg_);
+
+  blinds_pub_->publish(blinds_msg_);
 }
 
 std::unique_ptr<Detector> ArmorDetectorNode::initDetector() {
@@ -185,22 +238,59 @@ std::unique_ptr<Detector> ArmorDetectorNode::initDetector() {
   return detector;
 }
 
+void ArmorDetectorNode::cameraInfoCallback(
+    const sensor_msgs::msg::CameraInfo::SharedPtr msg) {
+  FYT_ASSERT_MSG(msg->d.size() >= 5,
+                 "Distortion model requires 5+ coefficients");
+  auto K = cv::Mat(3, 3, CV_64FC1, (void *)msg->k.data()).clone();
+  auto D = cv::Mat(1, 5, CV_64FC1, (void *)msg->d.data()).clone();
+
+  // 用标定内参更新焦距和主点，提高精度
+  camera_fx_ = static_cast<float>(K.at<double>(0, 0));
+  camera_fy_ = static_cast<float>(K.at<double>(1, 1));
+  cx_ = static_cast<float>(K.at<double>(0, 2));
+  cy_ = static_cast<float>(K.at<double>(1, 2));
+  image_width_ = static_cast<int>(msg->width);
+  image_height_ = static_cast<int>(msg->height);
+
+  // 计算去畸变映射表（畸变为零时跳过，避免无效的 per-frame remap）
+  bool has_distortion = false;
+  for (int i = 0; i < static_cast<int>(msg->d.size()); ++i) {
+    if (std::abs(msg->d[i]) > 1e-9) { has_distortion = true; break; }
+  }
+  if (has_distortion) {
+    cv::initUndistortRectifyMap(K, D, cv::Mat(), K,
+        cv::Size(msg->width, msg->height), CV_16SC2, map1_, map2_);
+    undistort_ready_ = true;
+  }
+
+  FYT_INFO("blind_detector",
+           "Camera info received: fx=%.1f fy=%.1f %dx%d%s",
+           camera_fx_, camera_fy_, msg->width, msg->height,
+           has_distortion ? ", undistortion enabled" : ", no distortion");
+
+  // 只订阅一次
+  cam_info_sub_.reset();
+}
+
 std::vector<Armor> ArmorDetectorNode::detectArmors(
     const sensor_msgs::msg::Image::ConstSharedPtr &img_msg) {
   // Convert ROS img to cv::Mat
   auto img = cv_bridge::toCvShare(img_msg, "rgb8")->image;
 
-  auto armors = detector_->detect(img);
+  // 去畸变（camera_info 到达且畸变非零时启用）
+  cv::Mat undistorted;
+  if (undistort_ready_) {
+    cv::remap(img, undistort_buffer_, map1_, map2_, cv::INTER_LINEAR);
+    undistorted = undistort_buffer_;
+  } else {
+    undistorted = img;
+  }
 
-  auto final_time = this->now();
-  auto latency = (final_time - img_msg->header.stamp).seconds() * 1000;
+  auto armors = detector_->detect(undistorted);
 
   // Publish debug info
   if (debug_) {
-    /* binary_img_pub_.publish(
-        cv_bridge::CvImage(img_msg->header, "mono8", detector_->binary_img)
-            .toImageMsg()); */
-
     // Sort lights and armors data by x coordinate
     std::sort(detector_->debug_lights.data.begin(),
               detector_->debug_lights.data.end(),
@@ -216,26 +306,21 @@ std::vector<Armor> ArmorDetectorNode::detectArmors(
     lights_data_pub_->publish(detector_->debug_lights);
     armors_data_pub_->publish(detector_->debug_armors);
 
-    /*
-    if (!armors.empty()) {
-      auto all_num_img = detector_->getAllNumbersImage();
-      number_img_pub_.publish(
-          *cv_bridge::CvImage(img_msg->header, "mono8", all_num_img)
-               .toImageMsg());
-    }
-    */
+    detector_->drawResults(undistorted);
 
-    detector_->drawResults(img);
-
-    // Draw latency
-    std::stringstream latency_ss;
-    latency_ss << "Frame rate: " << std::fixed << std::setprecision(2) << 1000/latency + 15
-               << " fps";
-    auto latency_s = latency_ss.str();
-    cv::putText(img, latency_s, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX,
+    // Draw FPS (基于帧间隔而非处理延迟)
+    static rclcpp::Time last_frame_time = this->now();
+    auto now = this->now();
+    double frame_interval = (now - last_frame_time).seconds();
+    last_frame_time = now;
+    double fps = frame_interval > 0.0 ? 1.0 / frame_interval : 0.0;
+    std::stringstream fps_ss;
+    fps_ss << "Frame rate: " << std::fixed << std::setprecision(1) << fps << " fps";
+    auto fps_s = fps_ss.str();
+    cv::putText(undistorted, fps_s, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX,
                 1.0, cv::Scalar(0, 255, 0), 2);
     result_img_pub_.publish(
-        cv_bridge::CvImage(img_msg->header, "rgb8", img).toImageMsg());
+        cv_bridge::CvImage(img_msg->header, "rgb8", undistorted).toImageMsg());
   }
 
   return armors;
@@ -276,22 +361,15 @@ ArmorDetectorNode::onSetParameters(std::vector<rclcpp::Parameter> parameters) {
 }
 
 void ArmorDetectorNode::createDebugPublishers() noexcept {
-  // 为每个 camera_name 动态构造 debug 话题
-  const std::string ns = std::string("blind_detector/") + camera_name_ + "/";
   lights_data_pub_ = this->create_publisher<rm_interfaces::msg::DebugLights>(
-      ns + "debug_lights", 10);
+      "~/debug_lights", 10);
   armors_data_pub_ = this->create_publisher<rm_interfaces::msg::DebugArmors>(
-      ns + "debug_armors", 10);
+      "~/debug_armors", 10);
 
-  this->declare_parameter(ns + "result_img.jpeg_quality", 50);
-  //this->declare_parameter(ns + "binary_img.jpeg_quality", 50);
+  this->declare_parameter("result_img.jpeg_quality", 50);
 
-  //binary_img_pub_ =
-  //    image_transport::create_publisher(this, ns + "binary_img");
-  //number_img_pub_ =
-  //    image_transport::create_publisher(this, ns + "number_img");
   result_img_pub_ =
-      image_transport::create_publisher(this, ns + "result_img");
+      image_transport::create_publisher(this, "~/result_img");
 }
 
 
@@ -318,12 +396,7 @@ void ArmorDetectorNode::setModeCallback(
   }
 
   auto createImageSub = [this]() {
-    if (img_sub_ == nullptr) {
-      img_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
-          "image_raw", rclcpp::SensorDataQoS(),
-          std::bind(&ArmorDetectorNode::imageCallback, this,
-                    std::placeholders::_1));
-    }
+    img_mf_sub_.subscribe(this, "image_raw", rmw_qos_profile_sensor_data);
   };
 
   switch (mode) {
@@ -338,7 +411,7 @@ void ArmorDetectorNode::setModeCallback(
     break;
   }
   default: {
-    img_sub_.reset();
+    img_mf_sub_.unsubscribe();
   }
   }
 

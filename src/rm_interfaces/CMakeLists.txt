@@ -40,6 +40,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/GimbalTrajectory.msg"
   "msg/Blind.msg"
   "msg/BuffTrackerState.msg"
+  "msg/Blinds.msg"
   # Track history and prediction window messages
   "msg/TrackWindowState.msg"
   "msg/TrackHistoryWindow.msg"
@@ -53,6 +54,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SetMode.srv"
   "srv/SolveBallistic.srv"
   "srv/SetTargetRobot.srv"
+  "srv/GetCameraInfo.srv"
   "action/TrajectoryPlan.action"
   DEPENDENCIES
     std_msgs

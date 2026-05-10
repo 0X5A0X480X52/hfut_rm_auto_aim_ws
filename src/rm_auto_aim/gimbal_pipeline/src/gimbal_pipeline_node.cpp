@@ -299,6 +299,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
 
   RCLCPP_INFO(get_logger(), "Parameters declared, now loading...");
 
+  enable_blind_ = declare_parameter("enable_blind", true);
+
   // ── 2. Read common / tracker params ──
   target_frame_ = get_parameter("target_frame").as_string();
   source_frame_ = get_parameter("source_frame").as_string();
@@ -446,6 +448,15 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       get_parameter("selector.sticky_lock_frames").as_int();
     selection_config_.sticky_lost_frames =
       get_parameter("selector.sticky_lost_frames").as_int();
+  // 补盲相机参数
+  selection_config_.main_camera_frame =
+      get_parameter("selector.main_camera_frame").as_string();
+  guidance_end_yaw_threshold_deg_ =
+      get_parameter("selector.guidance_end_yaw_threshold").as_double();
+  enable_guidance_timeout_ =
+      get_parameter("selector.enable_guidance_timeout").as_bool();
+  blind_target_timeout_ =
+      get_parameter("selector.blind_target_timeout").as_double();
   initSelectionStrategy();
 
   RCLCPP_INFO(get_logger(), "[GimbalPipelineNode] selector_strategy: %s", selector_strategy_name_.c_str());
@@ -456,6 +467,13 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   current_gimbal_strategy_name_ =
       get_parameter("controller.strategy").as_string();
   ballistic_mode_ = get_parameter("controller.ballistic_mode").as_string();
+  max_yaw_v_ = get_parameter("controller.max_yaw_v").as_double();
+  max_pitch_v_ = get_parameter("controller.max_pitch_v").as_double();
+  guidance_accel_limit_ = get_parameter("controller.guidance_accel_limit").as_double();
+  enable_guidance_velocity_smoothing_ =
+      get_parameter("controller.enable_guidance_velocity_smoothing").as_bool();
+  guidance_constant_yaw_v_ =
+      get_parameter("controller.guidance_constant_yaw_v").as_double();
 
   // TF2 buffer was already created above (shared with TFHandler & MessageFilter).
 
@@ -895,14 +913,15 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   rclcpp::QoS sensor_qos(10);
   sensor_qos.best_effort();
 
-  // Subscribe: /armor_detector/armors via tf2_ros::MessageFilter
+  // Subscribe: armors via tf2_ros::MessageFilter
+  // Use relative topic name to allow launch file remapping.
+  // For blind camera setup, launch file remaps this to /armor_fusion/armors.
   // This mirrors armor_solver's design: the callback is only invoked once
   // the TF transform at the message's timestamp is available in tf2_buffer_,
   // guaranteeing that TFHandler::transform_pose() uses the correct
   // camera-frame → odom transform (the one that matches the image capture
   // moment) and not a stale/future transform that would cause drift.
-  armors_sub_.subscribe(this, "/armor_detector/armors",
-                         rmw_qos_profile_sensor_data);
+  armors_sub_.subscribe(this, "armors", rmw_qos_profile_sensor_data);
   tf2_filter_ = std::make_shared<tf2_armor_filter>(
       armors_sub_, *tf2_buffer_, target_frame_,
       /*queue_size=*/10,
@@ -921,6 +940,26 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       "camera_info", rclcpp::SensorDataQoS(),
       std::bind(&GimbalPipelineNode::cameraInfoCallback, this,
                 std::placeholders::_1));
+
+  // Subscribe: blind detector (for guidance without camera intrinsics)
+  // Supports multiple blind cameras — each topic gets its own subscription.
+  // Topic names are configured via the "blind.topics" string-array parameter.
+  blind_topics_ = declare_parameter("blind.topics",
+      std::vector<std::string>{"/blind_camera_1/blinds"});
+  blind_sync_timeout_ = declare_parameter("blind.sync_timeout", 0.05);
+  blind_selection_strategy_name_ = declare_parameter("blind.selector.strategy", "min_yaw");
+
+  for (const auto &topic : blind_topics_) {
+    if (topic.empty()) continue;
+    auto sub = create_subscription<rm_interfaces::msg::Blinds>(
+      topic, rclcpp::SensorDataQoS(),
+      [this, topic](const rm_interfaces::msg::Blinds::SharedPtr msg) {
+        blindCallback(msg, topic);
+      });
+    blind_subs_.push_back(std::move(sub));
+    RCLCPP_INFO(get_logger(), "Subscribed to blind topic: %s", topic.c_str());
+  }
+  initBlindSelectionStrategies();
 
   // Publish: cmd_gimbal (output to serial driver)
   gimbal_cmd_pub_ = create_publisher<rm_interfaces::msg::GimbalCmd>(
@@ -958,18 +997,12 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     debug_maneuver_pub_ =
         create_publisher<visualization_msgs::msg::MarkerArray>(
             "~/maneuver_markers", 10);
-    if (fire_prob_image_debug_enable_) {
-      debug_fire_plane_image_pub_ = create_publisher<sensor_msgs::msg::Image>(
-        "~/fire_debug/armor_plane", rclcpp::SensorDataQoS());
-      debug_fire_normal_image_pub_ = create_publisher<sensor_msgs::msg::Image>(
-        "~/fire_debug/normal_view", rclcpp::SensorDataQoS());
-    }
-    if (tracker_2d_image_debug_enable_) {
-      debug_tracker_2d_image_pub_ =
-          create_publisher<sensor_msgs::msg::CompressedImage>(
-              "~/tracker_debug/TwoD_tracks/compressed", rclcpp::SensorDataQoS());
-    }
   }
+
+  // Blind target debug publisher (always-on, publishes every control cycle)
+  debug_blind_target_pub_ =
+      create_publisher<rm_interfaces::msg::Blind>(
+          "~/debug_blind_target", rclcpp::SensorDataQoS());
 
   RCLCPP_INFO(get_logger(), "Subscribed to topics: /armor_detector/armors (with TF sync), /joint_states, camera_info");
 
@@ -1067,6 +1100,8 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("ukf.single_obs_update_weight_pos", 0.05);
   declare_parameter("ukf.enable_innovation_gating", false);
   declare_parameter("ukf.innovation_gate_chi2_threshold", 9.49);
+  declare_parameter("ukf.r_source", "CONFIG");
+  declare_parameter("ukf.pnp_cov_yaw_inflation", 2.0);
 
   // Motion
   declare_parameter("motion.translation_model", "CA");
@@ -1455,6 +1490,11 @@ void GimbalPipelineNode::declareTargetSelectorParameters() {
   declare_parameter("selector.priority_robot_ids", std::vector<std::string>{});
   declare_parameter("selector.sticky_lock_frames", 3);
   declare_parameter("selector.sticky_lost_frames", 3);
+  // 补盲相机参数
+  declare_parameter("selector.main_camera_frame", "camera_optical_frame");
+  declare_parameter("selector.guidance_end_yaw_threshold", 5.0);  // 引导结束的 yaw deviation 阈值（度）
+  declare_parameter("selector.enable_guidance_timeout", false);   // 是否启用引导超时检测，默认关闭
+  declare_parameter("selector.blind_target_timeout", 0.4);       // 补盲目标消失超时（秒），默认 0.4s
 }
 
 void GimbalPipelineNode::declareGimbalControllerParameters() {
@@ -1462,6 +1502,11 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.control_rate", 250.0);
   declare_parameter("controller.strategy", "current");
   declare_parameter("controller.ballistic_mode", "service");
+  declare_parameter("controller.max_yaw_v", 90.0);
+  declare_parameter("controller.max_pitch_v", 30.0);
+  declare_parameter("controller.guidance_accel_limit", 10.0);  // 引导模式角加速度限幅 (rad/s²)
+  declare_parameter("controller.enable_guidance_velocity_smoothing", true);  // 是否启用引导速度平滑，默认开启
+  declare_parameter("controller.guidance_constant_yaw_v", M_PI);  // 速度平滑关闭时的恒定 yaw 角速度 (rad/s)，默认 π ≈ 180°/s
 
   // Solver
   declare_parameter("controller.solver.shooting_range_width", 0.135);
@@ -1750,6 +1795,9 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("ukf.enable_innovation_gating").as_bool();
   c.ukf.innovation_gate_chi2_threshold =
       get_parameter("ukf.innovation_gate_chi2_threshold").as_double();
+  c.ukf.r_source = get_parameter("ukf.r_source").as_string();
+  c.ukf.pnp_cov_yaw_inflation =
+      get_parameter("ukf.pnp_cov_yaw_inflation").as_double();
 
   auto tm_str = get_parameter("motion.translation_model").as_string();
   c.motion.translation_model = translation_model_from_string(tm_str);
@@ -2870,6 +2918,7 @@ void GimbalPipelineNode::armorsCallback(
         std::make_shared<rm_interfaces::msg::TrackedRobots>(tracked_msg);
     latest_selected_target_id_ = sel_result.robot_id;
     latest_selected_confidence_ = sel_result.confidence;
+    latest_control_mode_ = sel_result.control_mode;
     latest_update_time_ = now();  // record local clock for processing_delay
   }
 
@@ -2964,6 +3013,9 @@ rm_interfaces::msg::TrackedRobots GimbalPipelineNode::buildTrackedRobotsMsg(
     if (robot.robot_id.empty()) {
       continue;
     }
+
+    // 设置来源相机
+    robot.source_frame = tracker_manager_->get_source_frame(rid);
 
     tracked_msg.robots.push_back(robot);
   }
@@ -3137,24 +3189,43 @@ void GimbalPipelineNode::initSelectionStrategy() {
 SelectionResult GimbalPipelineNode::selectTargetInternal(
     const rm_interfaces::msg::TrackedRobots &robots) {
   selection_config_.current_target_id = current_target_id_;
+  selection_config_.reference_yaw = current_yaw_;
 
-  auto result = selection_strategy_->selectTarget(robots, selection_config_);
-
-  if (!result.has_value()) {
-    current_target_id_ = "";
-    return SelectionResult();
+  // 筛选主相机目标
+  std::vector<const rm_interfaces::msg::TrackedRobot*> main_camera_targets;
+  for (const auto& robot : robots.robots) {
+    if (robot.source_frame == selection_config_.main_camera_frame) {
+      main_camera_targets.push_back(&robot);
+    }
   }
 
-  bool target_changed = (result->robot_id != current_target_id_);
-  if (target_changed) {
-    RCLCPP_INFO(get_logger(), "Target changed: %s -> %s (yaw_dev=%.3f, dist=%.2f)",
-                current_target_id_.empty() ? "none" : current_target_id_.c_str(),
-                result->robot_id.c_str(), result->yaw_deviation,
-                result->distance);
-    current_target_id_ = result->robot_id;
+  // 主相机有目标 → 精确自瞄
+  if (!main_camera_targets.empty()) {
+    rm_interfaces::msg::TrackedRobots main_robots;
+    main_robots.header = robots.header;
+    for (const auto* robot : main_camera_targets) {
+      main_robots.robots.push_back(*robot);
+    }
+
+    auto result = selection_strategy_->selectTarget(main_robots, selection_config_);
+    if (result.has_value()) {
+      result->control_mode = SelectionResult::MODE_PRECISE_AIM;
+      result->source_frame = selection_config_.main_camera_frame;
+
+      if (result->robot_id != current_target_id_) {
+        RCLCPP_INFO(get_logger(), "Target changed: %s -> %s (main camera, yaw_dev=%.3f, dist=%.2f)",
+                    current_target_id_.empty() ? "none" : current_target_id_.c_str(),
+                    result->robot_id.c_str(), result->yaw_deviation, result->distance);
+        current_target_id_ = result->robot_id;
+      }
+      return *result;
+    }
   }
 
-  return *result;
+  // 无目标
+  current_target_id_ = "";
+  guidance_target_locked_ = false;
+  return SelectionResult();
 }
 
 /* ================================================================ */
@@ -3397,8 +3468,23 @@ void GimbalPipelineNode::updateGimbalState() {
     tf2::fromMsg(msg_q, tf_q);
     double roll, pitch, yaw;
     tf2::Matrix3x3(tf_q).getRPY(roll, pitch, yaw);
-    current_yaw_ = yaw;
-    current_pitch_ = -pitch;
+    double new_yaw = yaw;
+    double new_pitch = -pitch;
+
+    // 用位置差分估计当前角速度（用于引导模式速度平滑起步）
+    const double dt = 1.0 / control_rate_;
+    double dy = new_yaw - current_yaw_;
+    while (dy > M_PI) dy -= 2.0 * M_PI;
+    while (dy < -M_PI) dy += 2.0 * M_PI;
+    current_yaw_v_measured_ = dy / dt;
+
+    double dp = new_pitch - current_pitch_;
+    while (dp > M_PI) dp -= 2.0 * M_PI;
+    while (dp < -M_PI) dp += 2.0 * M_PI;
+    current_pitch_v_measured_ = dp / dt;
+
+    current_yaw_ = new_yaw;
+    current_pitch_ = new_pitch;
   } catch (const tf2::TransformException &) {
     // fall through — use joint_states values
   }
@@ -3406,10 +3492,12 @@ void GimbalPipelineNode::updateGimbalState() {
 
 void GimbalPipelineNode::buildControlContextFromCache(
     gimbal_controller::GimbalControlContext & context,
-    std::string & selected_id) {
+    std::string & selected_id,
+    SelectionResult::ControlMode & control_mode) {
   context.is_tracking = false;
   context.is_temp_lost = false;
   context.is_maneuvering = false;
+  control_mode = SelectionResult::MODE_NO_TARGET;
 
   // Read shared state (thread-safe)
   rm_interfaces::msg::TrackedRobots::SharedPtr robots;
@@ -3418,6 +3506,7 @@ void GimbalPipelineNode::buildControlContextFromCache(
     std::lock_guard<std::mutex> lock(pipeline_mutex_);
     robots = latest_tracked_robots_;
     selected_id = latest_selected_target_id_;
+    control_mode = latest_control_mode_;
     data_update_time = latest_update_time_;
   }
 
@@ -3542,7 +3631,9 @@ void GimbalPipelineNode::publishFireAdviceDebug(
 /* ================================================================ */
 
 void GimbalPipelineNode::timerCallback() {
+  // ──────────────────────────────────────────────────────────────────────
   // Step 0: 核心类可用性检查
+  // ──────────────────────────────────────────────────────────────────────
   if (!gimbal_control_core_) {
     RCLCPP_ERROR_THROTTLE(
       get_logger(), *get_clock(), 2000,
@@ -3550,30 +3641,461 @@ void GimbalPipelineNode::timerCallback() {
     return;
   }
 
-  gimbal_controller::GimbalControlContext context;
-  context.current_time = now();
-
-  // Step 1: 控制禁用时发布 idle 命令并早返回
+  // ──────────────────────────────────────────────────────────────────────
+  // Step 1: 控制禁用时发布 idle 命令
+  // ──────────────────────────────────────────────────────────────────────
   if (!enable_) {
-    const auto idle_result = gimbal_control_core_->compute(
-      context, current_gimbal_strategy_name_, std::string(), false);
-    gimbal_cmd_pub_->publish(idle_result.cmd);
+    publishIdleCommand();
     return;
   }
 
-  // Step 2: 更新云台姿态并填充控制上下文基础字段
+  // ──────────────────────────────────────────────────────────────────────
+  // Step 2: 更新云台姿态并填充控制上下文
+  // ──────────────────────────────────────────────────────────────────────
   updateGimbalState();
+
+  gimbal_controller::GimbalControlContext context;
+  context.current_time = now();
   context.current_yaw = current_yaw_;
   context.current_pitch = current_pitch_;
   context.bullet_speed = bullet_speed_;
 
+  // ──────────────────────────────────────────────────────────────────────
   // Step 3: 从共享缓存构建目标上下文
+  // ──────────────────────────────────────────────────────────────────────
   std::string selected_id;
-  buildControlContextFromCache(context, selected_id);
+  SelectionResult::ControlMode control_mode = SelectionResult::MODE_NO_TARGET;
+  buildControlContextFromCache(context, selected_id, control_mode);
 
-  // Step 4: 核心类统一生成命令（strategy + finalize + filter + audit）
+  // ──────────────────────────────────────────────────────────────────────
+  // Step 4: 根据控制模式生成命令
+  // ──────────────────────────────────────────────────────────────────────
+  rm_interfaces::msg::GimbalCmd cmd;
+
+  switch (control_mode) {
+    case SelectionResult::MODE_NO_TARGET:
+      {
+        // 已锁定引导目标 → 跳过候选收集，直接用锁定值，避免覆盖 latest_blind_msg_
+        if (guidance_target_locked_) {
+          cmd = buildBlindGuidanceCommand();
+        } else {
+          auto best_blind = collectBlindCandidates();
+          if (best_blind) {
+            if (!blind_guidance_active_) {
+              blind_guidance_active_ = true;
+              guidance_vel_initialized_ = false;
+              guidance_start_time_ = this->now();  // Path 2 引导开始时间
+            }
+            latest_blind_msg_ = best_blind;
+            cmd = buildBlindGuidanceCommand();
+          } else {
+            blind_guidance_active_ = false;
+            cmd = buildNoTargetCommand();
+          }
+        }
+      }
+      break;
+    default:
+      blind_guidance_active_ = false;
+      guidance_target_locked_ = false;
+      cmd = buildNormalCommand(context, selected_id);
+      break;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Step 5: 填充各相机目标检测状态掩码
+  // ──────────────────────────────────────────────────────────────────────
+  cmd.target_sources = computeTargetSources(
+      control_mode == SelectionResult::MODE_PRECISE_AIM);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Step 6: 发布控制命令
+  // ──────────────────────────────────────────────────────────────────────
+  gimbal_cmd_pub_->publish(cmd);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Step 7: 发布补盲目标调试信息（每个控制周期持续发布）
+  // ──────────────────────────────────────────────────────────────────────
+  rm_interfaces::msg::Blind dbg;
+  if (guidance_target_locked_) {
+    dbg.number = current_target_id_;
+    dbg.yaw = static_cast<float>(guidance_locked_yaw_deg_.load());
+    dbg.pitch = static_cast<float>(guidance_locked_pitch_deg_.load());
+    dbg.confi = -1.0f;  // 锁定态标识
+  } else if (blind_guidance_active_ && latest_blind_msg_) {
+    dbg = *latest_blind_msg_;
+  }
+  // 无补盲目标时发布默认值 (number="", yaw=0, pitch=0, confi=0)
+  debug_blind_target_pub_->publish(dbg);
+}
+
+/* ================================================================ */
+/*  timerCallback helper functions                                   */
+/* ================================================================ */
+
+void GimbalPipelineNode::initBlindSelectionStrategies() {
+  // 最小 yaw 偏差策略
+  blind_selection_strategies_["min_yaw"] =
+    [](const std::vector<rm_interfaces::msg::Blind::SharedPtr> &candidates,
+       double current_yaw) -> rm_interfaces::msg::Blind::SharedPtr {
+      return *std::min_element(candidates.begin(), candidates.end(),
+        [current_yaw](const rm_interfaces::msg::Blind::SharedPtr &a,
+                       const rm_interfaces::msg::Blind::SharedPtr &b) {
+          double diff_a = a->yaw * M_PI / 180.0 - current_yaw;
+          while (diff_a > M_PI) diff_a -= 2.0 * M_PI;
+          while (diff_a < -M_PI) diff_a += 2.0 * M_PI;
+          double diff_b = b->yaw * M_PI / 180.0 - current_yaw;
+          while (diff_b > M_PI) diff_b -= 2.0 * M_PI;
+          while (diff_b < -M_PI) diff_b += 2.0 * M_PI;
+          return std::abs(diff_a) < std::abs(diff_b);
+        });
+    };
+
+  // 最近距离策略：选择 distance 最小的目标
+  blind_selection_strategies_["closest"] =
+    [](const std::vector<rm_interfaces::msg::Blind::SharedPtr> &candidates,
+       double /*current_yaw*/) -> rm_interfaces::msg::Blind::SharedPtr {
+      // 分离有有效距离和无效距离的候选
+      std::vector<rm_interfaces::msg::Blind::SharedPtr> with_dist;
+      for (const auto &c : candidates) {
+        if (c->distance > 0.0f) {
+          with_dist.push_back(c);
+        }
+      }
+      // 有有效距离则选最近的；否则取第一个候选
+      if (!with_dist.empty()) {
+        return *std::min_element(with_dist.begin(), with_dist.end(),
+          [](const rm_interfaces::msg::Blind::SharedPtr &a,
+             const rm_interfaces::msg::Blind::SharedPtr &b) {
+            return a->distance < b->distance;
+          });
+      }
+      return candidates.front();
+    };
+
+  RCLCPP_INFO(get_logger(),
+    "Blind selection strategy: %s", blind_selection_strategy_name_.c_str());
+}
+
+uint8_t GimbalPipelineNode::computeTargetSources(bool main_camera_has_target) {
+  uint8_t sources = 0;
+
+  // Main camera (front) → Bit 3
+  if (main_camera_has_target) {
+    sources |= 0b1000;
+  }
+
+  // Blind cameras — check per-topic buffer for non-empty detections
+  std::lock_guard<std::mutex> lock(blind_buffer_mutex_);
+  const auto now_stamp = this->now();
+  for (const auto &[topic, msg] : blind_latest_per_topic_) {
+    if (!msg || msg->blinds.empty()) continue;
+
+    // 超时过滤：如果该相机长时间未收到有效检测，认为目标已消失
+    auto it = blind_last_nonempty_time_.find(topic);
+    if (it == blind_last_nonempty_time_.end()) continue;
+    if ((now_stamp - it->second).seconds() > blind_target_timeout_) continue;
+
+    // Extract camera number from topic name: "blind_camera_X/blinds"
+    auto pos = topic.find("blind_camera_");
+    if (pos == std::string::npos) continue;
+    pos += 13;  // skip "blind_camera_"
+    if (pos >= topic.size()) continue;
+    int cam_num = topic[pos] - '0';
+    if (cam_num < 1 || cam_num > 3) continue;
+
+    switch (cam_num) {
+      case 1: sources |= 0b0100; break;  // rear  → Bit 2
+      case 2: sources |= 0b0010; break;  // left  → Bit 1
+      case 3: sources |= 0b0001; break;  // right → Bit 0 (future)
+    }
+  }
+
+  return sources;
+}
+
+rm_interfaces::msg::Blind::SharedPtr GimbalPipelineNode::collectBlindCandidates() {
+  // 第一步：收集每个相机最新的非空 Blinds（按 Blinds.header.stamp 同步过滤）
+  std::vector<rm_interfaces::msg::Blinds::SharedPtr> fresh_blinds_msgs;
+  {
+    std::lock_guard<std::mutex> lock(blind_buffer_mutex_);
+    const auto now_stamp = this->now();
+    for (const auto &[topic, msg] : blind_latest_per_topic_) {
+      if (!msg || msg->blinds.empty()) continue;
+      // 超时过滤：若该相机在 blind_target_timeout_ 内未收到有效检测，跳过
+      auto it = blind_last_nonempty_time_.find(topic);
+      if (it == blind_last_nonempty_time_.end()) continue;
+      if ((now_stamp - it->second).seconds() > blind_target_timeout_) continue;
+      fresh_blinds_msgs.push_back(msg);
+    }
+  }
+
+  // 多相机同步过滤：仅当配置了多个补盲相机时，才用 blind_sync_timeout_ 过滤时间戳不一致的帧
+  if (blind_topics_.size() > 1 && fresh_blinds_msgs.size() > 1) {
+    auto newest = std::max_element(fresh_blinds_msgs.begin(), fresh_blinds_msgs.end(),
+      [](const rm_interfaces::msg::Blinds::SharedPtr &a,
+         const rm_interfaces::msg::Blinds::SharedPtr &b) {
+        return rclcpp::Time(a->header.stamp) < rclcpp::Time(b->header.stamp);
+      });
+    const auto newest_stamp = rclcpp::Time((*newest)->header.stamp);
+    fresh_blinds_msgs.erase(
+      std::remove_if(fresh_blinds_msgs.begin(), fresh_blinds_msgs.end(),
+        [&](const rm_interfaces::msg::Blinds::SharedPtr &msg) {
+          return std::abs((newest_stamp - rclcpp::Time(msg->header.stamp)).seconds()) >
+                 blind_sync_timeout_;
+        }),
+      fresh_blinds_msgs.end());
+  }
+
+  // 第二步：把所有相机的所有装甲板平铺成候选列表
+  std::vector<rm_interfaces::msg::Blind::SharedPtr> fresh_blinds;
+  for (const auto &msg : fresh_blinds_msgs) {
+    for (const auto &b : msg->blinds) {
+      fresh_blinds.push_back(std::make_shared<rm_interfaces::msg::Blind>(b));
+    }
+  }
+
+  if (fresh_blinds.empty()) return nullptr;
+  if (fresh_blinds.size() == 1) return fresh_blinds[0];
+
+  auto it = blind_selection_strategies_.find(blind_selection_strategy_name_);
+  if (it == blind_selection_strategies_.end()) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000,
+      "Unknown blind selection strategy '%s', using min_yaw fallback",
+      blind_selection_strategy_name_.c_str());
+    it = blind_selection_strategies_.find("min_yaw");
+  }
+  return it->second(fresh_blinds, current_yaw_);
+}
+
+void GimbalPipelineNode::publishIdleCommand() {
+  gimbal_controller::GimbalControlContext context;
+  context.current_time = now();
+  const auto idle_result = gimbal_control_core_->compute(
+    context, current_gimbal_strategy_name_, std::string(), false);
+  auto cmd = idle_result.cmd;
+  cmd.is_guiding = false;
+  cmd.target_sources = computeTargetSources(false);
+  gimbal_cmd_pub_->publish(cmd);
+}
+
+rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildBlindGuidanceCommand() {
+  rm_interfaces::msg::GimbalCmd cmd;
+
+  // 检查引导是否完成（基于锁定 yaw 偏差 + 超时）
+  if (guidance_target_locked_) {
+    double elapsed = (this->now() - guidance_start_time_).seconds();
+    bool timeout = enable_guidance_timeout_ && (elapsed > GUIDANCE_TIMEOUT);
+
+    double locked_yaw_rad = guidance_locked_yaw_deg_ * M_PI / 180.0;
+    double yaw_dev = std::abs(locked_yaw_rad - current_yaw_);
+    while (yaw_dev > M_PI) yaw_dev = 2.0 * M_PI - yaw_dev;
+    double threshold_rad = guidance_end_yaw_threshold_deg_ * M_PI / 180.0;
+    bool complete = (yaw_dev < threshold_rad);
+
+    // 补盲目标消失检测：在 blind_target_timeout_ 内锁定目标（按 current_target_id_）是否仍存在
+    bool target_gone = false;
+    if (!current_target_id_.empty()) {
+      target_gone = true;  // 先假设消失，确认有匹配目标则设为 false
+      std::lock_guard<std::mutex> lock(blind_buffer_mutex_);
+      const auto now_stamp = this->now();
+      for (const auto &[topic, msg] : blind_latest_per_topic_) {
+        if (!msg || msg->blinds.empty()) continue;
+        auto time_it = blind_last_nonempty_time_.find(topic);
+        if (time_it == blind_last_nonempty_time_.end()) continue;
+        if ((now_stamp - time_it->second).seconds() > blind_target_timeout_) continue;
+        // 该相机有有效检测，检查是否包含锁定的目标编号
+        for (const auto &b : msg->blinds) {
+          if (b.number == current_target_id_) {
+            target_gone = false;
+            break;
+          }
+        }
+        if (!target_gone) break;
+      }
+    }
+
+    if (timeout || complete || target_gone) {
+      blind_guidance_active_ = false;
+      guidance_target_locked_ = false;
+      if (timeout) {
+        RCLCPP_WARN(get_logger(), "Blind guidance timeout (%.1fs)", elapsed);
+      } else if (target_gone) {
+        RCLCPP_INFO(get_logger(),
+                    "Blind guidance aborted: target %s no longer detected",
+                    current_target_id_.c_str());
+      } else {
+        RCLCPP_INFO(get_logger(), "Blind guidance complete (yaw_dev=%.2f deg)",
+                    yaw_dev * 180.0 / M_PI);
+      }
+      return buildNoTargetCommand();
+    }
+
+    // 主相机检测到目标 → 立即结束引导
+    {
+      std::lock_guard<std::mutex> lock(pipeline_mutex_);
+      if (latest_tracked_robots_) {
+        for (const auto& r : latest_tracked_robots_->robots) {
+          if (r.source_frame == selection_config_.main_camera_frame) {
+            blind_guidance_active_ = false;
+            guidance_target_locked_ = false;
+            RCLCPP_INFO(get_logger(),
+                        "Blind guidance stopped: main camera detected target");
+            return buildNoTargetCommand();
+          }
+        }
+      }
+    }
+  }
+
+  // 第一帧锁定 yaw/pitch，后续保持锁定值不变
+  if (!guidance_target_locked_ && latest_blind_msg_ && latest_blind_msg_->number != "-1") {
+    guidance_locked_yaw_deg_ = latest_blind_msg_->yaw;
+    guidance_locked_pitch_deg_ = latest_blind_msg_->pitch;
+    guidance_target_locked_ = true;
+    current_target_id_ = latest_blind_msg_->number;
+    RCLCPP_INFO(get_logger(),
+                "Blind guidance started: target %s (locked yaw=%.1f, pitch=%.1f)",
+                current_target_id_.c_str(), guidance_locked_yaw_deg_.load(),
+                guidance_locked_pitch_deg_.load());
+  }
+
+  // 无有效消息且未锁定 → 无法引导
+  if (!guidance_target_locked_) {
+    return buildNoTargetCommand();
+  }
+
+  // 使用锁定的目标角度（即使最新 blind msg 暂时无效也不中断引导）
+  const double target_yaw_rad = guidance_locked_yaw_deg_ * M_PI / 180.0;
+  const double target_pitch_rad = guidance_locked_pitch_deg_ * M_PI / 180.0;
+
+  // 计算相对于当前云台的 yaw/pitch 偏差（每帧实时更新）
+  double yaw_diff_rad = target_yaw_rad - current_yaw_;
+  while (yaw_diff_rad > M_PI) yaw_diff_rad -= 2.0 * M_PI;
+  while (yaw_diff_rad < -M_PI) yaw_diff_rad += 2.0 * M_PI;
+
+  double pitch_diff_rad = target_pitch_rad - current_pitch_;
+  while (pitch_diff_rad > M_PI) pitch_diff_rad -= 2.0 * M_PI;
+  while (pitch_diff_rad < -M_PI) pitch_diff_rad += 2.0 * M_PI;
+
+  // Fill command fields
+  cmd.header.stamp = now();
+  cmd.yaw = target_yaw_rad * 180.0 / M_PI;
+  cmd.yaw_diff = yaw_diff_rad * 180.0 / M_PI;
+  cmd.pitch = target_pitch_rad * 180.0 / M_PI;
+  cmd.pitch_diff = pitch_diff_rad * 180.0 / M_PI;
+  cmd.target_id = latest_blind_msg_ ? latest_blind_msg_->number : current_target_id_;
+  cmd.distance = enable_blind_ ? -2 : -1;  // -2 为补盲引导模式哨兵值，告知下位机响应引导指令
+  cmd.fire_advice = false;
+  cmd.is_guiding = true;
+  cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_BLIND_CAMERA_RESULT;  // -2
+
+  // 引导速度平滑控制：从实测速度起步，加速度限幅，全程速度限幅
+  applyGuidanceVelocitySmoothing(yaw_diff_rad, pitch_diff_rad, cmd);
+
+  return cmd;
+}
+
+void GimbalPipelineNode::applyGuidanceVelocitySmoothing(
+    double yaw_diff_rad, double pitch_diff_rad,
+    rm_interfaces::msg::GimbalCmd &cmd) {
+  const double dt = 1.0 / control_rate_;
+
+  if (!enable_guidance_velocity_smoothing_) {
+    // 恒定速度模式：yaw 以固定角速度旋转，pitch 为 0
+    double yaw_v_deg = std::copysign(guidance_constant_yaw_v_, yaw_diff_rad) * 180.0 / M_PI;
+    if (max_yaw_v_ > 0.0) {
+      yaw_v_deg = std::clamp(yaw_v_deg, -max_yaw_v_, max_yaw_v_);
+    }
+    cmd.yaw_v = yaw_v_deg;
+    cmd.pitch_v = 0.0;
+    cmd.yaw_a = 0.0;
+    cmd.pitch_a = 0.0;
+    guidance_vel_initialized_ = false;  // 重置标志，切回平滑模式时重新初始化
+    return;
+  }
+
+  // 首次进入引导时，从实测角速度开始，避免速度跳变
+  if (!guidance_vel_initialized_) {
+    last_guidance_cmd_yaw_v_ = current_yaw_v_measured_;
+    last_guidance_cmd_pitch_v_ = current_pitch_v_measured_;
+    guidance_vel_initialized_ = true;
+  }
+
+  // 计算目标速度：基于匀减速停车约束 v_target = sign(err) * sqrt(2*a*|err|)
+  // 当 |err| 减小时 sqrt(2*a*|err|) 自然减小，实现平滑减速停车
+  double yaw_v_target = std::copysign(
+      std::sqrt(2.0 * guidance_accel_limit_ * std::abs(yaw_diff_rad)), yaw_diff_rad);
+
+  double pitch_v_target = std::copysign(
+      std::sqrt(2.0 * guidance_accel_limit_ * std::abs(pitch_diff_rad)), pitch_diff_rad);
+
+  // 加速度限幅：平滑过渡到目标速度
+  double yaw_v_cmd = last_guidance_cmd_yaw_v_;
+  yaw_v_cmd += std::clamp(yaw_v_target - yaw_v_cmd,
+                          -guidance_accel_limit_ * dt,
+                           guidance_accel_limit_ * dt);
+
+  double pitch_v_cmd = last_guidance_cmd_pitch_v_;
+  pitch_v_cmd += std::clamp(pitch_v_target - pitch_v_cmd,
+                            -guidance_accel_limit_ * dt,
+                             guidance_accel_limit_ * dt);
+
+  last_guidance_cmd_yaw_v_ = yaw_v_cmd;
+  last_guidance_cmd_pitch_v_ = pitch_v_cmd;
+
+  // 硬件保护：硬限幅（使用原有 max_yaw_v_ / max_pitch_v_ 作为最终安全边界）
+  double yaw_v_deg = yaw_v_cmd * 180.0 / M_PI;
+  double pitch_v_deg = pitch_v_cmd * 180.0 / M_PI;
+  if (max_yaw_v_ > 0.0) {
+    yaw_v_deg = std::clamp(yaw_v_deg, -max_yaw_v_, max_yaw_v_);
+  }
+  if (max_pitch_v_ > 0.0) {
+    pitch_v_deg = std::clamp(pitch_v_deg, -max_pitch_v_, max_pitch_v_);
+  }
+
+  cmd.yaw_v = yaw_v_deg;
+  cmd.pitch_v = pitch_v_deg;
+  cmd.yaw_a = 0.0;
+  cmd.pitch_a = 0.0;
+}
+
+void GimbalPipelineNode::blindCallback(
+    const rm_interfaces::msg::Blinds::SharedPtr msg,
+    const std::string &topic) {
+  std::lock_guard<std::mutex> lock(blind_buffer_mutex_);
+  blind_latest_per_topic_[topic] = msg;
+  // 记录非空检测的时间戳（使用消息时间，使多相机时间线一致）
+  if (!msg->blinds.empty()) {
+    blind_last_nonempty_time_[topic] = rclcpp::Time(msg->header.stamp);
+  }
+}
+
+rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildNoTargetCommand() {
+  rm_interfaces::msg::GimbalCmd cmd;
+  cmd.header.stamp = now();
+  cmd.yaw = 0.0;
+  cmd.pitch = 0.0;
+  cmd.yaw_diff = 0.0;
+  cmd.pitch_diff = 0.0;
+  cmd.yaw_v = 0.0;
+  cmd.pitch_v = 0.0;
+  cmd.yaw_a = 0.0;
+  cmd.pitch_a = 0.0;
+  cmd.distance = -1.0;
+  cmd.fire_advice = false;
+  cmd.is_guiding = false;
+  cmd.target_id = "";
+  cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_NO_VALID_MEASUREMENT;  // -1
+  return cmd;
+}
+
+rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildNormalCommand(
+    const gimbal_controller::GimbalControlContext &context,
+    const std::string &selected_id) {
   const auto control_result = gimbal_control_core_->compute(
     context, current_gimbal_strategy_name_, selected_id, true);
+
   if (!control_result.strategy_found) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 2000,
@@ -3581,15 +4103,14 @@ void GimbalPipelineNode::timerCallback() {
       current_gimbal_strategy_name_.c_str());
   }
 
-  // Step 5: 发布控制命令
-  gimbal_cmd_pub_->publish(control_result.cmd);
+  rm_interfaces::msg::GimbalCmd cmd = control_result.cmd;
+  cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_NORMAL_MEASUREMENT;  // 1
+  cmd.is_guiding = false;
 
-  // Step 6: 发布调试信息（audit + marker）
+  // 发布调试信息
   if (debug_mode_ && debug_delay_audit_pub_) {
-    publishDelayAuditDebug(
-      context,
-      control_result.delay_audit,
-      current_gimbal_strategy_name_);
+    publishDelayAuditDebug(context, control_result.delay_audit,
+                           current_gimbal_strategy_name_);
   }
 
   if (debug_mode_ && debug_fire_advice_pub_) {
@@ -3602,11 +4123,12 @@ void GimbalPipelineNode::timerCallback() {
   if (debug_mode_ && debug_armor_selection_pub_ && control_result.has_tracking) {
     publishArmorSelectionDebug(context, current_gimbal_strategy_name_);
   }
-
   if (debug_mode_ && control_result.has_tracking) {
-    publishGimbalMarkers(context.target_robot, control_result.cmd, control_result.fire_advice_debug);
+    publishGimbalMarkers(context.target_robot, cmd, control_result.fire_advice_debug);
     publishFireProbabilityDebugImages(context.target_robot.header, control_result.fire_advice_debug);
   }
+
+  return cmd;
 }
 
 /* ================================================================ */

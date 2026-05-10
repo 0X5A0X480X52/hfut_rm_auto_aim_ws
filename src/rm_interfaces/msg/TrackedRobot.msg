@@ -103,3 +103,6 @@ uint32 engageable_mask
 
 # 可击打模块数量（建议与 engageable_mask 置位个数一致）
 int32 engageable_count
+
+# 目标来源相机 frame_id (首次检测到该机器人的相机)
+string source_frame

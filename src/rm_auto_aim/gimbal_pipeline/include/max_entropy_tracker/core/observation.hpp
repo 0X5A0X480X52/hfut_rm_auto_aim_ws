@@ -45,6 +45,13 @@ struct ObservationData {
   double confidence = 1.0;
   std::optional<double> timestamp;
 
+  // 来源相机 frame_id
+  std::string source_frame;
+
+  // PnP 协方差传播结果（可选，仅在 r_source=PNP_COVARIANCE 时有效）
+  std::optional<Eigen::Matrix3d> pos_covariance;  // 3x3 位置协方差 (x,y,z)
+  std::optional<double> yaw_variance;              // yaw 方差
+
   // 2D evidence (Phase 1: append-only, optional)
   std::optional<ImageObservation2D> image;
   std::optional<int> track2d_id;

@@ -64,7 +64,7 @@ protected:
     auto sanitized = data;
     if (sanitized.mode != rm_interfaces::msg::GimbalCmd::MODE_NORMAL_MEASUREMENT) {
       sanitized.fire_advice = false;
-      sanitized.distance = -1.0;
+      sanitized.distance = 0.0;
       sanitized.pitch_v = 0.0;
       sanitized.yaw_v = 0.0;
       sanitized.pitch_a = 0.0;

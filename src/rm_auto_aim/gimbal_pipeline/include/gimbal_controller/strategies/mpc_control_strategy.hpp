@@ -301,6 +301,33 @@ private:
     const mpc::QPResult & result,
     double applied_regularization);
 
+  // solve() 步骤辅助方法
+
+  /// 目标丢失时重置所有跟踪状态，防止旧历史污染新目标
+  void resetTrackingState();
+
+  /// 从目标速度变化时间戳感知地更新机动因子 alpha
+  void updateManeuverAlpha(const Eigen::Vector3d & target_linear_velocity,
+                           const rclcpp::Time & target_stamp);
+
+  /// 填充延迟审计快照
+  void fillDelayAudit(const delay_management::MpcDelayResult & mpc_delay,
+                      const GimbalControlContext & context);
+
+  /// 求解 QP，失败时自动尝试 Hessian 正则化重试。返回 true 表示成功
+  bool solveQpWithRetry(Eigen::MatrixXd & H, const Eigen::VectorXd & f,
+                        const Eigen::VectorXd & lb, const Eigen::VectorXd & ub,
+                        const Eigen::Vector4d & x0, const Eigen::VectorXd & X_ref,
+                        const GimbalControlContext & context,
+                        double & applied_regularization,
+                        mpc::QPResult & result);
+
+  /// 从 MPC 解构建 GimbalCmd：一步预测 + rad→deg 单位转换
+  rm_interfaces::msg::GimbalCmd buildGimbalCmd(const Eigen::Vector4d & x0,
+                                                const Eigen::Vector2d & u_opt,
+                                                const GimbalControlContext & context,
+                                                double distance);
+
   // MPC 核心模块
   mpc::GimbalDynamicsModel dynamics_model_;
   mpc::QPSolver qp_solver_;
@@ -350,8 +377,6 @@ private:
   bool uses_delayed_b_model_{false};
   bool warned_double_compensation_{false};
 
-  // 上一步求解结果 (warmstart)
-  Eigen::VectorXd U_prev_;
   // 机动自适应权重衰减参数
   bool enable_maneuver_adapt_{false};
   double a_max_{3.0};             // 差分速度归一化上限 (m/s²)

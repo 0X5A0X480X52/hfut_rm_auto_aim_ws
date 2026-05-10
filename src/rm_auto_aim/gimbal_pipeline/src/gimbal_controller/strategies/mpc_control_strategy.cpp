@@ -580,91 +580,105 @@ void MpcControlStrategy::rebuildMatrices()
   matrices_dirty_ = false;
 }
 
-rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
+// ============================================================================
+// solve() 辅助方法
+// ============================================================================
+
+void MpcControlStrategy::resetTrackingState()
+{
+  has_prev_state_ = false;
+  alpha_ema_ = 0.0;
+  has_prev_velocity_ = false;
+  has_prev_w_steps_ = false;
+  prev_w_steps_.resize(0);
+  resetNumericalStates();
+}
+
+void MpcControlStrategy::updateManeuverAlpha(
+  const Eigen::Vector3d & target_linear_velocity,
+  const rclcpp::Time & target_stamp)
+{
+  if (has_prev_velocity_ && target_stamp != prev_target_stamp_) {
+    double delta_t = (target_stamp - prev_target_stamp_).seconds();
+    if (delta_t > 1e-6) {
+      double accel_est = (target_linear_velocity - prev_target_velocity_).norm() / delta_t;
+      double alpha_raw = std::clamp(accel_est / a_max_, 0.0, 1.0);
+      alpha_ema_ = eta_ * alpha_raw + (1.0 - eta_) * alpha_ema_;
+    }
+  }
+  if (!has_prev_velocity_ || target_stamp != prev_target_stamp_) {
+    prev_target_velocity_ = target_linear_velocity;
+    prev_target_stamp_ = target_stamp;
+    has_prev_velocity_ = true;
+  }
+}
+
+bool MpcControlStrategy::solveQpWithRetry(
+  Eigen::MatrixXd & H, const Eigen::VectorXd & f,
+  const Eigen::VectorXd & lb, const Eigen::VectorXd & ub,
+  const Eigen::Vector4d & x0, const Eigen::VectorXd & X_ref,
+  const GimbalControlContext & context,
+  double & applied_regularization,
+  mpc::QPResult & result)
+{
+  auto solveOnce = [&](const Eigen::MatrixXd & H_mat) {
+    if (enable_fov_constraint_) {
+      result = solveFovConstrainedQP(H_mat, f, lb, ub, x0, X_ref, context);
+    } else {
+      result = qp_solver_.solve(H_mat, f, lb, ub);
+      if (result.success) {
+        result.active_bound_size = countActiveBounds(result.U, lb, ub, diagnostics_active_tol_);
+        result.active_set_size = result.active_bound_size;
+      }
+    }
+  };
+
+  solveOnce(H);
+  if (!result.success && enable_hessian_regularization_ && hessian_reg_retry_on_fail_) {
+    const double retry_eps = std::clamp(
+      applied_regularization * hessian_reg_retry_scale_,
+      hessian_reg_eps_abs_, hessian_reg_eps_max_);
+    Eigen::MatrixXd H_retry = H;
+    applyHessianRegularization(H_retry, retry_eps);
+
+    solveOnce(H_retry);
+    if (result.success) {
+      H = std::move(H_retry);
+      applied_regularization = retry_eps;
+    }
+  }
+
+  return result.success;
+}
+
+rm_interfaces::msg::GimbalCmd MpcControlStrategy::buildGimbalCmd(
+  const Eigen::Vector4d & x0, const Eigen::Vector2d & u_opt,
+  const GimbalControlContext & context, double distance)
+{
+  auto x_next = dynamics_model_.predict(x0, u_opt);
+
+  double cmd_yaw = angles::normalize_angle(x_next(0));
+  double cmd_pitch = x_next(1);
+  double yaw_diff = angles::normalize_angle(cmd_yaw - context.current_yaw);
+  double pitch_diff = cmd_pitch - context.current_pitch;
+
+  rm_interfaces::msg::GimbalCmd cmd;
+  cmd.yaw = cmd_yaw * 180.0 / M_PI;
+  cmd.pitch = cmd_pitch * 180.0 / M_PI;
+  cmd.yaw_diff = yaw_diff * 180.0 / M_PI;
+  cmd.pitch_diff = pitch_diff * 180.0 / M_PI;
+  cmd.yaw_v = x_next(2) * 180.0 / M_PI;
+  cmd.pitch_v = x_next(3) * 180.0 / M_PI;
+  cmd.yaw_a = u_opt(0) * 180.0 / M_PI;
+  cmd.pitch_a = u_opt(1) * 180.0 / M_PI;
+  cmd.distance = std::max(distance, 0.0);
+  return cmd;
+}
+
+void MpcControlStrategy::fillDelayAudit(
+  const delay_management::MpcDelayResult & mpc_delay,
   const GimbalControlContext & context)
 {
-  const auto target_robot =
-    fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(context.target_robot);
-  const Eigen::Vector3d target_linear_velocity =
-    fyt::auto_aim::robot_description::TrackedRobotUsage::linearVelocity(target_robot);
-  const double target_distance =
-    fyt::auto_aim::robot_description::TrackedRobotUsage::centerDistance(target_robot);
-
-  // std::cout << "MPC Control Strategy: Solving for target robot at position ("
-  //           << context.target_robot.center_position.x << ", "
-  //           << context.target_robot.center_position.y << ", "
-  //           << context.target_robot.center_position.z << ") with velocity ("
-  //           << context.target_robot.center_velocity.x << ", "
-  //           << context.target_robot.center_velocity.y << ", "
-  //           << context.target_robot.center_velocity.z << ") and yaw "
-  //           << context.target_robot.yaw << " rad." 
-  //           << context.target_robot.yaw_velocity << " rad/s." << std::endl;
-
-  if (!context.is_tracking && !context.is_temp_lost) {
-    std::cout << "Target not in tracking/temp_lost state, skipping MPC control.  " << std::endl;
-    markDelayAuditInvalid(getName(), false);
-    has_prev_state_ = false;
-    U_prev_.resize(0);
-    // 机动自适应状态重置：防止旧跟踪历史污染新跟踪
-    alpha_ema_ = 0.0;
-    has_prev_velocity_ = false;
-    has_prev_w_steps_ = false;
-    prev_w_steps_.resize(0);
-    resetNumericalStates();
-    return createIdleCmd();
-  }
-
-  // 1) 差分估计角速度
-  double yaw_dot = 0.0;
-  double pitch_dot = 0.0;
-  if (has_prev_state_) {
-    yaw_dot = angles::normalize_angle(context.current_yaw - prev_yaw_) / dt_;
-    pitch_dot = (context.current_pitch - prev_pitch_) / dt_;
-  }
-  prev_yaw_ = context.current_yaw;
-  prev_pitch_ = context.current_pitch;
-  has_prev_state_ = true;
-
-  // 2) 组装当前状态
-  mpc::GimbalDynamicsModel::StateVector x0;
-  x0 << context.current_yaw, context.current_pitch, yaw_dot, pitch_dot;
-
-  // 3) 构建/缓存 QP 结构矩阵
-  if (matrices_dirty_) {
-    rebuildMatrices();
-  }
-
-  // 4) 生成参考轨迹
-  const double yaw_feedforward_s =
-    std::clamp(yaw_feedforward_k_s_, 0.0, max_yaw_feedforward_s_);
-  const bool use_delayed_reference =
-    enable_delay_compensation_ || (yaw_feedforward_s > 1e-6);
-
-  const bool allow_muzzle_compensation =
-    enable_delay_compensation_ && trigger_to_muzzle_s_ > 1e-6;
-  delay_management::DelayRawInputs delay_raw;
-  delay_raw.current_time = context.current_time;
-  delay_raw.observation_stamp = context.target_stamp;
-  delay_raw.prediction_extra_s = prediction_delay_s_;
-  delay_raw.control_latency_s = control_delay_s_;
-  delay_raw.trigger_to_muzzle_s = trigger_to_muzzle_s_;
-  delay_raw.max_processing_delay_s = max_processing_delay_s_;
-
-  const auto mpc_delay = delay_manager_.computeMpcDelay(
-    delay_raw,
-    dt_,
-    enable_delay_compensation_,
-    uses_delayed_b_model_,
-    allow_muzzle_compensation);
-
-  if (mpc_delay.double_compensation_risk && !warned_double_compensation_) {
-    RCLCPP_WARN(
-      rclcpp::get_logger("MpcControlStrategy"),
-      "Detected potential delay double-compensation: delayed B is active, so fire control delay "
-      "compensation has been disabled.");
-    warned_double_compensation_ = true;
-  }
-
   DelayAuditSnapshot audit;
   audit.strategy_name = getName();
   audit.tracking = context.is_tracking;
@@ -678,25 +692,86 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   audit.uses_delayed_b = mpc_delay.uses_delayed_b;
   audit.double_compensation_risk = mpc_delay.double_compensation_risk;
   markDelayAuditValid(audit);
+}
 
+rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
+  const GimbalControlContext & context)
+{
+  // 预处理目标状态
+  const auto target_robot =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(context.target_robot);
+  const Eigen::Vector3d target_linear_velocity =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::linearVelocity(target_robot);
+  const double target_distance =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::centerDistance(target_robot);
+
+  // 未跟踪时返回空闲指令
+  if (!context.is_tracking && !context.is_temp_lost) {
+    markDelayAuditInvalid(getName(), false);
+    resetTrackingState();
+    return createIdleCmd();
+  }
+
+  // 差分估计角速度
+  double yaw_dot = 0.0, pitch_dot = 0.0;
+  if (has_prev_state_) {
+    yaw_dot = angles::normalize_angle(context.current_yaw - prev_yaw_) / dt_;
+    pitch_dot = (context.current_pitch - prev_pitch_) / dt_;
+  }
+  prev_yaw_ = context.current_yaw;
+  prev_pitch_ = context.current_pitch;
+  has_prev_state_ = true;
+
+  // 构建初始状态
+  Eigen::Vector4d x0;
+  x0 << context.current_yaw, context.current_pitch, yaw_dot, pitch_dot;
+
+  // 参数变更时重建 QP 结构矩阵
+  if (matrices_dirty_) rebuildMatrices();
+
+  // 延迟语义计算
+  const double yaw_feedforward_s =
+    std::clamp(yaw_feedforward_k_s_, 0.0, max_yaw_feedforward_s_);
+  const bool use_delayed_reference =
+    enable_delay_compensation_ || (yaw_feedforward_s > 1e-6);
+
+  delay_management::DelayRawInputs delay_raw;
+  delay_raw.current_time = context.current_time;
+  delay_raw.observation_stamp = context.target_stamp;
+  delay_raw.prediction_extra_s = prediction_delay_s_;
+  delay_raw.control_latency_s = control_delay_s_;
+  delay_raw.trigger_to_muzzle_s = trigger_to_muzzle_s_;
+  delay_raw.max_processing_delay_s = max_processing_delay_s_;
+
+  const bool allow_muzzle_compensation =
+    enable_delay_compensation_ && trigger_to_muzzle_s_ > 1e-6;
+  const auto mpc_delay = delay_manager_.computeMpcDelay(
+    delay_raw, dt_, enable_delay_compensation_,
+    uses_delayed_b_model_, allow_muzzle_compensation);
+
+  if (mpc_delay.double_compensation_risk && !warned_double_compensation_) {
+    RCLCPP_WARN(rclcpp::get_logger("MpcControlStrategy"),
+      "检测到延迟双重补偿风险: delayed B 已激活, fire control 延迟补偿已被禁用.");
+    warned_double_compensation_ = true;
+  }
+
+  fillDelayAudit(mpc_delay, context);
+
+  // 生成参考轨迹
   Eigen::VectorXd X_ref;
   if (use_delayed_reference) {
     mpc::DelayCompConfig delay_cfg;
     delay_cfg.base_delay_s = mpc_delay.base_reference_delay_s;
     delay_cfg.ctrl_delay_s = mpc_delay.control_latency_s;
     delay_cfg.flight_time_iters = flight_time_iters_;
-
     X_ref = ref_generator_.generateWithDelay(
-      target_robot, context.current_yaw, context.current_pitch,
-      N_, dt_, delay_cfg);
+      target_robot, context.current_yaw, context.current_pitch, N_, dt_, delay_cfg);
   } else {
     X_ref = ref_generator_.generate(
       target_robot, context.current_yaw, context.current_pitch, N_, dt_);
   }
 
-  Eigen::Vector4d state_rms = Eigen::Vector4d::Ones();
-  Eigen::Vector2d control_rms = Eigen::Vector2d::Ones();
-  Eigen::Vector2d delta_control_rms = Eigen::Vector2d::Ones();
+  // 数值归一化尺度
   const bool use_normalization = enable_normalization_;
   const bool use_rms_normalization =
     use_normalization && normalization_mode_ == NormalizationMode::RMS;
@@ -707,171 +782,63 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
 
   if (use_rms_normalization) {
     const Eigen::VectorXd free_error = A_pred_ * x0 - X_ref;
-    state_rms = updateAndGetStateRms(free_error);
-    control_rms = getControlRms();
-    delta_control_rms = getDeltaControlRms();
-    state_scale = state_rms;
-    control_scale = control_rms;
-    delta_control_scale = delta_control_rms;
+    state_scale = updateAndGetStateRms(free_error);
+    control_scale = getControlRms();
+    delta_control_scale = getDeltaControlRms();
   }
 
-  // 5) 构造 QP
-  //    机动自适应模式: 通过对 UKF center_velocity 做时间戳感知差分计算机动因子 alpha,
-  //    用 alpha 衰减远期 Q 权重并放大 R 正则项。
-  //    如果禁用 (enable_maneuver_adapt_==false) 或目标未机动, 则与原实现完全一致。
+  // 构建 QP 权重矩阵
+  Eigen::MatrixXd Q_eff, R_eff, S_eff;
+  bool is_maneuver_path = false;
+
   if (enable_maneuver_adapt_ && context.is_maneuvering) {
-    // 仅当 target_stamp 发生变化时才更新 alpha（tracker 20-30 Hz 更新，控制环 250 Hz）
-    const rclcpp::Time & cur_stamp = context.target_stamp;
-    if (has_prev_velocity_ && cur_stamp != prev_target_stamp_) {
-      double delta_t = (cur_stamp - prev_target_stamp_).seconds();
-      if (delta_t > 1e-6) {
-        Eigen::Vector3d vel_now = target_linear_velocity;
-        double accel_est = (vel_now - prev_target_velocity_).norm() / delta_t;
-        double alpha_raw = std::clamp(accel_est / a_max_, 0.0, 1.0);
-        alpha_ema_ = eta_ * alpha_raw + (1.0 - eta_) * alpha_ema_;
-      }
-    }
-    // 更新历史状态（仅 stamp 变化时）
-    if (!has_prev_velocity_ || cur_stamp != prev_target_stamp_) {
-      prev_target_velocity_ = target_linear_velocity;
-      prev_target_stamp_ = cur_stamp;
-      has_prev_velocity_ = true;
-    }
+    is_maneuver_path = true;
+    updateManeuverAlpha(target_linear_velocity, context.target_stamp);
 
-    // 构建自适应权重矩阵
-    Eigen::MatrixXd Q_eff;
-    if (use_normalization) {
-      Q_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightQ(
-        N_, q_yaw_, q_pitch_, q_yaw_vel_, q_pitch_vel_,
-        alpha_ema_, tau_, state_scale, rms_epsilon_);
-    } else {
-      Q_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightQ(
-        N_, q_yaw_, q_pitch_, q_yaw_vel_, q_pitch_vel_, alpha_ema_, tau_);
-    }
-    if (enable_weighting_) {
-      Eigen::VectorXd w_steps = buildWeightingVector(context, X_ref);
-      mpc::GimbalDynamicsModel::scaleBlockDiagonalQ(Q_eff, w_steps);
-    }
-    Eigen::MatrixXd R_eff;
-    if (use_normalization) {
-      R_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightR(
-        N_, r_yaw_, r_pitch_, alpha_ema_, r_scale_maneuver_, control_scale, rms_epsilon_);
-    } else {
-      R_eff = mpc::GimbalDynamicsModel::buildAdaptiveWeightR(
-        N_, r_yaw_, r_pitch_, alpha_ema_, r_scale_maneuver_);
-    }
-    Eigen::MatrixXd S_eff = use_normalization
+    Q_eff = use_normalization
+      ? mpc::GimbalDynamicsModel::buildAdaptiveWeightQ(
+          N_, q_yaw_, q_pitch_, q_yaw_vel_, q_pitch_vel_,
+          alpha_ema_, tau_, state_scale, rms_epsilon_)
+      : mpc::GimbalDynamicsModel::buildAdaptiveWeightQ(
+          N_, q_yaw_, q_pitch_, q_yaw_vel_, q_pitch_vel_, alpha_ema_, tau_);
+
+    R_eff = use_normalization
+      ? mpc::GimbalDynamicsModel::buildAdaptiveWeightR(
+          N_, r_yaw_, r_pitch_, alpha_ema_, r_scale_maneuver_, control_scale, rms_epsilon_)
+      : mpc::GimbalDynamicsModel::buildAdaptiveWeightR(
+          N_, r_yaw_, r_pitch_, alpha_ema_, r_scale_maneuver_);
+
+    S_eff = use_normalization
       ? mpc::GimbalDynamicsModel::buildWeightS(
-      N_, s_yaw_, s_pitch_, delta_control_scale, rms_epsilon_)
+          N_, s_yaw_, s_pitch_, delta_control_scale, rms_epsilon_)
       : S_blk_;
+  } else {
+    alpha_ema_ = 0.0;
 
-    Eigen::MatrixXd H;
-    Eigen::VectorXd f;
-    mpc::GimbalDynamicsModel::buildQP(A_pred_, B_ctrl_, D_, Q_eff, R_eff, S_eff, x0, X_ref, H, f);
+    Q_eff = use_normalization
+      ? mpc::GimbalDynamicsModel::buildWeightQ(
+          N_, q_yaw_, q_pitch_, q_yaw_vel_, q_pitch_vel_, state_scale, rms_epsilon_)
+      : Q_blk_;
 
-    double applied_regularization = 0.0;
-    if (enable_hessian_regularization_) {
-      applied_regularization = computeRegularizationEpsilon(H);
-      applyHessianRegularization(H, applied_regularization);
-    }
+    R_eff = use_normalization
+      ? mpc::GimbalDynamicsModel::buildWeightR(
+          N_, r_yaw_, r_pitch_, control_scale, rms_epsilon_)
+      : R_blk_;
 
-    // 6) 框约束 + 可选 FOV 软约束
-    int n_vars = 2 * N_;
-    Eigen::VectorXd lb = Eigen::VectorXd::Constant(n_vars, -max_accel_);
-    Eigen::VectorXd ub = Eigen::VectorXd::Constant(n_vars, max_accel_);
-
-    // 7) 求解 QP
-    mpc::QPResult result;
-    if (enable_fov_constraint_) {
-      result = solveFovConstrainedQP(H, f, lb, ub, x0, X_ref, context);
-    } else {
-      result = qp_solver_.solve(H, f, lb, ub);
-      if (result.success) {
-        result.active_bound_size = countActiveBounds(result.U, lb, ub, diagnostics_active_tol_);
-        result.active_set_size = result.active_bound_size;
-      }
-    }
-
-    if (!result.success && enable_hessian_regularization_ && hessian_reg_retry_on_fail_) {
-      const double retry_eps = std::clamp(
-        applied_regularization * hessian_reg_retry_scale_,
-        hessian_reg_eps_abs_, hessian_reg_eps_max_);
-      Eigen::MatrixXd H_retry = H;
-      applyHessianRegularization(H_retry, retry_eps);
-
-      if (enable_fov_constraint_) {
-        result = solveFovConstrainedQP(H_retry, f, lb, ub, x0, X_ref, context);
-      } else {
-        result = qp_solver_.solve(H_retry, f, lb, ub);
-        if (result.success) {
-          result.active_bound_size = countActiveBounds(result.U, lb, ub, diagnostics_active_tol_);
-          result.active_set_size = result.active_bound_size;
-        }
-      }
-
-      if (result.success) {
-        H = std::move(H_retry);
-        applied_regularization = retry_eps;
-      }
-    }
-
-    fillAndLogDiagnostics(
-      true, H, Q_eff, R_eff, S_eff, lb, ub, result, applied_regularization);
-
-    if (!result.success) {
-      std::cout << "MPC QP solve failed (maneuver-adapt), fallback to direct aim.  " << std::endl;
-      return fallbackDirectAim(context, X_ref);
-    }
-
-    U_prev_ = result.U;
-
-    // 8) 提取首步控制量
-    mpc::GimbalDynamicsModel::ControlVector u_opt(result.U(0), result.U(1));
-    if (use_rms_normalization) {
-      updateControlHistory(u_opt);
-    }
-    auto x_next = dynamics_model_.predict(x0, u_opt);
-    double cmd_yaw   = angles::normalize_angle(x_next(0));
-    double cmd_pitch = x_next(1);
-
-    double yaw_diff   = angles::normalize_angle(cmd_yaw   - context.current_yaw);
-    double pitch_diff = cmd_pitch - context.current_pitch;
-
-    const double distance = target_distance;
-
-    rm_interfaces::msg::GimbalCmd cmd;
-    cmd.yaw        = cmd_yaw   * 180.0 / M_PI;
-    cmd.pitch      = cmd_pitch * 180.0 / M_PI;
-    cmd.yaw_diff   = yaw_diff   * 180.0 / M_PI;
-    cmd.pitch_diff = pitch_diff * 180.0 / M_PI;
-    cmd.yaw_v      = x_next(2) * 180.0 / M_PI;
-    cmd.pitch_v    = x_next(3) * 180.0 / M_PI;
-    cmd.yaw_a      = u_opt(0) * 180.0 / M_PI;
-    cmd.pitch_a    = u_opt(1) * 180.0 / M_PI;
-    cmd.distance   = std::max(distance, 0.0);
-    return cmd;
+    S_eff = use_normalization
+      ? mpc::GimbalDynamicsModel::buildWeightS(
+          N_, s_yaw_, s_pitch_, delta_control_scale, rms_epsilon_)
+      : S_blk_;
   }
 
-  // 禁用机动自适应或目标未机动时: 使用原有缓存的 Q_blk_, R_blk_
-  // 同时将 alpha_ema_ 归零，避免机动结束后残留高权重污染下一次跟踪
-  alpha_ema_ = 0.0;
+  if (enable_weighting_) {
+    mpc::GimbalDynamicsModel::scaleBlockDiagonalQ(
+        Q_eff, buildWeightingVector(context, X_ref));
+  }
+
+  // 组装 QP 并求解
   Eigen::MatrixXd H;
   Eigen::VectorXd f;
-  Eigen::MatrixXd Q_eff = use_normalization
-    ? mpc::GimbalDynamicsModel::buildWeightQ(
-    N_, q_yaw_, q_pitch_, q_yaw_vel_, q_pitch_vel_, state_scale, rms_epsilon_)
-    : Q_blk_;
-  if (enable_weighting_) {
-    Eigen::VectorXd w_steps = buildWeightingVector(context, X_ref);
-    mpc::GimbalDynamicsModel::scaleBlockDiagonalQ(Q_eff, w_steps);
-  }
-  Eigen::MatrixXd R_eff = use_normalization
-    ? mpc::GimbalDynamicsModel::buildWeightR(N_, r_yaw_, r_pitch_, control_scale, rms_epsilon_)
-    : R_blk_;
-  Eigen::MatrixXd S_eff = use_normalization
-    ? mpc::GimbalDynamicsModel::buildWeightS(
-    N_, s_yaw_, s_pitch_, delta_control_scale, rms_epsilon_)
-    : S_blk_;
   mpc::GimbalDynamicsModel::buildQP(A_pred_, B_ctrl_, D_, Q_eff, R_eff, S_eff, x0, X_ref, H, f);
 
   double applied_regularization = 0.0;
@@ -880,95 +847,25 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     applyHessianRegularization(H, applied_regularization);
   }
 
-  // 6) 框约束 + 可选 FOV 软约束
-  int n_vars = 2 * N_;
+  const int n_vars = 2 * N_;
   Eigen::VectorXd lb = Eigen::VectorXd::Constant(n_vars, -max_accel_);
   Eigen::VectorXd ub = Eigen::VectorXd::Constant(n_vars, max_accel_);
 
-  // 7) 求解 QP
   mpc::QPResult result;
-  if (enable_fov_constraint_) {
-    result = solveFovConstrainedQP(H, f, lb, ub, x0, X_ref, context);
-  } else {
-    result = qp_solver_.solve(H, f, lb, ub);
-    if (result.success) {
-      result.active_bound_size = countActiveBounds(result.U, lb, ub, diagnostics_active_tol_);
-      result.active_set_size = result.active_bound_size;
-    }
-  }
-
-  if (!result.success && enable_hessian_regularization_ && hessian_reg_retry_on_fail_) {
-    const double retry_eps = std::clamp(
-      applied_regularization * hessian_reg_retry_scale_,
-      hessian_reg_eps_abs_, hessian_reg_eps_max_);
-    Eigen::MatrixXd H_retry = H;
-    applyHessianRegularization(H_retry, retry_eps);
-
-    if (enable_fov_constraint_) {
-      result = solveFovConstrainedQP(H_retry, f, lb, ub, x0, X_ref, context);
-    } else {
-      result = qp_solver_.solve(H_retry, f, lb, ub);
-      if (result.success) {
-        result.active_bound_size = countActiveBounds(result.U, lb, ub, diagnostics_active_tol_);
-        result.active_set_size = result.active_bound_size;
-      }
-    }
-
-    if (result.success) {
-      H = std::move(H_retry);
-      applied_regularization = retry_eps;
-    }
-  }
-
-  fillAndLogDiagnostics(
-    false, H, Q_eff, R_eff, S_eff, lb, ub, result, applied_regularization);
-
-  if (!result.success) {
-    // QP 求解失败: 回退到弹道直瞄
-    std::cout << "MPC QP solve failed, fallback to direct aim.  " << std::endl;
+  if (!solveQpWithRetry(H, f, lb, ub, x0, X_ref, context, applied_regularization, result)) {
+    std::cout << "MPC QP 求解失败"
+              << (is_maneuver_path ? " (机动自适应)" : "")
+              << ", 回退到直瞄." << std::endl;
     return fallbackDirectAim(context, X_ref);
   }
 
-  // 存储 warmstart
-  U_prev_ = result.U;
+  fillAndLogDiagnostics(
+    is_maneuver_path, H, Q_eff, R_eff, S_eff, lb, ub, result, applied_regularization);
 
-  // 8) 提取首步控制量, 推算期望 yaw/pitch
-  mpc::GimbalDynamicsModel::ControlVector u_opt(result.U(0), result.U(1));
-  if (use_rms_normalization) {
-    updateControlHistory(u_opt);
-  }
-  auto x_next = dynamics_model_.predict(x0, u_opt);
-
-  double cmd_yaw = angles::normalize_angle(x_next(0));
-  double cmd_pitch = x_next(1);
-
-  // std::cout << "MPC optimal control: yaw_accel=" << u_opt(0) << " rad/s^2, pitch_accel=" << u_opt(1)
-  //           << " rad/s^2. Predicted next state: yaw=" << cmd_yaw << " rad, pitch=" << cmd_pitch
-  //           << " rad." << std::endl;
-
-  // 9) 计算与当前的差值
-  double yaw_diff = angles::normalize_angle(cmd_yaw - context.current_yaw);
-  double pitch_diff = cmd_pitch - context.current_pitch;
-
-  // std::cout << "Current state: yaw=" << context.current_yaw << " rad, pitch=" << context.current_pitch
-  //           << " rad. Command diff: yaw_diff=" << yaw_diff << " rad, pitch_diff=" << pitch_diff
-  //           << " rad." << std::endl;
-
-  const double distance = target_distance;
-
-  // 11) 填充 GimbalCmd (角度以度为单位)
-  rm_interfaces::msg::GimbalCmd cmd;
-  cmd.yaw = cmd_yaw * 180.0 / M_PI;
-  cmd.pitch = cmd_pitch * 180.0 / M_PI;
-  cmd.yaw_diff = yaw_diff * 180.0 / M_PI;
-  cmd.pitch_diff = pitch_diff * 180.0 / M_PI;
-  cmd.yaw_v = x_next(2) * 180.0 / M_PI;
-  cmd.pitch_v = x_next(3) * 180.0 / M_PI;
-  cmd.yaw_a      = u_opt(0) * 180.0 / M_PI;
-  cmd.pitch_a    = u_opt(1) * 180.0 / M_PI;
-  cmd.distance = std::max(distance, 0.0);
-
-  return cmd;
+  // 提取控制量, 构建云台指令
+  Eigen::Vector2d u_opt(result.U(0), result.U(1));
+  if (use_rms_normalization) updateControlHistory(u_opt);
+  return buildGimbalCmd(x0, u_opt, context, target_distance);
 }
 
 mpc::QPResult MpcControlStrategy::solveFovConstrainedQP(

@@ -31,6 +31,7 @@ class TrackerManager {
     std::unique_ptr<BaseTracker> tracker;
     double last_update_time = 0.0;
     int observation_count = 0;
+    std::string source_frame;  // 首次检测到该机器人的相机 frame_id
   };
 
   struct FrameProcessResult {
@@ -199,6 +200,8 @@ class TrackerManager {
     entry.tracker = std::move(t);
     entry.last_update_time = current_time;
     entry.observation_count = static_cast<int>(initial_obs.size());
+    // 记录首次检测到该机器人的相机来源
+    entry.source_frame = initial_obs.front().source_frame;
     trackers_[robot_id] = std::move(entry);
     return ptr;
   }
@@ -222,6 +225,13 @@ class TrackerManager {
     if (ok) {
       it->second.last_update_time = t;
       it->second.observation_count += static_cast<int>(obs.size());
+      // 更新 source_frame 以反映当前观测来源（补盲相机/主相机切换）
+      for (const auto& o : obs) {
+        if (!o.source_frame.empty() && o.source_frame != it->second.source_frame) {
+          it->second.source_frame = o.source_frame;
+          break;
+        }
+      }
       std::cout << "Updated tracker for robot_id=" << robot_id
                 << ", total_obs_count=" << it->second.observation_count
                 << std::endl;
@@ -295,6 +305,12 @@ class TrackerManager {
   BaseTracker *get(const std::string &id) {
     auto it = trackers_.find(id);
     return (it != trackers_.end()) ? it->second.tracker.get() : nullptr;
+  }
+
+  /// Get the source frame (camera) for a tracker.
+  std::string get_source_frame(const std::string &id) const {
+    auto it = trackers_.find(id);
+    return (it != trackers_.end()) ? it->second.source_frame : "";
   }
 
   const std::unordered_map<std::string, TrackerEntry> &trackers() const {

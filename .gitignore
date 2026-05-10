@@ -21,3 +21,8 @@ InEKF/**
 MvSdkLog/**
 rosbag2_**/**
 **.patch
+
+docs/
+.claude/
+CLAUDE.md
+.worktrees/

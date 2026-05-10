@@ -1,0 +1,6 @@
+# GetCameraInfo.srv
+# Request: empty
+---
+# Response
+int64 width
+int64 height

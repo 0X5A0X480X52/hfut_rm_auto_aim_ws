@@ -154,7 +154,7 @@ void SerialDriverNode::listenLoop() {
       t.header.frame_id = target_frame_;
       t.child_frame_id = "gimbal_link";
       auto roll = receive_data.roll * M_PI / 180.0;
-      auto pitch = -receive_data.pitch * M_PI / 180.0;
+      auto pitch = receive_data.pitch * M_PI / 180.0;
       auto yaw = receive_data.yaw * M_PI / 180.0;
       tf2::Quaternion q;
       q.setRPY(roll, pitch, yaw);
@@ -178,20 +178,9 @@ void SerialDriverNode::listenLoop() {
 }
 
 void SerialDriverNode::setMode(SetModeClient &client, const uint8_t mode) {
-  using namespace std::chrono_literals;
-
-  std::string service_name = client.ptr->get_service_name();
-  // Wait for service
-  while (!client.ptr->wait_for_service(1s)) {
-    if (!rclcpp::ok()) {
-      FYT_ERROR(
-        "serial_driver", "Interrupted while waiting for the service {}. Exiting.", service_name);
-      return;
-    }
-    FYT_INFO("serial_driver", "Service {} not available, waiting again...", service_name);
-  }
+  // Non-blocking check — must not block the listen loop.
+  // If the service isn't ready yet, skip and retry on the next received packet.
   if (!client.ptr->service_is_ready()) {
-    FYT_WARN("serial_driver", "Service: {} is not available!", service_name);
     return;
   }
   // Send request

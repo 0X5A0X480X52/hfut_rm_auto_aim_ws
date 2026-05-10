@@ -45,8 +45,8 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 )
 
 # HIKVision SDK library path
-# 强制使用系统 /opt/MVS，不使用缓存，彻底解决路径跑偏问题
-set(HIK_SDK_DIR /opt/MVS)
+# 使用项目内 SDK 目录
+set(HIK_SDK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/hiksdk)
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
   set(HIK_LIB_DIR ${HIK_SDK_DIR}/lib/64)
