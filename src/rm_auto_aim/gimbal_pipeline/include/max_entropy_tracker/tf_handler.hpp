@@ -63,7 +63,6 @@ class TFHandler {
     auto transformed = transform_pose(ps);
     if (!transformed) return std::nullopt;
 
-    auto obs = pose_to_observation(transformed->pose, stamp.seconds());
     // Preserve image-domain metadata from detector, and only replace the
     // 3D pose/yaw with TF-transformed values.
     auto obs = armor_to_observation(armor, stamp.seconds());
