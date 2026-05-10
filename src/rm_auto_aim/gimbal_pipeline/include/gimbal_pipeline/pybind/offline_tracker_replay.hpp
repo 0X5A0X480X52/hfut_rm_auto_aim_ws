@@ -10,6 +10,7 @@
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/core/observation.hpp"
 #include "max_entropy_tracker/trackers/norm_4armor_tracker.hpp"
+#include "max_entropy_tracker/trackers/norm4_v3/norm4_tracker_v2.hpp"
 #include "max_entropy_tracker/trackers/outpost_tracker_v2.hpp"
 #include "max_entropy_tracker/tracker_manager.hpp"
 #include "max_entropy_tracker/utils/output_smoother.hpp"

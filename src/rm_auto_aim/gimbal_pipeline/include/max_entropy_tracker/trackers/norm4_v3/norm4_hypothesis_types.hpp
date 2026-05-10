@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cmath>
 #include <limits>
 #include <string>
 #include <vector>
@@ -108,6 +109,61 @@ inline PanelProfile get_panel_profile(int panel_id) {
   pp.z_sign = (p % 2 == 0) ? -1.0 : 1.0;
   return pp;
 }
+
+enum class Norm4V2Mode { AMBIGUOUS = 0, STRUCTURED = 1 };
+
+struct WarmupBranchState {
+  int seed_panel = -1;
+  double r1 = 0.15;
+  double r2 = 0.20;
+  double dza = 0.0;
+
+  double accumulated_score = 0.0;
+  int gate_pass_count = 0;
+  int total_frames = 0;
+  bool converged = false;
+};
+
+struct WarmupState {
+  bool active = true;
+  int total_frames = 0;
+  int settle_frames = 0;
+
+  WarmupBranchState h0;  // seed panel 0
+  WarmupBranchState h1;  // seed panel 1
+
+  int winning_branch = -1;  // -1=none, 0=H0, 1=H1
+  double final_margin = 0.0;
+  double final_confidence = 0.0;
+  std::string warmup_reason;
+};
+
+struct V2DebugSnapshot {
+  bool valid = false;
+  int track_mode = 1;  // 0=STRUCTURED, 1=AMBIGUOUS
+  int current_panel_id = -1;
+  int candidate_panel_id = -1;
+  double candidate_prob = std::numeric_limits<double>::quiet_NaN();
+  double candidate_margin = std::numeric_limits<double>::quiet_NaN();
+  double entropy_norm = 1.0;
+  double max_prob = 0.0;
+
+  int switch_event = 0;
+  int switch_reason = 0;
+  double binding_confidence = std::numeric_limits<double>::quiet_NaN();
+
+  bool degraded_single_obs_mode = false;
+  int single_obs_streak = 0;
+
+  // V2-specific TopK / hypothesis debug
+  bool committed = false;
+  double top1_confidence = 0.0;
+  double top1_top2_margin = 0.0;
+  double top1_nis = -1.0;
+  std::string decision_reason;
+  int warmup_active = 0;  // 0=inactive, 1=H0, 2=H1, 3=both running
+  int mode_state = 0;     // 0=ambiguous, 1=structured
+};
 
 }  // namespace fyt::auto_aim::norm4_v3
 

@@ -335,6 +335,95 @@ struct PhaseMemoryConfig {
   AntiPingPongConfig anti_pingpong;
 };
 
+struct Norm4V2UkfGateConfig {
+  double single_total_nis = 25.0;
+  double single_pos_chi2 = 16.0;
+  double single_yaw_chi2 = 9.0;
+  double dual_total_nis = 45.0;
+  double dual_each_pos_chi2 = 16.0;
+  double dual_each_yaw_chi2 = 9.0;
+};
+
+struct Norm4V2UkfSingleUpdateConfig {
+  double structural_gain_r = 0.0;
+  double structural_gain_dza = 0.0;
+};
+
+struct Norm4V2UkfDualUpdateConfig {
+  double structural_gain_r = 0.05;
+  double structural_gain_dza = 0.02;
+};
+
+struct Norm4V2UkfPosteriorSanityConfig {
+  double max_center_jump = 0.25;
+  double max_yaw_jump = 0.80;
+  double min_r = 0.05;
+  double max_r = 0.50;
+  double max_r_jump = 0.05;
+  double min_dza = 0.0;
+  double max_dza = 0.15;
+  double max_dza_jump = 0.03;
+};
+
+struct Norm4V2UkfConfig {
+  bool enabled = true;
+  bool force_rotation_ca = false;
+  bool dual_raw_batch = true;
+
+  double sigma_pos_xy = 0.06;
+  double sigma_pos_z = 0.08;
+  double sigma_yaw = 0.12;
+  double dual_raw_R_scale = 1.5;
+
+  Norm4V2UkfGateConfig gate;
+  Norm4V2UkfSingleUpdateConfig single_update;
+  Norm4V2UkfDualUpdateConfig dual_update;
+  Norm4V2UkfPosteriorSanityConfig posterior_sanity;
+};
+
+struct Norm4V2SelectorConfig {
+  int topk = 4;
+  bool commit_top1_only = true;
+  double min_top1_confidence = 0.55;
+  double min_top1_top2_margin = 0.0;
+  double ambiguous_margin = 1.0;
+  bool include_rejected_in_debug = true;
+  bool evidence_prior_enable = false;
+
+  // Reconstruction error gate (meters)
+  double max_reconstruction_pos_error = 0.30;
+};
+
+struct Norm4V2WarmupConfig {
+  bool enable_dual_seed_01 = true;
+  int warmup_frames = 8;
+  int min_settle_frames = 3;
+  double min_margin_to_commit = 1.5;
+  double min_confidence_to_commit = 0.70;
+};
+
+struct Norm4V2ModeRoutingConfig {
+  // "single_plate_3d" | "structured_ukf"
+  std::string ambiguous_output = "single_plate_3d";
+  std::string structured_output = "structured_ukf";
+  // "shallow_or_predict" | "predict_only"
+  std::string ambiguous_structured_backend_mode = "shallow_or_predict";
+  // "shallow" | "predict_only"
+  std::string structured_single_plate_mode = "shallow";
+};
+
+struct Norm4V2SinglePlateBridgeConfig {
+  bool enable = false;
+  std::string source_semantic = "track2d_id";
+  std::string backend_type = "norm4_ambiguous_backend";
+  int require_semantic_stable_frames = 2;
+};
+
+struct Norm4V2FallbackConfig {
+  bool predict_only_on_reject = true;
+  bool enable_ambiguous_single_fallback = true;
+};
+
 struct Norm4V2Config {
   bool enable_common_pipeline = false;
   bool enable_phase_memory = true;
@@ -342,6 +431,40 @@ struct Norm4V2Config {
   bool enable_2d_tracker = false;
   bool enable_proxy_manager = false;
   PhaseMemoryConfig phase_memory;
+
+  Norm4V2UkfConfig ukf_v1;
+  Norm4V2SelectorConfig hypothesis_selector;
+  Norm4V2WarmupConfig warmup;
+  Norm4V2ModeRoutingConfig mode_routing;
+  Norm4V2SinglePlateBridgeConfig single_plate_bridge;
+  Norm4V2FallbackConfig fallback;
+};
+
+using Norm4V3UkfGateConfig = Norm4V2UkfGateConfig;
+using Norm4V3UkfSingleUpdateConfig = Norm4V2UkfSingleUpdateConfig;
+using Norm4V3UkfDualUpdateConfig = Norm4V2UkfDualUpdateConfig;
+using Norm4V3UkfPosteriorSanityConfig = Norm4V2UkfPosteriorSanityConfig;
+using Norm4V3UkfConfig = Norm4V2UkfConfig;
+using Norm4V3SelectorConfig = Norm4V2SelectorConfig;
+using Norm4V3WarmupConfig = Norm4V2WarmupConfig;
+using Norm4V3ModeRoutingConfig = Norm4V2ModeRoutingConfig;
+using Norm4V3SinglePlateBridgeConfig = Norm4V2SinglePlateBridgeConfig;
+using Norm4V3FallbackConfig = Norm4V2FallbackConfig;
+
+struct Norm4V3Config {
+  bool enable_common_pipeline = false;
+  bool enable_phase_memory = true;
+  bool enable_kinematic_anti_pingpong = true;
+  bool enable_2d_tracker = false;
+  bool enable_proxy_manager = false;
+  PhaseMemoryConfig phase_memory;
+
+  Norm4V3UkfConfig ukf_v1;
+  Norm4V3SelectorConfig hypothesis_selector;
+  Norm4V3WarmupConfig warmup;
+  Norm4V3ModeRoutingConfig mode_routing;
+  Norm4V3SinglePlateBridgeConfig single_plate_bridge;
+  Norm4V3FallbackConfig fallback;
 };
 
 // ======================== Unified Config ========================
@@ -361,6 +484,7 @@ struct UnifiedConfig {
   OutpostParameters outpost;
   BinderConfig binder;
   Norm4V2Config norm4_v2;
+  Norm4V3Config norm4_v3;
 
   static UnifiedConfig create_default() { return UnifiedConfig{}; }
 

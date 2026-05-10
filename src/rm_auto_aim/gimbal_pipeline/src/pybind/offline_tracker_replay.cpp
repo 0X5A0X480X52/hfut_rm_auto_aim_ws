@@ -163,6 +163,20 @@ ReplaySnapshot OfflineTrackerReplay::snapshot() const {
     s.binding_confidence = d.binding_confidence;
     s.degraded_single_obs_mode = d.degraded_single_obs_mode;
     s.single_obs_streak = d.single_obs_streak;
+  } else if (const auto *norm4v2 = dynamic_cast<const Norm4ArmorTrackerV2 *>(tracker);
+             norm4v2 != nullptr) {
+    const auto &d = norm4v2->debug_snapshot();
+    s.mode = d.track_mode;
+    s.candidate_panel_id = d.candidate_panel_id;
+    s.candidate_prob = d.candidate_prob;
+    s.candidate_margin = d.candidate_margin;
+    s.entropy_norm = d.entropy_norm;
+    s.max_prob = d.max_prob;
+    s.switch_event = d.switch_event;
+    s.switch_reason = d.switch_reason;
+    s.binding_confidence = d.binding_confidence;
+    s.degraded_single_obs_mode = d.degraded_single_obs_mode;
+    s.single_obs_streak = d.single_obs_streak;
   }
 
   return s;

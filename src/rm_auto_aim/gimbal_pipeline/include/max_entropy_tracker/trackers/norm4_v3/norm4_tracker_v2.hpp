@@ -8,6 +8,7 @@
 
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/core/observation.hpp"
+#include "max_entropy_tracker/evidence/evidence_builder.hpp"
 #include "max_entropy_tracker/trackers/base_tracker.hpp"
 #include "max_entropy_tracker/trackers/norm4_v3/norm4_hypothesis_generator.hpp"
 #include "max_entropy_tracker/trackers/norm4_v3/norm4_hypothesis_types.hpp"
@@ -44,7 +45,21 @@ class Norm4ArmorTrackerV2 : public BaseTracker {
     return last_hypothesis_debug_;
   }
 
+  const norm4_v3::V2DebugSnapshot &debug_snapshot() const { return debug_snapshot_; }
+  const evidence::ArmorEvidenceFrame &last_evidence_frame() const { return evidence_frame_; }
+  norm4_v3::Norm4V2Mode current_mode() const { return mode_; }
+
  private:
+  void populate_debug_snapshot();
+
+  // Warmup (0/1 dual-seed)
+  void init_warmup(const std::vector<ObservationData> &obs, double r1, double r2, double dza);
+  bool run_warmup(const std::vector<ObservationData> &obs);
+  void promote_warmup_winner();
+
+  // Mode routing
+  void set_mode(norm4_v3::Norm4V2Mode m);
+  void apply_mode_routing();
   void select_topk(std::vector<norm4_v3::MeasurementEval> &evals,
                    const std::vector<norm4_v3::Hypothesis> &hyps,
                    int topk_count,
@@ -59,10 +74,15 @@ class Norm4ArmorTrackerV2 : public BaseTracker {
   double default_r1_ = 0.15;
   double default_r2_ = 0.20;
   double default_dza_ = 0.0;
+  std::optional<ObservationData> warmup_last_obs_;
 
   int current_panel_id_ = -1;
+  norm4_v3::Norm4V2Mode mode_ = norm4_v3::Norm4V2Mode::AMBIGUOUS;
+  norm4_v3::WarmupState warmup_state_{};
 
   norm4_v3::HypothesisDebugFrame last_hypothesis_debug_{};
+  norm4_v3::V2DebugSnapshot debug_snapshot_{};
+  evidence::ArmorEvidenceFrame evidence_frame_{};
 };
 
 }  // namespace fyt::auto_aim

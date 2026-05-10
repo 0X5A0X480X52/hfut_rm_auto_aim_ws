@@ -219,11 +219,13 @@ MeasurementEval Norm4UkfBackendV1::evaluateSingle(
   Eigen::Vector4d innov = z_obs - z_pred;
   innov(3) = normalize_angle(innov(3));
 
-  // Build R
-  double np = config_.ukf.obs_noise_pos;
-  double ny = config_.ukf.obs_noise_yaw;
+  // Build R using configurable noise parameters
+  const auto &v1 = config_.norm4_v3.ukf_v1;
+  double sp = v1.sigma_pos_xy;
+  double sz = v1.sigma_pos_z;
+  double sy = v1.sigma_yaw;
   Eigen::Matrix4d R =
-      Eigen::Vector4d(np * np, np * np, np * np, ny * ny).asDiagonal();
+      Eigen::Vector4d(sp * sp, sp * sp, sz * sz, sy * sy).asDiagonal();
 
   // S = Pzz + R
   Eigen::MatrixXd diff_z(n_sigma, 4);
@@ -266,12 +268,12 @@ MeasurementEval Norm4UkfBackendV1::evaluateSingle(
   double chi2_pos =
       innov_pos.transpose() * S_pos.inverse() * innov_pos;
 
-  // Gate check
+  // Gate check using configurable thresholds
+  const auto &gt = config_.norm4_v3.ukf_v1.gate;
   bool gate_pass = true;
-  double total_gate = (obs.z > 0) ? 25.0 : 25.0;
-  if (nis > total_gate) gate_pass = false;
-  if (chi2_pos > 16.0) gate_pass = false;
-  if (chi2_yaw > 9.0) gate_pass = false;
+  if (nis > gt.single_total_nis) gate_pass = false;
+  if (chi2_pos > gt.single_pos_chi2) gate_pass = false;
+  if (chi2_yaw > gt.single_yaw_chi2) gate_pass = false;
 
   eval.valid = true;
   eval.gate_pass = gate_pass;
@@ -332,12 +334,14 @@ MeasurementEval Norm4UkfBackendV1::evaluateDual(
   innov(3) = normalize_angle(innov(3));
   innov(7) = normalize_angle(innov(7));
 
-  double np = config_.ukf.obs_noise_pos;
-  double ny = config_.ukf.obs_noise_yaw;
-  double r_scale = 1.5;
+  const auto &v1 = config_.norm4_v3.ukf_v1;
+  double sp = v1.sigma_pos_xy;
+  double sz = v1.sigma_pos_z;
+  double sy = v1.sigma_yaw;
+  double r_scale = v1.dual_raw_R_scale;
   Eigen::Vector<double, 8> r_diag;
-  r_diag << np * np, np * np, np * np, ny * ny,
-            np * np, np * np, np * np, ny * ny;
+  r_diag << sp * sp, sp * sp, sz * sz, sy * sy,
+            sp * sp, sp * sp, sz * sz, sy * sy;
   r_diag *= r_scale;
   Eigen::Matrix<double, 8, 8> R = r_diag.asDiagonal();
 
@@ -387,10 +391,11 @@ MeasurementEval Norm4UkfBackendV1::evaluateDual(
       innov_pos1.transpose() * S_pos1.inverse() * innov_pos1;
   double chi2_pos = std::max(chi2_pos0, chi2_pos1);
 
+  const auto &gt = config_.norm4_v3.ukf_v1.gate;
   bool gate_pass = true;
-  if (nis > 45.0) gate_pass = false;
-  if (chi2_pos0 > 16.0 || chi2_pos1 > 16.0) gate_pass = false;
-  if (chi2_yaw0 > 9.0 || chi2_yaw1 > 9.0) gate_pass = false;
+  if (nis > gt.dual_total_nis) gate_pass = false;
+  if (chi2_pos0 > gt.dual_each_pos_chi2 || chi2_pos1 > gt.dual_each_pos_chi2) gate_pass = false;
+  if (chi2_yaw0 > gt.dual_each_yaw_chi2 || chi2_yaw1 > gt.dual_each_yaw_chi2) gate_pass = false;
 
   eval.valid = true;
   eval.gate_pass = gate_pass;
@@ -458,10 +463,12 @@ UkfTrial Norm4UkfBackendV1::tryUpdateSingle(
   Eigen::Vector4d innov = z_obs - z_pred;
   innov(3) = normalize_angle(innov(3));
 
-  double np = config_.ukf.obs_noise_pos;
-  double ny = config_.ukf.obs_noise_yaw;
+  const auto &v1 = config_.norm4_v3.ukf_v1;
+  double sp = v1.sigma_pos_xy;
+  double sz = v1.sigma_pos_z;
+  double sy = v1.sigma_yaw;
   Eigen::Matrix4d R =
-      Eigen::Vector4d(np * np, np * np, np * np, ny * ny).asDiagonal();
+      Eigen::Vector4d(sp * sp, sp * sp, sz * sz, sy * sy).asDiagonal();
 
   Eigen::MatrixXd diff_z(n_sigma, 4);
   for (int i = 0; i < n_sigma; ++i) {
@@ -490,9 +497,11 @@ UkfTrial Norm4UkfBackendV1::tryUpdateSingle(
 
   // Conservative structural gain (single obs: freeze r1/r2/dza)
   auto idx = state_idx_;
-  K.row(idx.R1()).setZero();
-  K.row(idx.R2()).setZero();
-  K.row(idx.DZA()).setZero();
+  // Single update structural gain from config (default 0 = frozen)
+  const auto &su = config_.norm4_v3.ukf_v1.single_update;
+  K.row(idx.R1()) *= su.structural_gain_r;
+  K.row(idx.R2()) *= su.structural_gain_r;
+  K.row(idx.DZA()) *= su.structural_gain_dza;
 
   Eigen::VectorXd x_post = ctx.x_prior + K * innov;
   Eigen::MatrixXd P_post = ctx.P_prior - K * S * K.transpose();
@@ -590,12 +599,14 @@ UkfTrial Norm4UkfBackendV1::tryUpdateDual(
   innov(3) = normalize_angle(innov(3));
   innov(7) = normalize_angle(innov(7));
 
-  double np = config_.ukf.obs_noise_pos;
-  double ny = config_.ukf.obs_noise_yaw;
-  double r_scale = 1.5;
+  const auto &v1 = config_.norm4_v3.ukf_v1;
+  double sp = v1.sigma_pos_xy;
+  double sz = v1.sigma_pos_z;
+  double sy = v1.sigma_yaw;
+  double r_scale = v1.dual_raw_R_scale;
   Eigen::Vector<double, 8> r_diag;
-  r_diag << np * np, np * np, np * np, ny * ny,
-            np * np, np * np, np * np, ny * ny;
+  r_diag << sp * sp, sp * sp, sz * sz, sy * sy,
+            sp * sp, sp * sp, sz * sz, sy * sy;
   r_diag *= r_scale;
   Eigen::Matrix<double, 8, 8> R = r_diag.asDiagonal();
 
@@ -627,9 +638,10 @@ UkfTrial Norm4UkfBackendV1::tryUpdateDual(
 
   // Conservative structural gain for dual: small but non-zero
   auto idx = state_idx_;
-  K.row(idx.R1()) *= 0.05;
-  K.row(idx.R2()) *= 0.05;
-  K.row(idx.DZA()) *= 0.02;
+  const auto &du = config_.norm4_v3.ukf_v1.dual_update;
+  K.row(idx.R1()) *= du.structural_gain_r;
+  K.row(idx.R2()) *= du.structural_gain_r;
+  K.row(idx.DZA()) *= du.structural_gain_dza;
 
   Eigen::VectorXd x_post = ctx.x_prior + K * innov;
   Eigen::MatrixXd P_post = ctx.P_prior - K * S * K.transpose();
@@ -734,6 +746,7 @@ bool Norm4UkfBackendV1::check_posterior_sanity(
     const Eigen::VectorXd &x_prior, const Eigen::VectorXd &x_post,
     const Eigen::MatrixXd &P_post) const {
   auto idx = state_idx_;
+  const auto &ps = config_.norm4_v3.ukf_v1.posterior_sanity;
 
   // Center jump check
   Eigen::Vector3d prior_center(x_prior(idx.X()), x_prior(idx.Y()),
@@ -741,26 +754,26 @@ bool Norm4UkfBackendV1::check_posterior_sanity(
   Eigen::Vector3d post_center(x_post(idx.X()), x_post(idx.Y()),
                                x_post(idx.Z()));
   double center_jump = (post_center - prior_center).norm();
-  if (center_jump > 0.25) return false;
+  if (center_jump > ps.max_center_jump) return false;
 
-  // Delta jump check
+  // Yaw/delta jump check
   double delta_jump = std::abs(delta_angle_diff(x_post(idx.DELTA()),
                                                   x_prior(idx.DELTA())));
-  if (delta_jump > 0.80) return false;
+  if (delta_jump > ps.max_yaw_jump) return false;
 
   // Radius range check
   double r1 = x_post(idx.R1());
   double r2 = x_post(idx.R2());
-  if (r1 < 0.05 || r1 > 0.50 || r2 < 0.05 || r2 > 0.50) return false;
+  if (r1 < ps.min_r || r1 > ps.max_r || r2 < ps.min_r || r2 > ps.max_r) return false;
 
   // Radius jump check
-  if (std::abs(r1 - x_prior(idx.R1())) > 0.05) return false;
-  if (std::abs(r2 - x_prior(idx.R2())) > 0.05) return false;
+  if (std::abs(r1 - x_prior(idx.R1())) > ps.max_r_jump) return false;
+  if (std::abs(r2 - x_prior(idx.R2())) > ps.max_r_jump) return false;
 
   // DZA range check
   double dza = x_post(idx.DZA());
-  if (dza < 0.0 || dza > 0.15) return false;
-  if (std::abs(dza - x_prior(idx.DZA())) > 0.03) return false;
+  if (dza < ps.min_dza || dza > ps.max_dza) return false;
+  if (std::abs(dza - x_prior(idx.DZA())) > ps.max_dza_jump) return false;
 
   // P positive semi-definite
   if (!P_post.allFinite()) return false;

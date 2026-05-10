@@ -101,7 +101,7 @@ gimbal_pipeline:
         width: 960           # 画布宽度（像素）
         height: 540          # 画布高度（像素）
         jpeg_quality: 70     # JPEG质量(20~100), 越小带宽越低
-      implementation: "adaptive" # 非 outpost 目标: "adaptive" | "norm4"
+      implementation: "norm4_v2" # 非 outpost 目标: "adaptive" | "norm4" | "norm4_v2"
       tracking_thres: 2          # 连续命中多少帧进入TRACKING
       lost_thres: 4              # 连续丢失多少帧进入LOST
       temp_lost_thres: 3         # 连续丢失多少帧进入TEMP_LOST
@@ -220,6 +220,142 @@ gimbal_pipeline:
           yaw_rate_jump_gate: 2.0
           velocity_dir_cos_min: 0.2
           pending_timeout_frames: 12
+      ukf_v1:
+        enabled: true
+        force_rotation_ca: false
+        dual_raw_batch: true
+        sigma_pos_xy: 0.06
+        sigma_pos_z: 0.08
+        sigma_yaw: 0.12
+        dual_raw_R_scale: 1.5
+        gate:
+          single_total_nis: 25.0
+          single_pos_chi2: 16.0
+          single_yaw_chi2: 9.0
+          dual_total_nis: 45.0
+          dual_each_pos_chi2: 16.0
+          dual_each_yaw_chi2: 9.0
+        single_update:
+          structural_gain_r: 0.0
+          structural_gain_dza: 0.0
+        dual_update:
+          structural_gain_r: 0.05
+          structural_gain_dza: 0.02
+        posterior_sanity:
+          max_center_jump: 0.25
+          max_yaw_jump: 0.80
+          min_r: 0.05
+          max_r: 0.50
+          max_r_jump: 0.05
+          min_dza: 0.0
+          max_dza: 0.15
+          max_dza_jump: 0.03
+      hypothesis_selector:
+        topk: 4
+        commit_top1_only: true
+        min_top1_confidence: 0.55
+        min_top1_top2_margin: 0.0
+        ambiguous_margin: 1.0
+        include_rejected_in_debug: true
+        evidence_prior_enable: false
+        max_reconstruction_pos_error: 0.30
+      warmup:
+        enable_dual_seed_01: true
+        warmup_frames: 8
+        min_settle_frames: 3
+        min_margin_to_commit: 1.5
+        min_confidence_to_commit: 0.70
+      mode_routing:
+        ambiguous_output: "single_plate_3d"
+        structured_output: "structured_ukf"
+        ambiguous_structured_backend_mode: "shallow_or_predict"
+        structured_single_plate_mode: "shallow"
+      single_plate_bridge:
+        enable: false
+        source_semantic: "track2d_id"
+        backend_type: "norm4_ambiguous_backend"
+        require_semantic_stable_frames: 2
+      fallback:
+        predict_only_on_reject: true
+        enable_ambiguous_single_fallback: true
+
+    # Norm4 v3 独立配置（专用于 trackers/norm4_v3/norm4_tracker_v2.hpp）
+    norm4_v3:
+      enable_common_pipeline: false
+      enable_phase_memory: true
+      enable_kinematic_anti_pingpong: true
+      enable_2d_tracker: true
+      enable_proxy_manager: true
+      phase_memory:
+        enable_phase_memory: true
+        enable_kinematic_anti_pingpong: true
+        sequence_window_size: 10
+        ping_pong_pattern_threshold: 0.7
+        enable_opposite_jump_detect: true
+        anti_pingpong:
+          min_consistent_frames_to_commit: 3
+          jerk_gate: 1.5
+          yaw_rate_jump_gate: 2.0
+          velocity_dir_cos_min: 0.2
+          pending_timeout_frames: 12
+      ukf_v1:
+        enabled: true
+        force_rotation_ca: false
+        dual_raw_batch: true
+        sigma_pos_xy: 0.06
+        sigma_pos_z: 0.08
+        sigma_yaw: 0.12
+        dual_raw_R_scale: 1.5
+        gate:
+          single_total_nis: 25.0
+          single_pos_chi2: 16.0
+          single_yaw_chi2: 9.0
+          dual_total_nis: 45.0
+          dual_each_pos_chi2: 16.0
+          dual_each_yaw_chi2: 9.0
+        single_update:
+          structural_gain_r: 0.0
+          structural_gain_dza: 0.0
+        dual_update:
+          structural_gain_r: 0.05
+          structural_gain_dza: 0.02
+        posterior_sanity:
+          max_center_jump: 0.25
+          max_yaw_jump: 0.80
+          min_r: 0.05
+          max_r: 0.50
+          max_r_jump: 0.05
+          min_dza: 0.0
+          max_dza: 0.15
+          max_dza_jump: 0.03
+      hypothesis_selector:
+        topk: 4
+        commit_top1_only: true
+        min_top1_confidence: 0.55
+        min_top1_top2_margin: 0.0
+        ambiguous_margin: 1.0
+        include_rejected_in_debug: true
+        evidence_prior_enable: false
+        max_reconstruction_pos_error: 0.30
+      warmup:
+        enable_dual_seed_01: true
+        warmup_frames: 8
+        min_settle_frames: 3
+        min_margin_to_commit: 1.5
+        min_confidence_to_commit: 0.70
+      mode_routing:
+        ambiguous_output: "single_plate_3d"
+        structured_output: "structured_ukf"
+        ambiguous_structured_backend_mode: "shallow_or_predict"
+        structured_single_plate_mode: "shallow"
+      single_plate_bridge:
+        enable: false
+        source_semantic: "track2d_id"
+        backend_type: "norm4_ambiguous_backend"
+        require_semantic_stable_frames: 2
+      fallback:
+        predict_only_on_reject: true
+        enable_ambiguous_single_fallback: true
 
     panel_mismatch:
       # 板匹配审计器：用于发现“内部id反转/层级错位”
