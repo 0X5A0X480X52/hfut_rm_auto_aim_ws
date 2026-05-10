@@ -16,6 +16,7 @@
 #include "max_entropy_tracker/trackers/base_tracker.hpp"
 #include "max_entropy_tracker/trackers/adaptive_armor_tracker.hpp"
 #include "max_entropy_tracker/trackers/norm_4armor_tracker.hpp"
+#include "max_entropy_tracker/trackers/norm4_v3/norm4_tracker_v2.hpp"
 #include "max_entropy_tracker/trackers/outpost_armor_tracker.hpp"
 #include "max_entropy_tracker/trackers/outpost_tracker_v2.hpp"
 #include "max_entropy_tracker/utils/observation_outlier_filter.hpp"
@@ -185,6 +186,8 @@ class TrackerManager {
     } else {
       if (config_.tracker.implementation == "norm4") {
         t = std::make_unique<Norm4ArmorTracker>(config_, dt_, enable_osc_);
+      } else if (config_.tracker.implementation == "norm4_v2") {
+        t = std::make_unique<Norm4ArmorTrackerV2>(config_, dt_, enable_osc_);
       } else {
         t = std::make_unique<AdaptiveArmorTracker>(config_, dt_, enable_osc_);
       }

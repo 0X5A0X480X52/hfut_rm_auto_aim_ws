@@ -75,7 +75,7 @@ struct MaxEntropyParameters {
 
 struct TrackerParameters {
   // Tracker implementation for non-outpost robots:
-  // "adaptive" | "norm4"
+  // "adaptive" | "norm4" | "norm4_v2"
   std::string implementation = "adaptive";
 
   int tracking_thres = 2;

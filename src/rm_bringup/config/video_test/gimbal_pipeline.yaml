@@ -48,14 +48,14 @@ gimbal_pipeline:
       alpha: 0.001                    # UKF sigma 点分布参数，通常保持默认
       beta: 2.0                       # 高斯分布推荐值
       kappa: 0.0                      # 次要调节项，通常保持默认
-      obs_noise_pos: 0.03             # 位置观测噪声，增大更稳/更钝，减小更灵敏
-      obs_noise_yaw: 0.03             # yaw观测噪声，过小易引发抖动
+      obs_noise_pos: 0.0003             # 位置观测噪声，增大更稳/更钝，减小更灵敏
+      obs_noise_yaw: 0.0003             # yaw观测噪声，过小易引发抖动
       enable_ypd_observation_noise: false
       ypd_sigma_azi: 0.01             # YPD方位角噪声(仅启用YPD时生效)
       ypd_sigma_ele: 0.01             # YPD俯仰噪声
-      ypd_sigma_dist_coeff: 0.08      # YPD距离噪声系数，远距离可适当增大
-      dual_obs_noise_pos: 0.01        # 双观测位置噪声
-      dual_obs_noise_yaw: 0.03        # 双观测yaw噪声
+      ypd_sigma_dist_coeff: 0.0008      # YPD距离噪声系数，远距离可适当增大
+      dual_obs_noise_pos: 0.0001        # 双观测位置噪声
+      dual_obs_noise_yaw: 0.0003        # 双观测yaw噪声
       dual_obs_geometry_noise_scale: 0.02 # 双观测几何不一致惩罚
       single_obs_update_weight_pos: 5.0   # 单观测位置更新权重，越大越相信单观测
       enable_innovation_gating: false # 异常观测门控，环境复杂建议开启
@@ -67,8 +67,8 @@ gimbal_pipeline:
       ca_process_noise_acc: 0.1     # CA加速度噪声，过大可能导致轨迹毛刺
       singer_alpha: 0.8             # Singer相关时间参数，越大速度变化越平滑
       singer_sigma: 0.5             # Singer机动强度，越大越“敢跟”
-      process_noise_r: 0.002         # 几何半径状态噪声
-      process_noise_dz: 0.00005      # 高低板差状态噪声
+      process_noise_r: 0.02         # 几何半径状态噪声
+      process_noise_dz: 0.05      # 高低板差状态噪声
 
     spin:
       spin_process_noise_yaw_rate: 4.5   # yaw角速度过程噪声

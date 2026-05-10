@@ -80,16 +80,10 @@ rm_interfaces::msg::TrackedRobot BuffTargetAdapter::normalizeBuffRobot(
     robot.armors_offset.push_back(zero_offset);
     robot.representation_mode = rm_interfaces::msg::TrackedRobot::REP_AMBIGUOUS_SINGLE_ARMOR;
     robot.num_armors = 1;
-    robot.engageable_mask = 0x1u;
-    robot.engageable_count = 1;
   } else {
     robot.num_armors = std::max(robot.num_armors, static_cast<int32_t>(robot.armors_offset.size()));
     if (robot.num_armors >= 3) {
       robot.representation_mode = rm_interfaces::msg::TrackedRobot::REP_STRUCTURED_ROBOT;
-    }
-    if (robot.engageable_count <= 0) {
-      robot.engageable_count = 1;
-      robot.engageable_mask = 0x1u;
     }
   }
 

@@ -1650,11 +1650,12 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
                  c.tracker.implementation.begin(),
                  [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
   if (c.tracker.implementation != "adaptive" &&
-      c.tracker.implementation != "norm4") {
+      c.tracker.implementation != "norm4" &&
+      c.tracker.implementation != "norm4_v2") {
     RCLCPP_WARN(
         get_logger(),
         "Unknown tracker.implementation='%s', fallback to 'adaptive'. "
-        "Supported values: adaptive | norm4",
+        "Supported values: adaptive | norm4 | norm4_v2",
         c.tracker.implementation.c_str());
     c.tracker.implementation = "adaptive";
   }
