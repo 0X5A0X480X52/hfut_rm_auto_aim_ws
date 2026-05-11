@@ -232,9 +232,22 @@ gimbal_pipeline:
         backend_type: "inekf"
         motion_profile: "/home/hfut/hfut_rm_auto_aim_ws/src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/motion/default.yaml"
         noise_profile: "/home/hfut/hfut_rm_auto_aim_ws/src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/noise/ypd_ba_low_weight.yaml"
-        structure_profile: "snapshot"
+        structure_profile: "slow"
         enable_shadow_mode: true
         shadow_convergence_frames: 30
+      inekf_runtime:
+        motion_profile: "ca"  # default|cv|ca|singer|yaw_ca|<motion_profile.yaml路径>
+        noise_profile: "src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/noise/ypd_ba_low_weight.yaml"
+        structure_profile: "slow"  # slow|snapshot
+        translation_model: "CA"    # ""=继承全局 motion.translation_model
+        cv_process_noise_vel: -1.0
+        ca_process_noise_acc: -1.0
+        singer_alpha: -1.0
+        singer_sigma: -1.0
+        process_noise_r: -1.0
+        process_noise_dz: -1.0
+        spin_process_noise_delta_rate: -1.0
+        spin_process_noise_delta_acc: -1.0
       phase_memory:
         enable_phase_memory: true
         enable_kinematic_anti_pingpong: true
