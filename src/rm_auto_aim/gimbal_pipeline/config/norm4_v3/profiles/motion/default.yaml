@@ -2,7 +2,7 @@ motion:
   type: native
   native:
     translation_model: singer
-    rotation_model: cv
+    rotation_model: cA
     translation:
       cv_process_noise_vel: 0.5
       ca_process_noise_acc: 1.0

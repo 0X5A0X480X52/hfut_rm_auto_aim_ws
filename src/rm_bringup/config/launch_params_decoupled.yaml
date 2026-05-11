@@ -4,16 +4,16 @@
 
 # --------- 通用参数 ---------
 # 机器人配置标签，用于选择 rm_bringup/config/<robot>/ 下的真实参数
-robot: 'infantry_4_1'
+robot: 'video_test'
 
 # 命名空间 所有节点、话题都会以这个命名空间开头
 namespace: ''
 
 # image_source: (video | mindvision | hik)
-image_source: 'hik'
+image_source: 'video'
 
 # true: 虚拟下位机 false: 实车
-virtual_serial: false
+virtual_serial: true
 
 # true: 开启调试模式 (发布可视化markers)
 debug: true
@@ -29,7 +29,7 @@ detector_type: 'armor_detector'
 # use_camera_detector_container: (true | false)
 # true:  相机节点和检测节点放在同一 ComposableNodeContainer 中 (intra-process 零拷贝)
 # false: 相机节点和检测节点分别作为独立节点运行
-use_camera_detector_container: false
+use_camera_detector_container: true
 
 # tracker_impl: (cpp | python)
 # cpp:    使用 C++ 组件节点 (rclcpp_components)

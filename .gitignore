@@ -21,4 +21,4 @@ InEKF/**
 MvSdkLog/**
 rosbag2_**/**
 **.patch
-.claude/settings.json
+.claude/**
