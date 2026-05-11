@@ -45,12 +45,11 @@ std::vector<rclcpp::Client<rm_interfaces::srv::SetMode>::SharedPtr> DefaultProto
 }
 
 void DefaultProtocol::send(const rm_interfaces::msg::GimbalCmd &data) {
-  const auto safe_data = sanitizeForTransport(data);
   FixedPacket<16> packet;
-  packet.loadData<unsigned char>(safe_data.fire_advice ? FireState::Fire : FireState::NotFire, 1);
-  packet.loadData<float>(static_cast<float>(safe_data.pitch), 2);
-  packet.loadData<float>(static_cast<float>(safe_data.yaw), 6);
-  packet.loadData<float>(static_cast<float>(safe_data.distance), 10);
+  packet.loadData<unsigned char>(data.fire_advice ? FireState::Fire : FireState::NotFire, 1);
+  packet.loadData<float>(static_cast<float>(data.pitch), 2);
+  packet.loadData<float>(static_cast<float>(data.yaw), 6);
+  packet.loadData<float>(static_cast<float>(data.distance), 10);
   packet_tool_->sendPacket(packet);
 }
 

@@ -16,6 +16,9 @@
 #include "rm_utils/math/pnp_solver.hpp"
 
 #include <opencv2/calib3d.hpp>
+#include <opencv2/core/eigen.hpp>
+
+#include <Eigen/Dense>
 
 namespace fyt {
 PnPSolver::PnPSolver(const std::array<double, 9> &camera_matrix,
@@ -54,6 +57,72 @@ double PnPSolver::calculateReprojectionError(const std::vector<cv::Point2f> &ima
   } else {
     return 0;
   }
+}
+
+bool PnPSolver::calculatePnPCovariance(
+    const std::vector<cv::Point2f> &image_points,
+    const cv::Mat &rvec,
+    const cv::Mat &tvec,
+    const std::string &coord_frame_name,
+    double pixel_noise_sigma,
+    Eigen::Matrix3d &pos_cov_out,
+    double &yaw_var_out) const {
+
+  auto it = object_points_map_.find(coord_frame_name);
+  if (it == object_points_map_.end()) return false;
+
+  const auto &obj_pts = it->second;
+  const int N = static_cast<int>(image_points.size());
+  if (N < 4) return false;  // 至少需要 4 个点做有意义的协方差估计
+
+  const double eps = 1e-5;
+  Eigen::MatrixXd J(2 * N, 6);  // 2N rows (u_i, v_i), 6 cols (rx,ry,rz, tx,ty,tz)
+
+  // 获取基线投影
+  std::vector<cv::Point2f> proj_base;
+  cv::projectPoints(obj_pts, rvec, tvec, camera_matrix_, distortion_coefficients_, proj_base);
+
+  // 对 6 个参数分别扰动
+  for (int p = 0; p < 6; ++p) {
+    cv::Mat rvec_p = rvec.clone();
+    cv::Mat tvec_p = tvec.clone();
+
+    if (p < 3) {
+      rvec_p.at<double>(p) += eps;
+    } else {
+      tvec_p.at<double>(p - 3) += eps;
+    }
+
+    std::vector<cv::Point2f> proj_pert;
+    cv::projectPoints(obj_pts, rvec_p, tvec_p, camera_matrix_, distortion_coefficients_, proj_pert);
+
+    for (int i = 0; i < N; ++i) {
+      J(2 * i, p)     = (proj_pert[i].x - proj_base[i].x) / eps;
+      J(2 * i + 1, p) = (proj_pert[i].y - proj_base[i].y) / eps;
+    }
+  }
+
+  // Σ_param = σ² * (JᵀJ)⁻¹
+  double sigma2 = pixel_noise_sigma * pixel_noise_sigma;
+  Eigen::Matrix<double, 6, 6> JtJ = J.transpose() * J;
+  Eigen::Matrix<double, 6, 6> JtJ_reg =
+      JtJ + Eigen::Matrix<double, 6, 6>::Identity() * 1e-6;
+  Eigen::Matrix<double, 6, 6> Sigma_param = sigma2 * JtJ_reg.inverse();
+
+  // Extract tvec covariance (params 3-5: tx, ty, tz)
+  // d(camera_point)/d(tvec) = I₃, so camera-frame position covariance = Sigma_tvec
+  Eigen::Matrix3d Sigma_xyz_cam = Sigma_param.block<3, 3>(3, 3);
+
+  // Compute yaw variance from rotation parameter covariance (params 0-2)
+  Eigen::Matrix3d Sigma_rvec = Sigma_param.block<3, 3>(0, 0);
+  // Conservative approximation: treat all rotation components as equally
+  // contributing to yaw uncertainty, then inflate by 3x
+  yaw_var_out = Sigma_rvec.trace();
+
+  // Caller applies TF rotation to transform to the target frame
+  pos_cov_out = Sigma_xyz_cam;
+
+  return true;
 }
 
 }  // namespace fyt

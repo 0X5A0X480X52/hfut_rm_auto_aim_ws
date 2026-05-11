@@ -20,26 +20,33 @@
 #ifndef ARMOR_DETECTOR_DETECTOR_NODE_HPP_
 #define ARMOR_DETECTOR_DETECTOR_NODE_HPP_
 
+// std
+#include <memory>
+#include <string>
+#include <vector>
 // ros2
-#include <image_transport/image_transport.hpp>
 #include <image_transport/publisher.hpp>
-#include <image_transport/subscriber_filter.hpp>
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <rclcpp/publisher.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
-#include <visualization_msgs/msg/marker_array.hpp>
-// std
-#include <memory>
-#include <string>
-#include <vector>
+#include <atomic>
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/create_timer_ros.h>
+#include <tf2_ros/message_filter.h>
+#include <tf2_ros/transform_listener.h>
+#include <message_filters/subscriber.h>
 // project
 #include "armor_detector/armor_detector.hpp"
 #include "armor_detector/number_classifier.hpp"
 #include "rm_interfaces/msg/armors.hpp"
 #include "rm_interfaces/msg/target.hpp"
 #include "rm_interfaces/msg/blind.hpp"
+#include "rm_interfaces/msg/blinds.hpp"
 #include "rm_interfaces/srv/set_mode.hpp"
 #include "rm_utils/heartbeat.hpp"
 #include "rm_utils/logger/log.hpp"
@@ -55,8 +62,7 @@ public:
 
 private:
   void imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr img_msg);
-  // void targetCallback(const rm_interfaces::msg::Target::SharedPtr
-  // target_msg);
+  void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg);
 
   std::unique_ptr<Detector> initDetector();
 
@@ -86,18 +92,34 @@ private:
   // Detected armors publisher
   rm_interfaces::msg::Armor armor_msg_;
   rm_interfaces::msg::Armors armors_msg_;
-  rm_interfaces::msg::Blind blind_msg_;
+  rm_interfaces::msg::Blinds blinds_msg_;
   rclcpp::Publisher<rm_interfaces::msg::Armors>::SharedPtr armors_pub_;
-  rclcpp::Publisher<rm_interfaces::msg::Blind>::SharedPtr blind_pub_;
+  rclcpp::Publisher<rm_interfaces::msg::Blinds>::SharedPtr blinds_pub_;
 
-  // Camera info part
+  // Camera info + undistortion
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr cam_info_sub_;
-  cv::Point2f cam_center_;
-  float camera_yaw_;
-  std::shared_ptr<sensor_msgs::msg::CameraInfo> cam_info_;
+  cv::Mat map1_, map2_;           // cv::initUndistortRectifyMap outputs
+  cv::Mat undistort_buffer_;      // pre-allocated remap output, reused per frame
+  bool undistort_ready_{false};
 
-  // Image subscription
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr img_sub_;
+  std::string camera_frame_id_;
+  std::string odom_frame_;
+
+  // tf2 buffer + listener (替代原始的 /tf 订阅)
+  tf2_ros::Buffer::SharedPtr tf2_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf2_listener_;
+
+  // Camera intrinsic parameters (default from config, overwritten by camera_info)
+  int image_width_{640};
+  int image_height_{480};
+  float camera_fx_;  // Horizontal focal length (pixels)
+  float camera_fy_;  // Vertical focal length (pixels)
+  float cx_;         // Principal point x (pixels)
+  float cy_;         // Principal point y (pixels)
+
+  // Image subscription via tf2_ros::MessageFilter, synchronized with TF
+  message_filters::Subscriber<sensor_msgs::msg::Image> img_mf_sub_;
+  std::shared_ptr<tf2_ros::MessageFilter<sensor_msgs::msg::Image>> tf2_filter_;
 
   // Target subscription
   // rclcpp::Subscription<rm_interfaces::msg::Target>::SharedPtr target_sub_;
@@ -109,7 +131,6 @@ private:
 
   // Debug information
   bool debug_;
-  std::string camera_name_;
   std::shared_ptr<rclcpp::ParameterEventHandler> debug_param_sub_;
   std::shared_ptr<rclcpp::ParameterCallbackHandle> debug_cb_handle_;
   rclcpp::Publisher<rm_interfaces::msg::DebugLights>::SharedPtr

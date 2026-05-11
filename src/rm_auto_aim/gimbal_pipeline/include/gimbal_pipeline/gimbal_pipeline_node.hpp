@@ -7,6 +7,7 @@
 #ifndef GIMBAL_PIPELINE__GIMBAL_PIPELINE_NODE_HPP_
 #define GIMBAL_PIPELINE__GIMBAL_PIPELINE_NODE_HPP_
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -31,6 +32,8 @@
 // ─── rm_interfaces ─────────────────────────────────────────────
 #include <rm_interfaces/msg/armor.hpp>
 #include <rm_interfaces/msg/armors.hpp>
+#include <rm_interfaces/msg/blind.hpp>
+#include <rm_interfaces/msg/blinds.hpp>
 #include <rm_interfaces/msg/delay_audit.hpp>
 #include <rm_interfaces/msg/fire_advice_debug.hpp>
 #include <rm_interfaces/msg/gimbal_cmd.hpp>
@@ -122,14 +125,36 @@ class GimbalPipelineNode : public rclcpp::Node {
   void initGimbalStrategies();
   void jointStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg);
   void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg);
+  void blindCallback(const rm_interfaces::msg::Blinds::SharedPtr msg,
+                      const std::string &topic);
   void updateGimbalState();
   void buildControlContextFromCache(
       gimbal_controller::GimbalControlContext &context,
-      std::string &selected_id);
+      std::string &selected_id,
+      SelectionResult::ControlMode &control_mode);
   void publishDelayAuditDebug(
       const gimbal_controller::GimbalControlContext &context,
       const gimbal_controller::DelayAuditSnapshot &audit,
       const std::string &strategy_name);
+
+  // ── blind selection strategy ──────────────────────────────────────────
+  using BlindSelectionFunc = std::function<rm_interfaces::msg::Blind::SharedPtr(
+      const std::vector<rm_interfaces::msg::Blind::SharedPtr> &candidates,
+      double current_yaw)>;
+  void initBlindSelectionStrategies();
+
+  // ── timerCallback helper functions ─────────────────────────────────────
+  void publishIdleCommand();
+  rm_interfaces::msg::Blind::SharedPtr collectBlindCandidates();
+  uint8_t computeTargetSources(bool main_camera_has_target);
+  rm_interfaces::msg::GimbalCmd buildBlindGuidanceCommand();
+  void applyGuidanceVelocitySmoothing(
+      double yaw_diff_rad, double pitch_diff_rad,
+      rm_interfaces::msg::GimbalCmd &cmd);
+  rm_interfaces::msg::GimbalCmd buildNoTargetCommand();
+  rm_interfaces::msg::GimbalCmd buildNormalCommand(
+      const gimbal_controller::GimbalControlContext &context,
+      const std::string &selected_id);
   void publishFireAdviceDebug(
       const gimbal_controller::GimbalControlContext &context,
       const rm_interfaces::msg::GimbalCmd &cmd,
@@ -207,6 +232,34 @@ class GimbalPipelineNode : public rclcpp::Node {
   std::string selector_strategy_name_;
   std::string current_target_id_;
 
+  rclcpp::Time guidance_start_time_;
+  static constexpr double GUIDANCE_TIMEOUT{3.0};  // 引导超时（秒），超时后重置计时器
+  double guidance_end_yaw_threshold_deg_{5.0};    // 引导结束的 yaw deviation 阈值（度），目标进入主相机视野中心时结束引导
+  bool enable_guidance_timeout_{false};           // 是否启用引导超时检测，默认关闭
+
+  // 引导速度平滑控制
+  double current_yaw_v_measured_{0.0};            // 从 TF 差分估计的当前角速度 (rad/s)
+  double current_pitch_v_measured_{0.0};
+  double last_guidance_cmd_yaw_v_{0.0};           // 上一周期引导模式输出的速度指令 (rad/s)
+  double last_guidance_cmd_pitch_v_{0.0};
+  bool guidance_vel_initialized_{false};          // 是否已从实测速度初始化引导速度指令
+  bool blind_guidance_active_{false};             // blind guidance 是否激活（用于状态切换）
+  double guidance_accel_limit_{10.0};             // 引导模式角加速度限幅 (rad/s²)
+  bool enable_guidance_velocity_smoothing_{true}; // 是否启用引导速度平滑，默认开启
+  double guidance_constant_yaw_v_{M_PI};          // 速度平滑关闭时的恒定 yaw 角速度 (rad/s)，默认 π rad/s = 180°/s
+
+  // 引导模式目标角度锁定（防止 cmd.yaw/pitch 频繁跳变）
+  // 原子类型：由 TF 回调线程和 timer 线程并发访问
+  std::atomic<double> guidance_locked_yaw_deg_{0.0};   // 锁定的目标 yaw (度，绝对坐标系)
+  std::atomic<double> guidance_locked_pitch_deg_{0.0}; // 锁定的目标 pitch (度，绝对坐标系)
+  std::atomic<bool> guidance_target_locked_{false};    // 是否已锁定引导目标角度
+
+  // 补盲目标超时机制：若某补盲相机在 blind_target_timeout_ 秒内未收到有效检测，
+  // 则认为该目标已"消失"，用于避免引导持续向无效目标旋转
+  double blind_target_timeout_{0.4};
+  // 每个补盲相机 topic 最近一次收到非空 Blinds 消息的时间戳（受 blind_buffer_mutex_ 保护）
+  std::unordered_map<std::string, rclcpp::Time> blind_last_nonempty_time_;
+
   /* ================================================================ */
   /*  Gimbal controller state (from GimbalControllerNode)             */
   /* ================================================================ */
@@ -222,9 +275,13 @@ class GimbalPipelineNode : public rclcpp::Node {
       gimbal_strategies_;
   std::string current_gimbal_strategy_name_{"current"};
 
+  bool enable_blind_{true};
+
   double current_yaw_{0.0};
   double current_pitch_{0.0};
   double bullet_speed_{20.0};
+  double max_yaw_v_{540.0};
+  double max_pitch_v_{360.0};
   double control_rate_{250.0};
   std::string ballistic_mode_{"service"};
   bool enable_{true};
@@ -249,6 +306,7 @@ class GimbalPipelineNode : public rclcpp::Node {
   rm_interfaces::msg::TrackedRobots::SharedPtr latest_tracked_robots_;
   std::string latest_selected_target_id_;
   double latest_selected_confidence_{0.0};
+  SelectionResult::ControlMode latest_control_mode_{SelectionResult::MODE_NO_TARGET};
   rclcpp::Time latest_update_time_{0, 0, RCL_ROS_TIME};  // local clock when data was cached
 
   /* ================================================================ */
@@ -259,6 +317,19 @@ class GimbalPipelineNode : public rclcpp::Node {
   std::shared_ptr<tf2_armor_filter> tf2_filter_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub_;
+
+  // Blind detector subscriptions — supports multi-camera (one sub per configured topic)
+  std::vector<std::string> blind_topics_;
+  double blind_sync_timeout_{0.05};
+  std::vector<rclcpp::Subscription<rm_interfaces::msg::Blinds>::SharedPtr> blind_subs_;
+  // Per-topic latest message buffer (protected by blind_buffer_mutex_)
+  std::unordered_map<std::string, rm_interfaces::msg::Blinds::SharedPtr> blind_latest_per_topic_;
+  std::mutex blind_buffer_mutex_;
+  // Best candidate selected each control cycle (used by buildBlindGuidanceCommand)
+  rm_interfaces::msg::Blind::SharedPtr latest_blind_msg_;
+  // Blind candidate selection strategy (configurable, keyed by name)
+  std::unordered_map<std::string, BlindSelectionFunc> blind_selection_strategies_;
+  std::string blind_selection_strategy_name_{"min_yaw"};
 
   // Publishers
   rclcpp::Publisher<rm_interfaces::msg::GimbalCmd>::SharedPtr gimbal_cmd_pub_;
@@ -275,6 +346,10 @@ class GimbalPipelineNode : public rclcpp::Node {
   rclcpp::Publisher<rm_interfaces::msg::Target>::SharedPtr debug_target_pub_;
   rclcpp::Publisher<rm_interfaces::msg::DelayAudit>::SharedPtr
       debug_delay_audit_pub_;
+
+  // Blind target debug publisher (always-on)
+  rclcpp::Publisher<rm_interfaces::msg::Blind>::SharedPtr
+      debug_blind_target_pub_;
   rclcpp::Publisher<rm_interfaces::msg::FireAdviceDebug>::SharedPtr
       debug_fire_advice_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr

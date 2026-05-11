@@ -24,22 +24,20 @@ ProtocolSentry::ProtocolSentry(std::string_view port_name, bool enable_data_prin
 }
 
 void ProtocolSentry::send(const rm_interfaces::msg::GimbalCmd &data) {
-  const auto safe_data = sanitizeForTransport(data);
-
   try{
     // Packet layout (64B):
     // [0]header [1]mode [2]pitch [6]yaw [10]distance [14]target_id
     // [18..25]free_datas[8] [26]pitch_v [30]yaw_v
     // [34]nav_vx [38]nav_vy [42]nav_wz [46]angle_climb [50]ifclimb
     // [51]angle_attack_outpost [55]if_attack_outpost [56]referee_param [60..61]free_data[2]
-    packet.loadData<unsigned char>(safe_data.fire_advice ? FireState::Fire : FireState::NotFire, 1);
-    packet.loadData<float>(static_cast<float>(safe_data.pitch), 2);
-    packet.loadData<float>(static_cast<float>(safe_data.yaw), 6);
-    packet.loadData<float>(static_cast<float>(safe_data.distance), 10);
-    packet.loadData<float>(static_cast<float>(safe_data.pitch_v), 26);
-    packet.loadData<float>(static_cast<float>(safe_data.yaw_v), 30);
+    packet.loadData<unsigned char>(data.fire_advice ? FireState::Fire : FireState::NotFire, 1);
+    packet.loadData<float>(static_cast<float>(data.pitch), 2);
+    packet.loadData<float>(static_cast<float>(data.yaw), 6);
+    packet.loadData<float>(static_cast<float>(data.distance), 10);
+    packet.loadData<float>(static_cast<float>(data.pitch_v), 26);
+    packet.loadData<float>(static_cast<float>(data.yaw_v), 30);
     int target_id;
-    if (safe_data.target_id == "outpost")target_id = 8;
+    if (data.target_id == "outpost")target_id = 8;
     else target_id = 4; // default target id
     packet.loadData<int>(target_id, 14);
   }
@@ -51,34 +49,27 @@ void ProtocolSentry::send(const rm_interfaces::msg::GimbalCmd &data) {
 
 
 void ProtocolSentry::send(const rm_interfaces::msg::Blind &data) {
-  if (data.is_left && data.yaw>0){
-    try{
-      packet.loadData<int>(static_cast<int>(std::stoi(data.number.substr(0,1))), 18);
-      packet.loadData<float>(static_cast<float>(data.yaw),22);
-    }
-    catch(const std::invalid_argument &e){
-      FYT_ERROR("serial_driver","left_blind_invalid_argument");
-      packet.loadData<int>(static_cast<int>(-1), 18);
-    }
-  }
-  else if (data.is_left){
-    packet.loadData<int>(static_cast<int>(-1), 18);
-  }
-  if (!data.is_left && data.yaw<0)
-  {
-    try{
-      packet.loadData<int>(static_cast<int>(std::stoi(data.number.substr(0,1))), 26);
-      packet.loadData<float>(static_cast<float>(data.yaw),30);
-    }
-    catch(const std::invalid_argument &e){
-      FYT_ERROR("serial_driver","right_blind_invalid_argument");
-      packet.loadData<int>(static_cast<int>(-1), 26);
+  // 单补盲相机（朝后）：按 yaw 正负分别填入下位机协议的左/右槽位
+  // 左槽位: number@18, yaw@22；右槽位: number@26, yaw@30
+  // 无目标时两槽位均填 -1
+  packet.loadData<int>(static_cast<int>(-1), 18);
+  packet.loadData<int>(static_cast<int>(-1), 26);
+
+  if (data.number != "-1") {
+    try {
+      int num = std::stoi(data.number.substr(0, 1));
+      if (data.yaw > 0) {
+        packet.loadData<int>(num, 18);
+        packet.loadData<float>(static_cast<float>(data.yaw), 22);
+      } else if (data.yaw < 0) {
+        packet.loadData<int>(num, 26);
+        packet.loadData<float>(static_cast<float>(data.yaw), 30);
+      }
+    } catch (const std::invalid_argument &e) {
+      FYT_ERROR("serial_driver", "blind_invalid_argument");
     }
   }
-  else if (!data.is_left){
-    packet.loadData<int>(static_cast<int>(-1), 26);
-  }
-  
+
   packet_tool_->sendPacket(packet);
 }
 
@@ -148,8 +139,6 @@ bool ProtocolSentry::receive(rm_interfaces::msg::SerialReceiveData &data) {
     packet.unloadData(data.whether2cruise,20);
     packet.unloadData(data.outpost_hp,21);
 
-    data.pitch = -data.pitch;
-
     //////////////////  added and change here //////////////////////
     /////navigation datag
     // packet.unloadData(data.progress, 14);
@@ -217,14 +206,18 @@ std::vector<rclcpp::Client<rm_interfaces::srv::SetMode>::SharedPtr> ProtocolSent
                                                                   rmw_qos_profile_services_default);
   auto client2 = node->create_client<rm_interfaces::srv::SetMode>("gimbal_pipeline/set_mode",
                                                                   rmw_qos_profile_services_default);
+  auto client3 = node->create_client<rm_interfaces::srv::SetMode>("blind_camera_1/blind_detector/set_mode",
+                                                                  rmw_qos_profile_services_default);
+  auto client4 = node->create_client<rm_interfaces::srv::SetMode>("blind_camera_2/blind_detector/set_mode",
+                                                                  rmw_qos_profile_services_default);
   auto client_buff_det = node->create_client<rm_interfaces::srv::SetMode>(
     "buff_detector/set_mode", rmw_qos_profile_services_default);
   auto client_buff_pose = node->create_client<rm_interfaces::srv::SetMode>(
     "buff_pose_estimator/set_mode", rmw_qos_profile_services_default);
-  auto client3 = node->create_client<rm_interfaces::srv::SetMode>("left/blind_detector/set_mode", rmw_qos_profile_services_default);  //补盲
+  // auto client3 = node->create_client<rm_interfaces::srv::SetMode>("left/blind_detector/set_mode", rmw_qos_profile_services_default);  //补盲
   //auto client4 = node->create_client<rm_interfaces::srv::SetMode>("right/blind_detector/set_mode", rmw_qos_profile_services_default);  //补盲
   //return {client1, client2};
-  return {client1, client2, client_buff_det, client_buff_pose};  //补盲
+  return {client1, client2, client3, client4, client_buff_det, client_buff_pose};  //补盲
 }
 
 }  // namespace fyt::serial_driver::protocol

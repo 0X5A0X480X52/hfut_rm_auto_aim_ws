@@ -243,6 +243,36 @@ bool DualRadiusSpinUKF::update_single(
   std::string armor_layer =
       armor_layer_in.empty() ? infer_armor_layer(obs.z) : armor_layer_in;
 
+  Eigen::Matrix4d R;
+
+  if (config_.ukf.r_source == "PNP_COVARIANCE" && obs.pos_covariance.has_value() && obs.yaw_variance.has_value()) {
+    // 从 PnP 协方差传播结果构建 R
+    const Eigen::Matrix3d &cov_xyz = obs.pos_covariance.value();
+    double cov_yaw = obs.yaw_variance.value();
+    // 对协方差施加最小限幅，防止数值退化
+    constexpr double min_pos_var = 1e-6;
+    constexpr double min_yaw_var = 1e-6;
+    R = Eigen::Vector4d(
+        std::max(cov_xyz(0,0), min_pos_var),
+        std::max(cov_xyz(1,1), min_pos_var),
+        std::max(cov_xyz(2,2), min_pos_var),
+        std::max(cov_yaw * config_.ukf.pnp_cov_yaw_inflation, min_yaw_var)
+    ).asDiagonal();
+  } else {
+    // CONFIG 模式（原行为）：使用 YAML 静态噪声参数
+    double np_ = config_.ukf.obs_noise_pos;
+    double ny = config_.ukf.obs_noise_yaw;
+    R = Eigen::Vector4d(np_ * np_, np_ * np_, np_ * np_, ny * ny).asDiagonal();
+  }
+
+  // Apply confidence-based scaling (common to both R sources)
+  if (height_confidence < 0.3) R(2, 2) *= 100.0;
+  if (position_confidence < 0.8) {
+    double scale = 100.0 / std::max(position_confidence, 0.1);
+    R(0, 0) *= scale;
+    R(1, 1) *= scale;
+  }
+
   // Sigma points
   Eigen::MatrixXd sigma_pts = generate_sigma_points(x_, P_);
   auto [Wm, Wc] = get_sigma_weights();
@@ -260,56 +290,6 @@ bool DualRadiusSpinUKF::update_single(
   Eigen::Vector4d z_pred = Eigen::Vector4d::Zero();
   for (int i = 0; i < n_sigma; ++i) {
     z_pred += Wm(i) * z_pred_pts.row(i).transpose();
-  }
-
-  // Observation noise:
-  // 1) fallback to legacy XYZ diagonal noise
-  // 2) when enabled, build YPD noise and map to XYZ with Jacobian
-  double np_ = config_.ukf.obs_noise_pos;
-  double ny = config_.ukf.obs_noise_yaw;
-  Eigen::Matrix4d R = Eigen::Vector4d(np_ * np_, np_ * np_, np_ * np_, ny * ny)
-                          .asDiagonal();
-  if (config_.ukf.enable_ypd_observation_noise) {
-    const double sigma_azi = config_.ukf.ypd_sigma_azi;
-    const double sigma_ele = config_.ukf.ypd_sigma_ele;
-    const double sigma_dist_coeff = config_.ukf.ypd_sigma_dist_coeff;
-    if (sigma_azi > 0.0 && sigma_ele > 0.0 && sigma_dist_coeff > 0.0) {
-      const double x = z_pred(0);
-      const double y = z_pred(1);
-      const double z = z_pred(2);
-      const double dist_xy = std::sqrt(x * x + y * y);
-      const double dist_3d = std::sqrt(dist_xy * dist_xy + z * z);
-      constexpr double kEps = 1e-6;
-      if (dist_3d > kEps) {
-        const double sigma_dist = sigma_dist_coeff * dist_3d;
-
-        Eigen::Matrix4d J = Eigen::Matrix4d::Zero();
-        J(0, 0) = -y;
-        J(0, 1) = (dist_xy > kEps) ? (-x * z / dist_xy) : 0.0;
-        J(0, 2) = x / dist_3d;
-
-        J(1, 0) = x;
-        J(1, 1) = (dist_xy > kEps) ? (-y * z / dist_xy) : 0.0;
-        J(1, 2) = y / dist_3d;
-
-        J(2, 1) = dist_xy;
-        J(2, 2) = z / dist_3d;
-
-        J(3, 3) = 1.0;
-
-        Eigen::Vector4d r_ypd;
-        r_ypd << sigma_azi * sigma_azi, sigma_ele * sigma_ele,
-            sigma_dist * sigma_dist, ny * ny;
-        R = J * r_ypd.asDiagonal() * J.transpose();
-      }
-    }
-  }
-
-  if (height_confidence < 0.3) R(2, 2) *= 100.0;
-  if (position_confidence < 0.8) {
-    double scale = 100.0 / std::max(position_confidence, 0.1);
-    R(0, 0) *= scale;
-    R(1, 1) *= scale;
   }
 
   // Innovation
@@ -342,7 +322,7 @@ bool DualRadiusSpinUKF::update_single(
   if (!K_opt) return false;
   Eigen::MatrixXd K = K_opt.value();
 
-  // Freeze structural params in single-obs
+  // 单观测时几何参数不可观测，完全冻结
   K.row(idx.R1()).setZero();
   K.row(idx.R2()).setZero();
   K.row(idx.DZA()).setZero();
@@ -458,11 +438,32 @@ bool DualRadiusSpinUKF::update_dual(
     x_(idx.R1()), x_(idx.R2()), x_(idx.DZA()),
     layer_1.c_str(), layer_2.c_str(), height_confidence);
 
-  // Geometry noise
-  double pn = config_.ukf.dual_obs_noise_pos;
+  // Geometry noise — 来源选择
   Eigen::VectorXd r_diag(6);
-  r_diag << pn * pn, pn * pn, pn * pn * z_noise_factor * z_noise_factor,
-      pn * pn, pn * pn, pn * pn * dza_noise_factor * dza_noise_factor;
+
+  if (config_.ukf.r_source == "PNP_COVARIANCE" &&
+      obs1.pos_covariance.has_value() && obs2.pos_covariance.has_value()) {
+    // 保守策略：取两个观测中较大的对角方差
+    const auto &c1 = obs1.pos_covariance.value();
+    const auto &c2 = obs2.pos_covariance.value();
+    double var_x  = std::max(c1(0,0), c2(0,0));
+    double var_y  = std::max(c1(1,1), c2(1,1));
+    double var_z  = std::max(c1(2,2), c2(2,2));
+    constexpr double min_var = 1e-6;
+    r_diag << std::max(var_x, min_var),
+              std::max(var_y, min_var),
+              std::max(var_z, min_var) * z_noise_factor * z_noise_factor,
+              config_.ukf.dual_obs_geometry_noise_scale * config_.ukf.dual_obs_geometry_noise_scale,
+              config_.ukf.dual_obs_geometry_noise_scale * config_.ukf.dual_obs_geometry_noise_scale,
+              config_.ukf.dual_obs_geometry_noise_scale * config_.ukf.dual_obs_geometry_noise_scale
+                   * dza_noise_factor * dza_noise_factor;
+  } else {
+    // CONFIG 模式（原行为）
+    double pn = config_.ukf.dual_obs_noise_pos;
+    r_diag << pn * pn, pn * pn, pn * pn * z_noise_factor * z_noise_factor,
+        pn * pn, pn * pn, pn * pn * dza_noise_factor * dza_noise_factor;
+  }
+
   Eigen::MatrixXd R_geo = r_diag.asDiagonal();
 
   // UKF update

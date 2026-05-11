@@ -34,13 +34,25 @@ struct SelectionResult {
   double confidence;             // Selection confidence [0, 1]
   double yaw_deviation;          // Yaw deviation from reference direction (rad)
   double distance;               // Distance to robot center (m)
-  
-  SelectionResult() 
-    : robot_id(""), confidence(0.0), yaw_deviation(0.0), distance(0.0) {}
-  
+
+  // 控制模式
+  enum ControlMode {
+    MODE_NO_TARGET = 0,      // 无目标
+    MODE_PRECISE_AIM = 1,    // 精确自瞄（主相机目标）
+  };
+  ControlMode control_mode{MODE_NO_TARGET};
+
+  // 目标来源相机 frame_id
+  std::string source_frame;
+
+  SelectionResult()
+    : robot_id(""), confidence(0.0), yaw_deviation(0.0), distance(0.0),
+      control_mode(MODE_NO_TARGET), source_frame("") {}
+
   SelectionResult(const std::string& id, double conf, double yaw_dev, double dist)
-    : robot_id(id), confidence(conf), yaw_deviation(yaw_dev), distance(dist) {}
-  
+    : robot_id(id), confidence(conf), yaw_deviation(yaw_dev), distance(dist),
+      control_mode(MODE_NO_TARGET), source_frame("") {}
+
   bool isValid() const { return !robot_id.empty(); }
 };
 
@@ -57,7 +69,11 @@ struct SelectionConfig {
   std::vector<std::string> priority_robot_ids;  // Robot IDs sorted by high->low priority
   int sticky_lock_frames;        // Frames needed to lock a preferred target id
   int sticky_lost_frames;        // Frames needed to clear preferred target id
-  
+
+  // 补盲相机配置
+  std::string main_camera_frame{"camera_optical_frame"};
+  std::string blind_camera_frame{"blind_camera_1_optical_frame"};
+
   SelectionConfig()
     : reference_yaw(0.0)
     , max_yaw_deviation(M_PI)
@@ -67,7 +83,9 @@ struct SelectionConfig {
     , hysteresis_threshold(0.1)
     , priority_robot_ids()
     , sticky_lock_frames(3)
-    , sticky_lost_frames(3) {}
+    , sticky_lost_frames(3)
+    , main_camera_frame("camera_optical_frame")
+    , blind_camera_frame("blind_camera_1_optical_frame") {}
 };
 
 /**

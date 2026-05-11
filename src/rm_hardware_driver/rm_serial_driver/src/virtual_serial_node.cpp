@@ -76,6 +76,14 @@ public:
       this->create_client<rm_interfaces::srv::SetMode>("buff_pose_estimator/set_mode");
     set_mode_clients_.emplace(buff_set_mode_client_2->get_service_name(),
                               buff_set_mode_client_2);
+    auto blind_camera_1_set_mode =
+      this->create_client<rm_interfaces::srv::SetMode>("blind_camera_1/blind_detector/set_mode");
+    set_mode_clients_.emplace(blind_camera_1_set_mode->get_service_name(),
+                              blind_camera_1_set_mode);
+    auto blind_camera_2_set_mode =
+      this->create_client<rm_interfaces::srv::SetMode>("blind_camera_2/blind_detector/set_mode");
+    set_mode_clients_.emplace(blind_camera_2_set_mode->get_service_name(),
+                              blind_camera_2_set_mode);
     if (has_rune_) {
       auto client1 = this->create_client<rm_interfaces::srv::SetMode>("rune_detector/set_mode");
       set_mode_clients_.emplace(client1->get_service_name(), client1);
@@ -117,23 +125,11 @@ public:
   }
 
   void setMode(SetModeClient &client, const uint8_t mode) {
-    using namespace std::chrono_literals;
-
-    std::string service_name = client.ptr->get_service_name();
-    // Wait for service
-    while (!client.ptr->wait_for_service(1s)) {
-      if (!rclcpp::ok()) {
-        FYT_ERROR(
-          "serial_driver", "Interrupted while waiting for the service {}. Exiting.", service_name);
-        return;
-      }
-      FYT_INFO("serial_driver", "service {} not available, waiting again...", service_name);
-    }
+    // Non-blocking check — called from 1ms timer callback, must not block.
+    // If the service isn't ready yet, skip and retry on the next timer tick.
     if (!client.ptr->service_is_ready()) {
-      FYT_WARN("serial_driver", "Service: {} is not available!", service_name);
       return;
     }
-    // Send request
     auto req = std::make_shared<rm_interfaces::srv::SetMode::Request>();
     req->mode = mode;
     client.on_waiting.store(true);

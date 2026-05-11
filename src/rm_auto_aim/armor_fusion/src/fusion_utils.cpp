@@ -130,6 +130,15 @@ rm_interfaces::msg::Armor fuseCluster(const std::vector<ArmorMeasurement> & clus
   fused_armor.pose.position.y = fused_position.y();
   fused_armor.pose.position.z = fused_position.z();
   fused_armor.pose.orientation = averageQuaternion(quaternions);
+
+  // 保留来源相机信息（取 cluster 中出现最多的 source_frame）
+  std::vector<std::string> source_frames;
+  source_frames.reserve(cluster.size());
+  for (const auto & measurement : cluster) {
+    source_frames.push_back(measurement.source_frame);
+  }
+  fused_armor.source_frame = modeString(source_frames);
+
   return fused_armor;
 }
 

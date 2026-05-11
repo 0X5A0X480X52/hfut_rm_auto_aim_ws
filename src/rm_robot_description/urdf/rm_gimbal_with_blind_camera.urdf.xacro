@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!--
+  Gimbal with main camera and blind camera model.
+  Main camera pose is from launch_params_decoupled.yaml (odom2camera).
+  Blind camera pose is from usb_camera_driver config.
+-->
+
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="rm_gimbal_with_blind_camera">
+
+  <!-- Main camera pose (from launch_params_decoupled.yaml) -->
+  <xacro:arg name="main_camera_xyz" default="0.174275 0.000 0.086463" />
+  <xacro:arg name="main_camera_rpy" default="0.0 0.1396 -0.00" />
+
+  <!-- Blind camera pose (symmetric with main camera, from usb_camera_driver config) -->
+  <xacro:arg name="blind_camera_1_xyz" default="-0.175 0.0 0.086" />
+  <xacro:arg name="blind_camera_1_rpy" default="0.0 0.14 ${pi}" />
+  <xacro:arg name="blind_camera_2_xyz" default="-0.175 0.05 0.086" />
+  <xacro:arg name="blind_camera_2_rpy" default="0.0 0.14 ${pi/2}" />
+  <xacro:arg name="blind_camera_3_xyz" default="-0.175 -0.05 0.086" />
+  <xacro:arg name="blind_camera_3_rpy" default="0.0 0.14 ${-pi/2}" />
+
+  <link name="odom" />
+
+  <!-- Base link fixed to odom -->
+  <link name="base_link" />
+  <joint name="odom_to_base_link" type="fixed">
+    <parent link="odom" />
+    <child link="base_link" />
+  </joint>
+
+  <!-- Gimbal link (floating joint for motion) -->
+  <link name="gimbal_link" />
+  <joint name="gimbal_joint" type="floating">
+    <parent link="odom" />
+    <child link="gimbal_link" />
+  </joint>
+
+  <!-- Main camera -->
+  <link name="camera_link" />
+  <joint name="camera_joint" type="fixed">
+    <origin xyz="$(arg main_camera_xyz)" rpy="$(arg main_camera_rpy)" />
+    <parent link="gimbal_link" />
+    <child link="camera_link" />
+  </joint>
+
+  <link name="camera_optical_frame" />
+  <joint name="camera_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}" />
+    <parent link="camera_link" />
+    <child link="camera_optical_frame" />
+  </joint>
+
+  <!-- Blind camera 1 -->
+  <link name="blind_camera_1_link" />
+  <joint name="blind_camera_1_joint" type="fixed">
+    <origin xyz="$(arg blind_camera_1_xyz)" rpy="$(arg blind_camera_1_rpy)" />
+    <parent link="gimbal_link" />
+    <child link="blind_camera_1_link" />
+  </joint>
+
+  <link name="blind_camera_1_optical_frame" />
+  <joint name="blind_camera_1_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}" />
+    <parent link="blind_camera_1_link" />
+    <child link="blind_camera_1_optical_frame" />
+  </joint>
+
+  <!-- Blind camera 2 -->
+  <link name="blind_camera_2_link" />
+  <joint name="blind_camera_2_joint" type="fixed">
+    <origin xyz="$(arg blind_camera_2_xyz)" rpy="$(arg blind_camera_2_rpy)" />
+    <parent link="gimbal_link" />
+    <child link="blind_camera_2_link" />
+  </joint>
+
+  <link name="blind_camera_2_optical_frame" />
+  <joint name="blind_camera_2_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}" />
+    <parent link="blind_camera_2_link" />
+    <child link="blind_camera_2_optical_frame" />
+  </joint>
+
+  <!-- Blind camera 3 -->
+  <link name="blind_camera_3_link" />
+  <joint name="blind_camera_3_joint" type="fixed">
+    <origin xyz="$(arg blind_camera_3_xyz)" rpy="$(arg blind_camera_3_rpy)" />
+    <parent link="gimbal_link" />
+    <child link="blind_camera_3_link" />
+  </joint>
+
+  <link name="blind_camera_3_optical_frame" />
+  <joint name="blind_camera_3_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}" />
+    <parent link="blind_camera_3_link" />
+    <child link="blind_camera_3_optical_frame" />
+  </joint>
+
+</robot>

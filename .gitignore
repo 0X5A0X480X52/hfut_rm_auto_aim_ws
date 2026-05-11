@@ -22,3 +22,9 @@ MvSdkLog/**
 rosbag2_**/**
 **.patch
 .claude/**
+
+
+docs/
+.claude/
+CLAUDE.md
+.worktrees/
