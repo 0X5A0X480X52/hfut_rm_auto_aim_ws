@@ -170,6 +170,8 @@ class GimbalPipelineNode : public rclcpp::Node {
   void publishEvidenceFrameDebug(
       const std_msgs::msg::Header &header,
       const std::vector<TrackerManager::TrackerConstView> &tracker_views);
+  void logNorm4V3TrackerDebug(
+      const std::vector<TrackerManager::TrackerConstView> &tracker_views);
   std::array<float, 4> hsvToRgb(float h, float s, float v);
 
   /* ================================================================ */

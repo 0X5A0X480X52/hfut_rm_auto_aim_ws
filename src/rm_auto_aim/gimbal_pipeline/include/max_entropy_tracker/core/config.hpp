@@ -594,6 +594,12 @@ struct Norm4V3SlowStructureConfig {
   double max_dza = 0.12;
 };
 
+struct Norm4V3DebugLogConfig {
+  bool enable = false;
+  int throttle_ms = 500;
+  bool verbose = false;
+};
+
 struct Norm4V3Config {
   bool enable_common_pipeline = false;
   bool enable_phase_memory = true;
@@ -612,6 +618,7 @@ struct Norm4V3Config {
   Norm4V3SinglePlateBridgeConfig single_plate_bridge;
   Norm4V3FallbackConfig fallback;
   Norm4V3BackendConfig backend_config;
+  Norm4V3DebugLogConfig debug_log;
 };
 
 // ======================== Unified Config ========================

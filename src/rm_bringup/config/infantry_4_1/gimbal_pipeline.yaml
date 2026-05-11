@@ -346,6 +346,10 @@ gimbal_pipeline:
       fallback:
         predict_only_on_reject: true
         enable_ambiguous_single_fallback: true
+      debug_log:
+        enable: true
+        throttle_ms: 300
+        verbose: true
 
     panel_mismatch:
       # 板匹配审计器：用于发现“内部id反转/层级错位”

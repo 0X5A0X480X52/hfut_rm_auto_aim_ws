@@ -1478,6 +1478,9 @@ void GimbalPipelineNode::declareTrackerParameters() {
 
   declare_parameter("norm4_v3.fallback.predict_only_on_reject", true);
   declare_parameter("norm4_v3.fallback.enable_ambiguous_single_fallback", true);
+  declare_parameter("norm4_v3.debug_log.enable", false);
+  declare_parameter("norm4_v3.debug_log.throttle_ms", 500);
+  declare_parameter("norm4_v3.debug_log.verbose", false);
 
   // Panel mismatch detection
   declare_parameter("panel_mismatch.enable", true);
@@ -2497,6 +2500,12 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("norm4_v3.fallback.predict_only_on_reject").as_bool();
   c.norm4_v3.fallback.enable_ambiguous_single_fallback =
       get_parameter("norm4_v3.fallback.enable_ambiguous_single_fallback").as_bool();
+  c.norm4_v3.debug_log.enable =
+      get_parameter("norm4_v3.debug_log.enable").as_bool();
+  c.norm4_v3.debug_log.throttle_ms =
+      std::max(50, get_parameter("norm4_v3.debug_log.throttle_ms").as_int());
+  c.norm4_v3.debug_log.verbose =
+      get_parameter("norm4_v3.debug_log.verbose").as_bool();
   c.norm4_v3.phase_memory.ping_pong_pattern_threshold =
       std::clamp(c.norm4_v3.phase_memory.ping_pong_pattern_threshold, 0.0, 1.0);
   c.norm4_v3.phase_memory.anti_pingpong.min_consistent_frames_to_commit =
@@ -3055,6 +3064,7 @@ void GimbalPipelineNode::armorsCallback(
 
   // ── Step 6: Debug publishing ──
   const auto tracker_views = tracker_manager_->initialized_tracker_views();
+  logNorm4V3TrackerDebug(tracker_views);
   if (debug_mode_) {
     if (debug_tracked_robots_pub_ && !tracked_msg.robots.empty())
       debug_tracked_robots_pub_->publish(tracked_msg);
@@ -3968,6 +3978,42 @@ void GimbalPipelineNode::publishEvidenceFrameDebug(
   std_msgs::msg::String out;
   out.data = oss.str();
   debug_evidence_frame_pub_->publish(out);
+}
+
+void GimbalPipelineNode::logNorm4V3TrackerDebug(
+    const std::vector<TrackerManager::TrackerConstView> &tracker_views) {
+  const auto &dbg_cfg = tracker_config_.norm4_v3.debug_log;
+  if (!dbg_cfg.enable) return;
+
+  std::ostringstream oss;
+  bool has_norm4v3 = false;
+  for (const auto &view : tracker_views) {
+    if (!view.tracker) continue;
+    const auto *norm4v3 = dynamic_cast<const Norm4ArmorTrackerV2 *>(view.tracker);
+    if (!norm4v3) continue;
+
+    has_norm4v3 = true;
+    const auto &h = norm4v3->last_hypothesis_debug();
+    const auto &s = norm4v3->debug_snapshot();
+
+    oss << " [" << view.robot_id
+        << " committed=" << (h.committed ? 1 : 0)
+        << " panel=" << s.current_panel_id
+        << " cand=" << s.candidate_panel_id
+        << " conf=" << h.top1_confidence
+        << " margin=" << h.top1_top2_margin;
+    if (dbg_cfg.verbose) {
+      oss << " mode=" << static_cast<int>(norm4v3->current_mode())
+          << " top1_nis=" << s.top1_nis
+          << " degraded=" << (h.degraded ? 1 : 0);
+    }
+    oss << " reason=" << h.decision_reason << "]";
+  }
+
+  if (!has_norm4v3) return;
+  RCLCPP_INFO_THROTTLE(
+      get_logger(), *get_clock(), dbg_cfg.throttle_ms,
+      "norm4_v3_debug:%s", oss.str().c_str());
 }
 
 /* ================================================================ */
