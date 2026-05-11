@@ -33,6 +33,17 @@ std::shared_ptr<CompositeProcessModel> create_v1_process_model(
                                       RotationModel::CV, tc, rc, sc, 3);
 }
 
+double weighted_angle_mean(const Eigen::MatrixXd &samples,
+                           const Eigen::VectorXd &weights, int col) {
+  double sin_sum = 0.0;
+  double cos_sum = 0.0;
+  for (int i = 0; i < samples.rows(); ++i) {
+    sin_sum += weights(i) * std::sin(samples(i, col));
+    cos_sum += weights(i) * std::cos(samples(i, col));
+  }
+  return std::atan2(sin_sum, cos_sum);
+}
+
 }  // namespace
 
 Norm4UkfBackendV1::Norm4UkfBackendV1(const UnifiedConfig &config, double dt)
@@ -57,9 +68,8 @@ void Norm4UkfBackendV1::reset(const ObservationData &obs, int panel_id,
   double center_x = obs.x - use_r * std::cos(obs.yaw);
   double center_y = obs.y - use_r * std::sin(obs.yaw);
   double center_yaw = normalize_angle(obs.yaw - panel_angle);
-  auto [k, delta] = decompose_yaw(center_yaw);
-  k_ = k;
-  last_k_ = k_;
+  k_ = 0;
+  last_k_ = 0;
 
   x_ = Eigen::VectorXd::Zero(process_model_->state_dim());
   x_(idx.X()) = center_x;
@@ -68,7 +78,7 @@ void Norm4UkfBackendV1::reset(const ObservationData &obs, int panel_id,
   x_(idx.VY()) = 0.0;
   x_(idx.Z()) = obs.z;
   x_(idx.VZ()) = 0.0;
-  x_(idx.DELTA()) = delta;
+  x_(idx.DELTA()) = center_yaw;
   x_(idx.DELTA_RATE()) = 0.0;
   x_(idx.R1()) = r1;
   x_(idx.R2()) = r2;
@@ -118,11 +128,12 @@ void Norm4UkfBackendV1::predict(double dt) {
   }
 
   int delta_idx = state_idx_.DELTA();
+  x_(delta_idx) = weighted_angle_mean(sigma_pred, Wm, delta_idx);
   Eigen::MatrixXd P_pred = Eigen::MatrixXd::Zero(n, n);
   for (int i = 0; i < n_sigma; ++i) {
     Eigen::VectorXd diff = sigma_pred.row(i).transpose() - x_;
     diff(delta_idx) =
-        delta_angle_diff(sigma_pred(i, delta_idx), x_(delta_idx));
+        angle_difference(sigma_pred(i, delta_idx), x_(delta_idx));
     P_pred += Wc(i) * diff * diff.transpose();
   }
   P_pred += Q_;
@@ -150,15 +161,15 @@ std::string Norm4UkfBackendV1::armor_layer_for_panel(int panel_id) {
 
 Eigen::Vector4d Norm4UkfBackendV1::obs_model_single(
     const Eigen::VectorXd &x, int k, int panel_id) const {
+  (void)k;
   auto idx = state_idx_;
   double x_c = x(idx.X());
   double y_c = x(idx.Y());
   double z_mean = x(idx.Z());
-  double delta = x(idx.DELTA());
   double d_za = x(idx.DZA());
 
   double radius = (panel_id % 2 == 0) ? x(idx.R1()) : x(idx.R2());
-  double center_yaw = compose_yaw(k, delta);
+  double center_yaw = normalize_angle(x(idx.DELTA()));
   double panel_angle = panel_id * (M_PI / 2.0);
   double armor_yaw = normalize_angle(center_yaw + panel_angle);
 
@@ -459,9 +470,10 @@ UkfTrial Norm4UkfBackendV1::tryUpdateSingle(
   for (int i = 0; i < n_sigma; ++i) {
     z_pred += Wm(i) * z_pred_pts.row(i).transpose();
   }
+  z_pred(3) = weighted_angle_mean(z_pred_pts, Wm, 3);
 
   Eigen::Vector4d innov = z_obs - z_pred;
-  innov(3) = normalize_angle(innov(3));
+  innov(3) = angle_difference(z_obs(3), z_pred(3));
 
   const auto &v1 = config_.norm4_v3.ukf_v1;
   double sp = v1.sigma_pos_xy;
@@ -473,7 +485,7 @@ UkfTrial Norm4UkfBackendV1::tryUpdateSingle(
   Eigen::MatrixXd diff_z(n_sigma, 4);
   for (int i = 0; i < n_sigma; ++i) {
     diff_z.row(i) = z_pred_pts.row(i) - z_pred.transpose();
-    diff_z(i, 3) = normalize_angle(diff_z(i, 3));
+    diff_z(i, 3) = angle_difference(z_pred_pts(i, 3), z_pred(3));
   }
 
   Eigen::Matrix4d Pzz = R;
@@ -504,25 +516,20 @@ UkfTrial Norm4UkfBackendV1::tryUpdateSingle(
   K.row(idx.DZA()) *= su.structural_gain_dza;
 
   Eigen::VectorXd x_post = ctx.x_prior + K * innov;
+  x_post(idx.DELTA()) = normalize_angle(x_post(idx.DELTA()));
   Eigen::MatrixXd P_post = ctx.P_prior - K * S * K.transpose();
   P_post = 0.5 * (P_post + P_post.transpose());
   P_post = ensure_positive_definite(P_post, 1e-6);
 
-  // Select best k for posterior
-  double post_delta = x_post(idx.DELTA());
-  double post_center_yaw = center_yaw_obs; // Use observed center_yaw
-  int best_k = select_best_k_from_center_yaw(post_delta, post_center_yaw,
-                                               ctx.k_prior);
-
   trial.success = true;
   trial.x_post = x_post;
   trial.P_post = P_post;
-  trial.k_post = best_k;
-  trial.last_k_post = ctx.k_prior;
+  trial.k_post = 0;
+  trial.last_k_post = 0;
 
   // Reconstruction check
   trial.reconstruction_pos_error =
-      compute_reconstruction_error(x_post, best_k, obs, p);
+      compute_reconstruction_error(x_post, trial.k_post, obs, p);
 
   // Posterior sanity
   trial.posterior_sanity_pass =
@@ -531,15 +538,6 @@ UkfTrial Norm4UkfBackendV1::tryUpdateSingle(
   if (!trial.posterior_sanity_pass) {
     trial.reject_reason = "posterior_sanity_fail";
     trial.success = false;
-  }
-
-  // Handle mode switch in posterior
-  if (post_delta > M_PI / 2.0) {
-    trial.x_post(idx.DELTA()) = post_delta - M_PI;
-    trial.k_post = 1 - best_k;
-  } else if (post_delta < -M_PI / 2.0) {
-    trial.x_post(idx.DELTA()) = post_delta + M_PI;
-    trial.k_post = 1 - best_k;
   }
 
   // Clamp structure params in trial
@@ -594,10 +592,12 @@ UkfTrial Norm4UkfBackendV1::tryUpdateDual(
   for (int i = 0; i < n_sigma; ++i) {
     z_pred += Wm(i) * z_pred_pts.row(i).transpose();
   }
+  z_pred(3) = weighted_angle_mean(z_pred_pts, Wm, 3);
+  z_pred(7) = weighted_angle_mean(z_pred_pts, Wm, 7);
 
   Eigen::Matrix<double, 8, 1> innov = z_obs - z_pred;
-  innov(3) = normalize_angle(innov(3));
-  innov(7) = normalize_angle(innov(7));
+  innov(3) = angle_difference(z_obs(3), z_pred(3));
+  innov(7) = angle_difference(z_obs(7), z_pred(7));
 
   const auto &v1 = config_.norm4_v3.ukf_v1;
   double sp = v1.sigma_pos_xy;
@@ -613,8 +613,8 @@ UkfTrial Norm4UkfBackendV1::tryUpdateDual(
   Eigen::MatrixXd diff_z(n_sigma, 8);
   for (int i = 0; i < n_sigma; ++i) {
     diff_z.row(i) = z_pred_pts.row(i) - z_pred.transpose();
-    diff_z(i, 3) = normalize_angle(diff_z(i, 3));
-    diff_z(i, 7) = normalize_angle(diff_z(i, 7));
+    diff_z(i, 3) = angle_difference(z_pred_pts(i, 3), z_pred(3));
+    diff_z(i, 7) = angle_difference(z_pred_pts(i, 7), z_pred(7));
   }
 
   Eigen::Matrix<double, 8, 8> Pzz = R;
@@ -644,24 +644,21 @@ UkfTrial Norm4UkfBackendV1::tryUpdateDual(
   K.row(idx.DZA()) *= du.structural_gain_dza;
 
   Eigen::VectorXd x_post = ctx.x_prior + K * innov;
+  x_post(idx.DELTA()) = normalize_angle(x_post(idx.DELTA()));
   Eigen::MatrixXd P_post = ctx.P_prior - K * S * K.transpose();
   P_post = 0.5 * (P_post + P_post.transpose());
   P_post = ensure_positive_definite(P_post, 1e-6);
 
-  double post_delta = x_post(idx.DELTA());
-  double avg_center_yaw = normalize_angle(
-      0.5 * (center_yaw_obs0 + center_yaw_obs1));
-  int best_k =
-      select_best_k_from_center_yaw(post_delta, avg_center_yaw, ctx.k_prior);
-
   trial.success = true;
   trial.x_post = x_post;
   trial.P_post = P_post;
-  trial.k_post = best_k;
-  trial.last_k_post = ctx.k_prior;
+  trial.k_post = 0;
+  trial.last_k_post = 0;
 
-  double recon0 = compute_reconstruction_error(x_post, best_k, obs0, p0);
-  double recon1 = compute_reconstruction_error(x_post, best_k, obs1, p1);
+  double recon0 =
+      compute_reconstruction_error(x_post, trial.k_post, obs0, p0);
+  double recon1 =
+      compute_reconstruction_error(x_post, trial.k_post, obs1, p1);
   trial.reconstruction_pos_error = std::max(recon0, recon1);
 
   trial.posterior_sanity_pass =
@@ -670,14 +667,6 @@ UkfTrial Norm4UkfBackendV1::tryUpdateDual(
   if (!trial.posterior_sanity_pass) {
     trial.reject_reason = "posterior_sanity_fail";
     trial.success = false;
-  }
-
-  if (post_delta > M_PI / 2.0) {
-    trial.x_post(idx.DELTA()) = post_delta - M_PI;
-    trial.k_post = 1 - best_k;
-  } else if (post_delta < -M_PI / 2.0) {
-    trial.x_post(idx.DELTA()) = post_delta + M_PI;
-    trial.k_post = 1 - best_k;
   }
 
   // Clamp structure params in trial (dual)
@@ -733,7 +722,7 @@ double Norm4UkfBackendV1::get_dza() const {
 }
 
 double Norm4UkfBackendV1::get_yaw() const {
-  return compose_yaw(k_, x_(state_idx_.DELTA()));
+  return normalize_angle(x_(state_idx_.DELTA()));
 }
 
 double Norm4UkfBackendV1::get_delta() const {
@@ -757,7 +746,7 @@ bool Norm4UkfBackendV1::check_posterior_sanity(
   if (center_jump > ps.max_center_jump) return false;
 
   // Yaw/delta jump check
-  double delta_jump = std::abs(delta_angle_diff(x_post(idx.DELTA()),
+  double delta_jump = std::abs(angle_difference(x_post(idx.DELTA()),
                                                   x_prior(idx.DELTA())));
   if (delta_jump > ps.max_yaw_jump) return false;
 
@@ -795,6 +784,7 @@ void Norm4UkfBackendV1::apply_state_constraints() {
   x_ = fyt::auto_aim::apply_state_constraints(
       x_, idx.R1(), idx.R2(), idx.DZA(), config_.constraints.min_radius,
       config_.constraints.max_radius, 0.0, config_.constraints.max_dz);
+  x_(idx.DELTA()) = normalize_angle(x_(idx.DELTA()));
 }
 
 }  // namespace fyt::auto_aim::norm4_v3

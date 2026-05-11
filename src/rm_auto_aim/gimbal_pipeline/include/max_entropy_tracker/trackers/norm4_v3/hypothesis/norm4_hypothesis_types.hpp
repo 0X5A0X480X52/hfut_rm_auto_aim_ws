@@ -58,6 +58,10 @@ struct UkfTrial {
   Eigen::MatrixXd P_post;
   int k_post = 0;
   int last_k_post = 0;
+  struct {
+    int panel_id = -1;
+    int phase_index = -1;
+  } hybrid_post;
 
   double reconstruction_pos_error = 0.0;
   double reconstruction_yaw_error = 0.0;
@@ -70,6 +74,10 @@ struct PredictContext {
   Eigen::MatrixXd P_prior;
   int k_prior = 0;
   int last_k_prior = 0;
+  struct {
+    int panel_id = -1;
+    int phase_index = -1;
+  } hybrid_prior;
   double timestamp = 0.0;
 };
 

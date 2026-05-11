@@ -1450,6 +1450,18 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("norm4_v3.backend_config.motion_profile", "default");
   declare_parameter("norm4_v3.backend_config.noise_profile", "default");
   declare_parameter("norm4_v3.backend_config.structure_profile", "slow");
+  declare_parameter("norm4_v3.inekf_runtime.motion_profile", "default");
+  declare_parameter("norm4_v3.inekf_runtime.noise_profile", "default");
+  declare_parameter("norm4_v3.inekf_runtime.structure_profile", "slow");
+  declare_parameter("norm4_v3.inekf_runtime.translation_model", "");
+  declare_parameter("norm4_v3.inekf_runtime.cv_process_noise_vel", -1.0);
+  declare_parameter("norm4_v3.inekf_runtime.ca_process_noise_acc", -1.0);
+  declare_parameter("norm4_v3.inekf_runtime.singer_alpha", -1.0);
+  declare_parameter("norm4_v3.inekf_runtime.singer_sigma", -1.0);
+  declare_parameter("norm4_v3.inekf_runtime.process_noise_r", -1.0);
+  declare_parameter("norm4_v3.inekf_runtime.process_noise_dz", -1.0);
+  declare_parameter("norm4_v3.inekf_runtime.spin_process_noise_delta_rate", -1.0);
+  declare_parameter("norm4_v3.inekf_runtime.spin_process_noise_delta_acc", -1.0);
 
   declare_parameter("norm4_v3.hypothesis_selector.topk", 4);
   declare_parameter("norm4_v3.hypothesis_selector.commit_top1_only", true);
@@ -2449,6 +2461,32 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("norm4_v3.backend_config.noise_profile").as_string();
   c.norm4_v3.backend_config.structure_profile =
       get_parameter("norm4_v3.backend_config.structure_profile").as_string();
+  c.norm4_v3.inekf_runtime.motion_profile =
+      get_parameter("norm4_v3.inekf_runtime.motion_profile").as_string();
+  c.norm4_v3.inekf_runtime.noise_profile =
+      get_parameter("norm4_v3.inekf_runtime.noise_profile").as_string();
+  c.norm4_v3.inekf_runtime.structure_profile =
+      get_parameter("norm4_v3.inekf_runtime.structure_profile").as_string();
+  c.norm4_v3.inekf_runtime.translation_model =
+      get_parameter("norm4_v3.inekf_runtime.translation_model").as_string();
+  c.norm4_v3.inekf_runtime.cv_process_noise_vel =
+      get_parameter("norm4_v3.inekf_runtime.cv_process_noise_vel").as_double();
+  c.norm4_v3.inekf_runtime.ca_process_noise_acc =
+      get_parameter("norm4_v3.inekf_runtime.ca_process_noise_acc").as_double();
+  c.norm4_v3.inekf_runtime.singer_alpha =
+      get_parameter("norm4_v3.inekf_runtime.singer_alpha").as_double();
+  c.norm4_v3.inekf_runtime.singer_sigma =
+      get_parameter("norm4_v3.inekf_runtime.singer_sigma").as_double();
+  c.norm4_v3.inekf_runtime.process_noise_r =
+      get_parameter("norm4_v3.inekf_runtime.process_noise_r").as_double();
+  c.norm4_v3.inekf_runtime.process_noise_dz =
+      get_parameter("norm4_v3.inekf_runtime.process_noise_dz").as_double();
+  c.norm4_v3.inekf_runtime.spin_process_noise_delta_rate =
+      get_parameter("norm4_v3.inekf_runtime.spin_process_noise_delta_rate")
+          .as_double();
+  c.norm4_v3.inekf_runtime.spin_process_noise_delta_acc =
+      get_parameter("norm4_v3.inekf_runtime.spin_process_noise_delta_acc")
+          .as_double();
 
   c.norm4_v3.hypothesis_selector.topk =
       get_parameter("norm4_v3.hypothesis_selector.topk").as_int();
@@ -2503,7 +2541,8 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
   c.norm4_v3.debug_log.enable =
       get_parameter("norm4_v3.debug_log.enable").as_bool();
   c.norm4_v3.debug_log.throttle_ms =
-      std::max(50, get_parameter("norm4_v3.debug_log.throttle_ms").as_int());
+      std::max<int>(50, static_cast<int>(
+                            get_parameter("norm4_v3.debug_log.throttle_ms").as_int()));
   c.norm4_v3.debug_log.verbose =
       get_parameter("norm4_v3.debug_log.verbose").as_bool();
   c.norm4_v3.phase_memory.ping_pong_pattern_threshold =

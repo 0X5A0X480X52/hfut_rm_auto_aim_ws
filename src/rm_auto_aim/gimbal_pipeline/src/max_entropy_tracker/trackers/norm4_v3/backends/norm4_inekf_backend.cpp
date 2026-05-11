@@ -32,17 +32,18 @@ InvariantPoseBackend::InvariantPoseBackend(
 void InvariantPoseBackend::reset(const ObservationData &obs, int panel_id,
                                   double r1, double r2, double dza) {
   current_panel_id_ = ((panel_id % 4) + 4) % 4;
+  phase_index_ = current_panel_id_;
 
-  x_ = motion_->initial_state(obs, current_panel_id_, r1, r2, dza);
+  x_ = initialize_invariant_state(obs, current_panel_id_, r1, r2, dza);
   P_ = motion_->initial_covariance();
 
   auto idx = motion_->state_idx();
-  double panel_angle = current_panel_id_ * (M_PI / 2.0);
+  const auto pp = get_panel_profile(current_panel_id_);
+  double panel_angle = pp.phase_offset;
   double center_yaw = normalize_angle(obs.yaw - panel_angle);
-  auto [k_val, delta_val] = decompose_yaw(center_yaw);
-  k_ = k_val;
-  last_k_ = k_;
-  x_(idx.DELTA()) = delta_val;
+  k_ = phase_index_;
+  last_k_ = phase_index_;
+  x_(idx.DELTA()) = center_yaw;
 
   last_innov_xyz_ = Eigen::VectorXd::Zero(3);
   last_innov_yaw_ = 0.0;
@@ -60,17 +61,36 @@ void InvariantPoseBackend::predict(double dt) {
   int n = motion_->state_dim();
   auto idx = motion_->state_idx();
 
-  // ── Mean propagation (nominal dynamics) ──
-  // R → R * Exp(e_z * β * dt)  ⟺  delta → delta + delta_rate * dt
-  // p → p + v * dt
+  // ── Mean propagation on SE(2.5)-style nominal state ──
+  // R_{k+1} = R_k * Exp(e_z * beta * dt)  <=> yaw += yaw_rate * dt
+  // p_{k+1} = p_k + v_k * dt (+ 0.5 * a * dt^2 for CA/Singer-style layout)
   // v → v
   // beta → beta
   // theta → theta
   Eigen::VectorXd x_pred = x_;
-  x_pred(idx.X()) += x_(idx.VX()) * dt;
-  x_pred(idx.Y()) += x_(idx.VY()) * dt;
-  x_pred(idx.Z()) += x_(idx.VZ()) * dt;
-  x_pred(idx.DELTA()) += x_(idx.DELTA_RATE()) * dt;
+  const bool ca_xyz = idx.has("AX") && idx.has("AY") && idx.has("AZ");
+  if (ca_xyz) {
+    x_pred(idx.X()) += x_(idx.VX()) * dt + 0.5 * x_(idx.AX()) * dt * dt;
+    x_pred(idx.Y()) += x_(idx.VY()) * dt + 0.5 * x_(idx.AY()) * dt * dt;
+    x_pred(idx.Z()) += x_(idx.VZ()) * dt + 0.5 * x_(idx.AZ()) * dt * dt;
+    x_pred(idx.VX()) += x_(idx.AX()) * dt;
+    x_pred(idx.VY()) += x_(idx.AY()) * dt;
+    x_pred(idx.VZ()) += x_(idx.AZ()) * dt;
+  } else {
+    x_pred(idx.X()) += x_(idx.VX()) * dt;
+    x_pred(idx.Y()) += x_(idx.VY()) * dt;
+    x_pred(idx.Z()) += x_(idx.VZ()) * dt;
+  }
+
+  if (idx.has("DELTA_ACC")) {
+    x_pred(idx.DELTA()) = normalize_angle(
+        x_(idx.DELTA()) + x_(idx.DELTA_RATE()) * dt +
+        0.5 * x_(idx.get("DELTA_ACC")) * dt * dt);
+    x_pred(idx.DELTA_RATE()) += x_(idx.get("DELTA_ACC")) * dt;
+  } else {
+    x_pred(idx.DELTA()) =
+        normalize_angle(x_(idx.DELTA()) + x_(idx.DELTA_RATE()) * dt);
+  }
   // velocity, yaw-rate, structure: unchanged (CV model)
 
   // ── Error-state transition matrix F (n × n) ──
@@ -81,19 +101,23 @@ void InvariantPoseBackend::predict(double dt) {
   F(idx.Z(), idx.VZ()) = dt;
   F(idx.DELTA(), idx.DELTA_RATE()) = dt;
 
-  // Optional CA states: AX/AY/AZ decay
-  if (idx.has("AX")) {
-    F(idx.AX(), idx.AX()) = 0.0;  // no acceleration integration in CV
+  if (ca_xyz) {
+    F(idx.X(), idx.AX()) = 0.5 * dt * dt;
+    F(idx.Y(), idx.AY()) = 0.5 * dt * dt;
+    F(idx.Z(), idx.AZ()) = 0.5 * dt * dt;
+    F(idx.VX(), idx.AX()) = dt;
+    F(idx.VY(), idx.AY()) = dt;
+    F(idx.VZ(), idx.AZ()) = dt;
   }
-  if (idx.has("AY")) {
-    F(idx.AY(), idx.AY()) = 0.0;
-  }
-  if (idx.has("AZ")) {
-    F(idx.AZ(), idx.AZ()) = 0.0;
+
+  if (idx.has("DELTA_ACC")) {
+    const int dacc = idx.get("DELTA_ACC");
+    F(idx.DELTA(), dacc) = 0.5 * dt * dt;
+    F(idx.DELTA_RATE(), dacc) = dt;
   }
 
   // ── Covariance propagation ──
-  Eigen::MatrixXd Q = motion_->build_Q(dt);
+  Eigen::MatrixXd Q = build_invariant_Q(dt);
   P_ = F * P_ * F.transpose() + Q;
 
   x_ = x_pred;
@@ -107,26 +131,31 @@ PredictContext InvariantPoseBackend::buildPredictContext() const {
   ctx.P_prior = P_;
   ctx.k_prior = k_;
   ctx.last_k_prior = last_k_;
+  ctx.hybrid_prior.panel_id = current_panel_id_;
+  ctx.hybrid_prior.phase_index = phase_index_;
   return ctx;
 }
 
 Eigen::Vector4d InvariantPoseBackend::obs_model_single(
     const Eigen::VectorXd &x, int k, int panel_id) const {
+  (void)k;
   auto idx = motion_->state_idx();
   double x_c = x(idx.X());
   double y_c = x(idx.Y());
   double z_mean = x(idx.Z());
-  double delta = x(idx.DELTA());
   double d_za = x(idx.DZA());
 
-  double radius = (panel_id % 2 == 0) ? x(idx.R1()) : x(idx.R2());
-  double center_yaw = compose_yaw(k, delta);
-  double panel_angle = panel_id * (M_PI / 2.0);
-  double armor_yaw = normalize_angle(center_yaw + panel_angle);
-
-  double x_obs = x_c + radius * std::cos(armor_yaw);
-  double y_obs = y_c + radius * std::sin(armor_yaw);
-  double z_offset = (panel_id % 2 == 0) ? -d_za : d_za;
+  const auto pp = get_panel_profile(panel_id);
+  double radius = pp.use_r2 ? x(idx.R2()) : x(idx.R1());
+  double center_yaw = normalize_angle(x(idx.DELTA()));
+  // Group action viewpoint:
+  // p_armor = p_center + R(center_yaw) * Exp(panel_phase) * [radius, 0]^T.
+  const double armor_yaw = normalize_angle(center_yaw + pp.phase_offset);
+  const Eigen::Vector2d radial_vec(radius * std::cos(armor_yaw),
+                                   radius * std::sin(armor_yaw));
+  double x_obs = x_c + radial_vec.x();
+  double y_obs = y_c + radial_vec.y();
+  double z_offset = pp.z_sign * d_za;
   double z_obs = z_mean + z_offset;
 
   Eigen::Vector4d z;
@@ -136,18 +165,15 @@ Eigen::Vector4d InvariantPoseBackend::obs_model_single(
 
 Eigen::MatrixXd InvariantPoseBackend::obs_jacobian_single(
     const Eigen::VectorXd &x, int k, int panel_id) const {
+  (void)k;
   int n = motion_->state_dim();
   auto idx = motion_->state_idx();
   const int p = ((panel_id % 4) + 4) % 4;
 
-  double x_c = x(idx.X());
-  double y_c = x(idx.Y());
-  double delta = x(idx.DELTA());
-  double d_za = x(idx.DZA());
-  double radius = (p % 2 == 0) ? x(idx.R1()) : x(idx.R2());
-  double center_yaw = compose_yaw(k, delta);
-  double panel_angle = p * (M_PI / 2.0);
-  double armor_yaw = normalize_angle(center_yaw + panel_angle);
+  const auto pp = get_panel_profile(p);
+  double radius = pp.use_r2 ? x(idx.R2()) : x(idx.R1());
+  double center_yaw = normalize_angle(x(idx.DELTA()));
+  double armor_yaw = normalize_angle(center_yaw + pp.phase_offset);
 
   double cos_a = std::cos(armor_yaw);
   double sin_a = std::sin(armor_yaw);
@@ -160,7 +186,7 @@ Eigen::MatrixXd InvariantPoseBackend::obs_jacobian_single(
   H(0, idx.Y()) = 0.0;
   H(0, idx.Z()) = 0.0;
   H(0, idx.DELTA()) = -radius * sin_a;
-  if (p % 2 == 0) {
+  if (!pp.use_r2) {
     H(0, idx.R1()) = cos_a;
   } else {
     H(0, idx.R2()) = cos_a;
@@ -171,7 +197,7 @@ Eigen::MatrixXd InvariantPoseBackend::obs_jacobian_single(
   H(1, idx.Y()) = 1.0;
   H(1, idx.Z()) = 0.0;
   H(1, idx.DELTA()) = radius * cos_a;
-  if (p % 2 == 0) {
+  if (!pp.use_r2) {
     H(1, idx.R1()) = sin_a;
   } else {
     H(1, idx.R2()) = sin_a;
@@ -179,7 +205,7 @@ Eigen::MatrixXd InvariantPoseBackend::obs_jacobian_single(
 
   // Row 2: ∂z_obs/∂state
   H(2, idx.Z()) = 1.0;
-  H(2, idx.DZA()) = (p % 2 == 0) ? -1.0 : 1.0;
+  H(2, idx.DZA()) = pp.z_sign;
 
   // Row 3: ∂yaw_obs/∂state
   H(3, idx.DELTA()) = 1.0;
@@ -202,7 +228,7 @@ MeasurementEval InvariantPoseBackend::evaluateSingle(
       obs_jacobian_single(ctx.x_prior, ctx.k_prior, p);
 
   Eigen::Vector4d innov = z_obs - z_pred;
-  innov(3) = normalize_angle(innov(3));
+  innov(3) = angle_difference(z_obs(3), z_pred(3));
 
   Eigen::Matrix4d R = noise_->build_single_R(obs);
 
@@ -286,8 +312,8 @@ MeasurementEval InvariantPoseBackend::evaluateDual(
   H << H0, H1;
 
   Eigen::Matrix<double, 8, 1> innov = z_obs - z_pred;
-  innov(3) = normalize_angle(innov(3));
-  innov(7) = normalize_angle(innov(7));
+  innov(3) = angle_difference(z_obs(3), z_pred(3));
+  innov(7) = angle_difference(z_obs(7), z_pred(7));
 
   Eigen::Matrix<double, 8, 8> R = noise_->build_dual_R(obs0, obs1);
   Eigen::Matrix<double, 8, 8> S = H * ctx.P_prior * H.transpose() + R;
@@ -376,7 +402,6 @@ UkfTrial InvariantPoseBackend::tryUpdateSingle(
   Eigen::MatrixXd H =
       obs_jacobian_single(ctx.x_prior, ctx.k_prior, p);
 
-  double center_yaw_obs = normalize_angle(obs.yaw - p * (M_PI / 2.0));
   Eigen::Vector4d innov = eval.innovation;
   Eigen::Matrix4d R = noise_->build_single_R(obs);
   Eigen::Matrix4d S = eval.S;
@@ -390,12 +415,9 @@ UkfTrial InvariantPoseBackend::tryUpdateSingle(
   K.row(idx.R2()) *= su.structural_gain_r;
   K.row(idx.DZA()) *= su.structural_gain_dza;
 
-  // Error-state correction
+  // Error-state correction on algebra, then retract to nominal SE(2.5)-style state.
   Eigen::VectorXd dx = K * innov;
-
-  // Retract: x⁺ = x + dx (Euclidean for all states in our layout)
-  // For yaw: handled via wrap in the innovation, retraction is additive on delta
-  Eigen::VectorXd x_post = ctx.x_prior + dx;
+  Eigen::VectorXd x_post = retract_se25_state(ctx.x_prior, dx);
 
   // Joseph form covariance update
   Eigen::MatrixXd I_KH =
@@ -405,34 +427,22 @@ UkfTrial InvariantPoseBackend::tryUpdateSingle(
   P_post = 0.5 * (P_post + P_post.transpose());
   P_post = ensure_positive_definite(P_post, 1e-6);
 
-  // k selection
-  double post_delta = x_post(idx.DELTA());
-  int best_k =
-      select_best_k_from_center_yaw(post_delta, center_yaw_obs, ctx.k_prior);
-
   trial.success = true;
   trial.x_post = x_post;
   trial.P_post = P_post;
-  trial.k_post = best_k;
+  trial.k_post = p;
   trial.last_k_post = ctx.k_prior;
+  trial.hybrid_post.panel_id = p;
+  trial.hybrid_post.phase_index = p;
 
   trial.reconstruction_pos_error =
-      compute_reconstruction_error(x_post, best_k, obs, p);
+      compute_reconstruction_error(x_post, trial.k_post, obs, p);
   trial.posterior_sanity_pass =
       check_posterior_sanity(ctx.x_prior, x_post, P_post);
 
   if (!trial.posterior_sanity_pass) {
     trial.reject_reason = "posterior_sanity_fail";
     trial.success = false;
-  }
-
-  // Handle mode switch (delta > π/2 or < -π/2)
-  if (post_delta > M_PI / 2.0) {
-    trial.x_post(idx.DELTA()) = post_delta - M_PI;
-    trial.k_post = 1 - best_k;
-  } else if (post_delta < -M_PI / 2.0) {
-    trial.x_post(idx.DELTA()) = post_delta + M_PI;
-    trial.k_post = 1 - best_k;
   }
 
   // Clamp structure params
@@ -489,7 +499,7 @@ UkfTrial InvariantPoseBackend::tryUpdateDual(
   K.row(idx.DZA()) *= du.structural_gain_dza;
 
   Eigen::VectorXd dx = K * innov;
-  Eigen::VectorXd x_post = ctx.x_prior + dx;
+  Eigen::VectorXd x_post = retract_se25_state(ctx.x_prior, dx);
 
   // Joseph form
   Eigen::MatrixXd I_KH =
@@ -499,23 +509,18 @@ UkfTrial InvariantPoseBackend::tryUpdateDual(
   P_post = 0.5 * (P_post + P_post.transpose());
   P_post = ensure_positive_definite(P_post, 1e-6);
 
-  double cy0 = normalize_angle(obs0.yaw - p0 * (M_PI / 2.0));
-  double cy1 = normalize_angle(obs1.yaw - p1 * (M_PI / 2.0));
-  double avg_cy = normalize_angle(0.5 * (cy0 + cy1));
-  double post_delta = x_post(idx.DELTA());
-  int best_k =
-      select_best_k_from_center_yaw(post_delta, avg_cy, ctx.k_prior);
-
   trial.success = true;
   trial.x_post = x_post;
   trial.P_post = P_post;
-  trial.k_post = best_k;
+  trial.k_post = p0;
   trial.last_k_post = ctx.k_prior;
+  trial.hybrid_post.panel_id = p0;
+  trial.hybrid_post.phase_index = p0;
 
   double recon0 =
-      compute_reconstruction_error(x_post, best_k, obs0, p0);
+      compute_reconstruction_error(x_post, trial.k_post, obs0, p0);
   double recon1 =
-      compute_reconstruction_error(x_post, best_k, obs1, p1);
+      compute_reconstruction_error(x_post, trial.k_post, obs1, p1);
   trial.reconstruction_pos_error = std::max(recon0, recon1);
   trial.posterior_sanity_pass =
       check_posterior_sanity(ctx.x_prior, x_post, P_post);
@@ -523,14 +528,6 @@ UkfTrial InvariantPoseBackend::tryUpdateDual(
   if (!trial.posterior_sanity_pass) {
     trial.reject_reason = "posterior_sanity_fail";
     trial.success = false;
-  }
-
-  if (post_delta > M_PI / 2.0) {
-    trial.x_post(idx.DELTA()) = post_delta - M_PI;
-    trial.k_post = 1 - best_k;
-  } else if (post_delta < -M_PI / 2.0) {
-    trial.x_post(idx.DELTA()) = post_delta + M_PI;
-    trial.k_post = 1 - best_k;
   }
 
   trial.x_post(idx.R1()) =
@@ -550,6 +547,7 @@ void InvariantPoseBackend::commit(const UkfTrial &trial) {
   P_ = trial.P_post;
   k_ = trial.k_post;
   last_k_ = trial.last_k_post;
+  phase_index_ = trial.hybrid_post.phase_index;
 
   if (trial.hypothesis.kind == HypothesisKind::Single) {
     current_panel_id_ = trial.hypothesis.assignments[0].panel_id;
@@ -584,6 +582,8 @@ BackendSnapshot InvariantPoseBackend::snapshot() const {
   snap.k = k_;
   snap.last_k = last_k_;
   snap.current_panel_id = current_panel_id_;
+  snap.hybrid.panel_id = current_panel_id_;
+  snap.hybrid.phase_index = phase_index_;
   snap.last_nis = last_nis_;
   snap.last_innov_xyz = last_innov_xyz_;
   snap.last_innov_yaw = last_innov_yaw_;
@@ -614,7 +614,7 @@ double InvariantPoseBackend::get_dza() const {
 }
 
 double InvariantPoseBackend::get_yaw() const {
-  return compose_yaw(k_, x_(motion_->state_idx().DELTA()));
+  return normalize_angle(x_(motion_->state_idx().DELTA()));
 }
 
 double InvariantPoseBackend::get_delta() const {
@@ -634,7 +634,7 @@ bool InvariantPoseBackend::check_posterior_sanity(
   if ((post_center - prior_center).norm() > ps.max_center_jump) return false;
 
   double delta_jump = std::abs(
-      delta_angle_diff(x_post(idx.DELTA()), x_prior(idx.DELTA())));
+      angle_difference(x_post(idx.DELTA()), x_prior(idx.DELTA())));
   if (delta_jump > ps.max_yaw_jump) return false;
 
   double r1 = x_post(idx.R1()), r2 = x_post(idx.R2());
@@ -660,11 +660,142 @@ double InvariantPoseBackend::compute_reconstruction_error(
   return (pos_obs - pos_rebuild).norm();
 }
 
+Eigen::VectorXd InvariantPoseBackend::retract_se25_state(
+    const Eigen::VectorXd &x_prior, const Eigen::VectorXd &dx) const {
+  const auto idx = motion_->state_idx();
+  Eigen::VectorXd x_post = x_prior;
+
+  // Group part: (R_yaw, p_xy, z) uses Lie retraction; in yaw-only form this is
+  // equivalent to additive update + angle wrap on yaw.
+  x_post(idx.X()) += dx(idx.X());
+  x_post(idx.Y()) += dx(idx.Y());
+  x_post(idx.Z()) += dx(idx.Z());
+  x_post(idx.DELTA()) = normalize_angle(x_prior(idx.DELTA()) + dx(idx.DELTA()));
+
+  // Algebra / Euclidean part.
+  if (idx.has("VX")) x_post(idx.VX()) += dx(idx.VX());
+  if (idx.has("VY")) x_post(idx.VY()) += dx(idx.VY());
+  if (idx.has("VZ")) x_post(idx.VZ()) += dx(idx.VZ());
+  if (idx.has("DELTA_RATE")) x_post(idx.DELTA_RATE()) += dx(idx.DELTA_RATE());
+  if (idx.has("AX")) x_post(idx.AX()) += dx(idx.AX());
+  if (idx.has("AY")) x_post(idx.AY()) += dx(idx.AY());
+  if (idx.has("AZ")) x_post(idx.AZ()) += dx(idx.AZ());
+  if (idx.has("DELTA_ACC")) x_post(idx.get("DELTA_ACC")) += dx(idx.get("DELTA_ACC"));
+
+  // Slow structural state (theta) remains Euclidean.
+  x_post(idx.R1()) += dx(idx.R1());
+  x_post(idx.R2()) += dx(idx.R2());
+  x_post(idx.DZA()) += dx(idx.DZA());
+  return x_post;
+}
+
+Eigen::VectorXd InvariantPoseBackend::initialize_invariant_state(
+    const ObservationData &obs, int panel_id, double r1, double r2,
+    double dza) const {
+  const auto idx = motion_->state_idx();
+  Eigen::VectorXd x0 = Eigen::VectorXd::Zero(motion_->state_dim());
+  const auto pp = get_panel_profile(panel_id);
+  const double use_r = pp.use_r2 ? r2 : r1;
+  const double center_yaw = normalize_angle(obs.yaw - pp.phase_offset);
+
+  x0(idx.X()) = obs.x - use_r * std::cos(obs.yaw);
+  x0(idx.Y()) = obs.y - use_r * std::sin(obs.yaw);
+  x0(idx.Z()) = obs.z - pp.z_sign * dza;
+  x0(idx.DELTA()) = center_yaw;
+  x0(idx.R1()) = r1;
+  x0(idx.R2()) = r2;
+  x0(idx.DZA()) = dza;
+
+  if (idx.has("VX")) x0(idx.VX()) = 0.0;
+  if (idx.has("VY")) x0(idx.VY()) = 0.0;
+  if (idx.has("VZ")) x0(idx.VZ()) = 0.0;
+  if (idx.has("DELTA_RATE")) x0(idx.DELTA_RATE()) = 0.0;
+  if (idx.has("AX")) x0(idx.AX()) = 0.0;
+  if (idx.has("AY")) x0(idx.AY()) = 0.0;
+  if (idx.has("AZ")) x0(idx.AZ()) = 0.0;
+  if (idx.has("DELTA_ACC")) x0(idx.get("DELTA_ACC")) = 0.0;
+  return x0;
+}
+
+Eigen::MatrixXd InvariantPoseBackend::build_invariant_Q(double dt) const {
+  const auto idx = motion_->state_idx();
+  const int n = motion_->state_dim();
+  Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(n, n);
+  const double dt2 = dt * dt;
+
+  const bool ca_xyz = idx.has("AX") && idx.has("AY") && idx.has("AZ");
+  const bool ca_yaw = idx.has("DELTA_ACC");
+  const double q_v_cv = config_.motion.cv_process_noise_vel *
+                        config_.motion.cv_process_noise_vel;
+  const double q_v_ca = config_.motion.ca_process_noise_acc *
+                        config_.motion.ca_process_noise_acc;
+  const double q_w_cv = config_.spin.spin_process_noise_delta_rate *
+                        config_.spin.spin_process_noise_delta_rate;
+  const double q_w_ca = config_.spin.spin_process_noise_delta_acc *
+                        config_.spin.spin_process_noise_delta_acc;
+  const double q_r = config_.motion.process_noise_r *
+                     config_.motion.process_noise_r;
+  const double q_dza = config_.motion.process_noise_dz *
+                       config_.motion.process_noise_dz;
+
+  if (ca_xyz) {
+    const double dt3 = dt2 * dt;
+    const double dt4 = dt3 * dt;
+    const double dt5 = dt4 * dt;
+    auto fill_ca_block = [&](int p, int v, int a) {
+      Q(p, p) = q_v_ca * dt5 / 20.0;
+      Q(p, v) = q_v_ca * dt4 / 8.0;
+      Q(v, p) = Q(p, v);
+      Q(p, a) = q_v_ca * dt3 / 6.0;
+      Q(a, p) = Q(p, a);
+      Q(v, v) = q_v_ca * dt3 / 3.0;
+      Q(v, a) = q_v_ca * dt2 / 2.0;
+      Q(a, v) = Q(v, a);
+      Q(a, a) = q_v_ca * dt;
+    };
+    fill_ca_block(idx.X(), idx.VX(), idx.AX());
+    fill_ca_block(idx.Y(), idx.VY(), idx.AY());
+    fill_ca_block(idx.Z(), idx.VZ(), idx.AZ());
+  } else {
+    Q(idx.X(), idx.X()) = std::max(1e-8, q_v_cv * dt2);
+    Q(idx.Y(), idx.Y()) = std::max(1e-8, q_v_cv * dt2);
+    Q(idx.Z(), idx.Z()) = std::max(1e-8, q_v_cv * dt2);
+    Q(idx.VX(), idx.VX()) = std::max(1e-8, q_v_cv * dt);
+    Q(idx.VY(), idx.VY()) = std::max(1e-8, q_v_cv * dt);
+    Q(idx.VZ(), idx.VZ()) = std::max(1e-8, q_v_cv * dt);
+  }
+
+  if (ca_yaw) {
+    const int dacc = idx.get("DELTA_ACC");
+    const double dt3 = dt2 * dt;
+    const double dt4 = dt3 * dt;
+    const double dt5 = dt4 * dt;
+    Q(idx.DELTA(), idx.DELTA()) = q_w_ca * dt5 / 20.0;
+    Q(idx.DELTA(), idx.DELTA_RATE()) = q_w_ca * dt4 / 8.0;
+    Q(idx.DELTA_RATE(), idx.DELTA()) = Q(idx.DELTA(), idx.DELTA_RATE());
+    Q(idx.DELTA(), dacc) = q_w_ca * dt3 / 6.0;
+    Q(dacc, idx.DELTA()) = Q(idx.DELTA(), dacc);
+    Q(idx.DELTA_RATE(), idx.DELTA_RATE()) = q_w_ca * dt3 / 3.0;
+    Q(idx.DELTA_RATE(), dacc) = q_w_ca * dt2 / 2.0;
+    Q(dacc, idx.DELTA_RATE()) = Q(idx.DELTA_RATE(), dacc);
+    Q(dacc, dacc) = q_w_ca * dt;
+  } else {
+    Q(idx.DELTA(), idx.DELTA()) = std::max(1e-8, q_w_cv * dt2);
+    Q(idx.DELTA_RATE(), idx.DELTA_RATE()) = std::max(1e-8, q_w_cv * dt);
+  }
+  Q(idx.R1(), idx.R1()) = std::max(1e-10, q_r * dt);
+  Q(idx.R2(), idx.R2()) = std::max(1e-10, q_r * dt);
+  Q(idx.DZA(), idx.DZA()) = std::max(1e-10, q_dza * dt);
+
+  return Q;
+}
+
 void InvariantPoseBackend::apply_state_constraints() {
   auto idx = motion_->state_idx();
   x_ = fyt::auto_aim::apply_state_constraints(
       x_, idx.R1(), idx.R2(), idx.DZA(), config_.constraints.min_radius,
       config_.constraints.max_radius, 0.0, config_.constraints.max_dz);
+  x_(idx.DELTA()) = normalize_angle(x_(idx.DELTA()));
 }
 
 }  // namespace fyt::auto_aim::norm4_v3

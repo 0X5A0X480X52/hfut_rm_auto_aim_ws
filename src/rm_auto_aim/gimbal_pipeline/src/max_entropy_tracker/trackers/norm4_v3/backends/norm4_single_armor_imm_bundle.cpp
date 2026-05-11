@@ -76,7 +76,7 @@ Eigen::VectorXd SingleArmorIMMBundle::predict(const Eigen::VectorXd &x,
   // ── Yaw: CV predict ──
   double delta = x(idx.DELTA());
   double delta_rate = x(idx.DELTA_RATE());
-  double delta_pred = delta + delta_rate * dt;
+  double delta_pred = normalize_angle(delta + delta_rate * dt);
   double delta_rate_pred = delta_rate;
 
   // ── Structural: random walk ──
@@ -159,7 +159,6 @@ Eigen::VectorXd SingleArmorIMMBundle::initial_state(
   double center_x = obs.x - use_r * std::cos(obs.yaw);
   double center_y = obs.y - use_r * std::sin(obs.yaw);
   double center_yaw = normalize_angle(obs.yaw - panel_angle);
-  auto [k, delta] = decompose_yaw(center_yaw);
 
   Eigen::VectorXd x0 = Eigen::VectorXd::Zero(kStateDim);
   auto idx = state_idx_;
@@ -171,7 +170,7 @@ Eigen::VectorXd SingleArmorIMMBundle::initial_state(
   x0(idx.AY()) = 0.0;
   x0(idx.Z()) = obs.z;
   x0(idx.VZ()) = 0.0;
-  x0(idx.DELTA()) = delta;
+  x0(idx.DELTA()) = center_yaw;
   x0(idx.DELTA_RATE()) = 0.0;
   x0(idx.R1()) = r1;
   x0(idx.R2()) = r2;

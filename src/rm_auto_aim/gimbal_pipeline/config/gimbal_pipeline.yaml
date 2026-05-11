@@ -339,6 +339,21 @@ gimbal_pipeline:
         enabled: true
       inekf:
         enabled: true
+      # InEKF 专用运行时配置（仅 backend_type=inekf 时生效）
+      # 用于单独覆盖 InEKF 的运动模型/过程噪声/观测噪声 profile，不影响 ukf_v2。
+      inekf_runtime:
+        motion_profile: "ca"  # default|cv|ca|singer|yaw_ca|<motion_profile.yaml路径>
+        noise_profile: "src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/noise/ypd_ba_low_weight.yaml"
+        structure_profile: "slow"  # slow|snapshot
+        translation_model: "CA"    # ""=继承全局 motion.translation_model
+        cv_process_noise_vel: -1.0
+        ca_process_noise_acc: -1.0
+        singer_alpha: -1.0
+        singer_sigma: -1.0
+        process_noise_r: -1.0
+        process_noise_dz: -1.0
+        spin_process_noise_delta_rate: -1.0
+        spin_process_noise_delta_acc: -1.0
       slow_structure:
         enable: true
         q_theta_r1: 1.0e-6

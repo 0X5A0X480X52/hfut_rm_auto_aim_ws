@@ -16,6 +16,10 @@ struct BackendSnapshot {
   int k = 0;
   int last_k = 0;
   int current_panel_id = -1;
+  struct {
+    int panel_id = -1;
+    int phase_index = -1;
+  } hybrid;
   double last_nis = -1.0;
   Eigen::VectorXd last_innov_xyz;
   double last_innov_yaw = 0.0;

@@ -102,6 +102,13 @@ class InvariantPoseBackend : public IStructuredBackend,
   double compute_reconstruction_error(const Eigen::VectorXd &x_post, int k,
                                        const ObservationData &obs,
                                        int panel_id) const;
+  Eigen::VectorXd retract_se25_state(const Eigen::VectorXd &x_prior,
+                                      const Eigen::VectorXd &dx) const;
+
+  Eigen::VectorXd initialize_invariant_state(const ObservationData &obs,
+                                              int panel_id, double r1,
+                                              double r2, double dza) const;
+  Eigen::MatrixXd build_invariant_Q(double dt) const;
 
   void apply_state_constraints();
 
@@ -119,6 +126,7 @@ class InvariantPoseBackend : public IStructuredBackend,
   int k_ = 0;
   int last_k_ = 0;
   int current_panel_id_ = -1;
+  int phase_index_ = -1;
 
   Eigen::VectorXd last_innov_xyz_;
   double last_innov_yaw_ = 0.0;
