@@ -116,39 +116,51 @@ PnpRefineOutput SlidingWindowOptimizer::refine(const std::vector<WindowFrame>& w
     }
   }
 
-  // Second-order smooth edges.
+  // Second-order smooth edges with dt-scaled information.
   if (N >= 3) {
-    Eigen::Matrix4d info_acc = Eigen::Matrix4d::Identity();
-    info_acc(0, 0) = 1.0 / (config_.acc_sigma_xy  * config_.acc_sigma_xy);
-    info_acc(1, 1) = 1.0 / (config_.acc_sigma_xy  * config_.acc_sigma_xy);
-    info_acc(2, 2) = 1.0 / (config_.acc_sigma_z   * config_.acc_sigma_z);
-    info_acc(3, 3) = 1.0 / (config_.acc_sigma_yaw_rad * config_.acc_sigma_yaw_rad);
+    constexpr double kRefDt = 1.0 / 30.0;  // reference frame interval at 30 fps
+
+    Eigen::Matrix4d info_acc_base = Eigen::Matrix4d::Identity();
+    info_acc_base(0, 0) = 1.0 / (config_.acc_sigma_xy  * config_.acc_sigma_xy);
+    info_acc_base(1, 1) = 1.0 / (config_.acc_sigma_xy  * config_.acc_sigma_xy);
+    info_acc_base(2, 2) = 1.0 / (config_.acc_sigma_z   * config_.acc_sigma_z);
+    info_acc_base(3, 3) = 1.0 / (config_.acc_sigma_yaw_rad * config_.acc_sigma_yaw_rad);
 
     for (int i = 2; i < N; ++i) {
+      double dt = window[i].stamp_sec - window[i - 1].stamp_sec;
+      if (dt <= 0.0) dt = kRefDt;
+      double dt_scale = dt / kRefDt;
+
       auto* e = new EdgeSecondOrderSmooth();
       e->setVertex(0, optimizer.vertex(i - 2));
       e->setVertex(1, optimizer.vertex(i - 1));
       e->setVertex(2, optimizer.vertex(i));
-      e->setInformation(info_acc);
+      e->setInformation(info_acc_base * dt_scale);
       optimizer.addEdge(e);
     }
   }
 
-  // Third-order smooth (optional).
+  // Third-order smooth (optional), dt-scaled.
   if (config_.enable_jerk_smooth && N >= 4) {
-    Eigen::Matrix4d info_jerk = Eigen::Matrix4d::Identity();
-    info_jerk(0, 0) = 1.0 / (config_.jerk_sigma_xy  * config_.jerk_sigma_xy);
-    info_jerk(1, 1) = 1.0 / (config_.jerk_sigma_xy  * config_.jerk_sigma_xy);
-    info_jerk(2, 2) = 1.0 / (config_.jerk_sigma_z   * config_.jerk_sigma_z);
-    info_jerk(3, 3) = 1.0 / (config_.jerk_sigma_yaw_rad * config_.jerk_sigma_yaw_rad);
+    constexpr double kRefDt = 1.0 / 30.0;
+
+    Eigen::Matrix4d info_jerk_base = Eigen::Matrix4d::Identity();
+    info_jerk_base(0, 0) = 1.0 / (config_.jerk_sigma_xy  * config_.jerk_sigma_xy);
+    info_jerk_base(1, 1) = 1.0 / (config_.jerk_sigma_xy  * config_.jerk_sigma_xy);
+    info_jerk_base(2, 2) = 1.0 / (config_.jerk_sigma_z   * config_.jerk_sigma_z);
+    info_jerk_base(3, 3) = 1.0 / (config_.jerk_sigma_yaw_rad * config_.jerk_sigma_yaw_rad);
 
     for (int i = 3; i < N; ++i) {
+      double dt = window[i].stamp_sec - window[i - 1].stamp_sec;
+      if (dt <= 0.0) dt = kRefDt;
+      double dt_scale = dt / kRefDt;
+
       auto* e = new EdgeThirdOrderSmooth();
       e->setVertex(0, optimizer.vertex(i - 3));
       e->setVertex(1, optimizer.vertex(i - 2));
       e->setVertex(2, optimizer.vertex(i - 1));
       e->setVertex(3, optimizer.vertex(i));
-      e->setInformation(info_jerk);
+      e->setInformation(info_jerk_base * dt_scale);
       optimizer.addEdge(e);
     }
   }

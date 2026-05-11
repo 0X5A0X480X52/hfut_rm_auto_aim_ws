@@ -201,7 +201,8 @@ void ArmorDetectorNode::imageCallback(
   // Extract armor poses
   if (armor_pose_estimator_ != nullptr) {
     armors_msg_.armors =
-        armor_pose_estimator_->extractArmorPoses(armors, imu_to_camera_);
+        armor_pose_estimator_->extractArmorPoses(armors, imu_to_camera_,
+            rclcpp::Time(img_msg->header.stamp).seconds());
 
     // std::string path =
     //   fmt::format("/home/zcf/fyt2024-log/images/{}/{}.jpg",

@@ -159,6 +159,9 @@ PnpRefineOutput ArmorPnpRefiner::refineSlidingWindow(
   // Push current frame to window.
   window_manager_->push(refine_track_id, input);
 
+  // Prune stale windows so disappeared targets don't accumulate.
+  window_manager_->pruneExpired(input.stamp_sec);
+
   auto window = window_manager_->getWindow(refine_track_id);
 
   // Window too small: fall back to single_xyz_yaw.
