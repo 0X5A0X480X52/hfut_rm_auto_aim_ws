@@ -18,6 +18,7 @@
 // std
 #include <array>
 #include <memory>
+#include <string>
 #include <vector>
 // OpenCV
 #include <opencv2/opencv.hpp>
@@ -29,6 +30,7 @@
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <tf2_ros/buffer.h>
 // project
+#include "armor_pnp_refiner/core/armor_pnp_refiner.hpp"
 #include "armor_detector/ba_solver.hpp"
 #include "rm_interfaces/msg/armor.hpp"
 #include "rm_utils/math/pnp_solver.hpp"
@@ -42,6 +44,7 @@ public:
                                                Eigen::Matrix3d R_imu_camera);
 
   void enableBA(bool enable) { use_ba_ = enable; }
+  void configurePnpRefiner(bool enable, const std::string &mode);
 
 private:
   // Select the best PnP solution according to the armor's direction in image, only available for SOLVEPNP_IPPE
@@ -52,11 +55,16 @@ private:
   static Eigen::Vector3d rotationMatrixToRPY(const Eigen::Matrix3d &R);
 
   bool use_ba_;
+  bool use_pnp_refiner_{false};
+  std::string pnp_refiner_mode_{"none"};
 
   Eigen::Matrix3d R_gimbal_camera_;
 
   std::unique_ptr<BaSolver> ba_solver_;
   std::unique_ptr<PnPSolver> pnp_solver_;
+  std::unique_ptr<armor_pnp_refiner::ArmorPnpRefiner> pnp_refiner_;
+  cv::Mat camera_matrix_;
+  cv::Mat dist_coeffs_;
 };
 } // namespace fyt::auto_aim
 #endif // ARMOR_POSE_ESTIMATOR_HPP_

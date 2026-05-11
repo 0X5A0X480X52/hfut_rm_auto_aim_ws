@@ -10,6 +10,27 @@
 
 namespace fyt::auto_aim {
 
+/// BA/PnP covariance metadata carried alongside a 3D observation.
+/// All fields are optional; valid == false when the upstream detector
+/// did not provide refiner metadata.
+struct ObservationCovarianceMeta {
+  bool valid = false;
+  bool cov_valid = false;
+
+  // Cov([x, y, z, yaw]) in the same frame and yaw convention as ObservationData.
+  Eigen::Matrix4d cov_xyz_yaw = Eigen::Matrix4d::Identity();
+
+  double confidence = 0.0;
+  double reproj_rms = 0.0;
+  double condition_number = 0.0;
+  int num_observations = 0;
+  int num_inliers = 0;
+  int pose_estimate_mode = 0;
+
+  // Diagnostics only. True when frame/yaw convention has been checked.
+  bool frame_aligned = false;
+};
+
 /// 2D image-domain metadata carried alongside a 3D observation.
 /// All fields are optional; valid == false when the source detector
 /// did not provide image geometry.
@@ -55,6 +76,9 @@ struct ObservationData {
   // 2D evidence (Phase 1: append-only, optional)
   std::optional<ImageObservation2D> image;
   std::optional<int> track2d_id;
+
+  // BA/PnP covariance metadata (Phase 1: append-only, optional)
+  std::optional<ObservationCovarianceMeta> ba_pnp;
 
   Eigen::Vector3d position() const { return {x, y, z}; }
 

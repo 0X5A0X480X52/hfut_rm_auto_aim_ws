@@ -14,6 +14,7 @@
 #include "max_entropy_tracker/filters/process_models/structural.hpp"
 #include "max_entropy_tracker/filters/process_models/translation.hpp"
 #include "max_entropy_tracker/trackers/norm4_v3/interfaces/norm4_backend_interface.hpp"
+#include "max_entropy_tracker/trackers/norm4_v3/interfaces/norm4_ba_aware_ypd_noise.hpp"
 #include "max_entropy_tracker/trackers/norm4_v3/interfaces/norm4_measurement_noise.hpp"
 #include "max_entropy_tracker/trackers/norm4_v3/models/norm4_motion_model_bundle.hpp"
 #include "max_entropy_tracker/trackers/norm4_v3/backends/norm4_inekf_backend.hpp"
@@ -51,7 +52,14 @@ inline bool is_profile_file(const std::string &profile) {
 }
 
 inline std::string resolve_profile_path(const std::string &profile) {
-  if (!is_profile_file(profile)) return profile;
+  if (!is_profile_file(profile)) {
+    if (profile == "default") return profile;
+    std::filesystem::path alias =
+        std::filesystem::current_path() /
+        "src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/noise" /
+        (profile + ".yaml");
+    return alias.lexically_normal().string();
+  }
   std::filesystem::path p(profile);
   if (p.is_absolute()) return p.string();
   std::filesystem::path cwd = std::filesystem::current_path();
@@ -143,7 +151,7 @@ inline std::unique_ptr<IMotionModelBundle> create_motion_bundle_from_file(
 
 inline Norm4V3UkfConfig load_noise_profile_or_default(
     const Norm4V3UkfConfig &base, const std::string &noise_profile) {
-  if (!is_profile_file(noise_profile) || noise_profile == "default") return base;
+  if (noise_profile == "default") return base;
   YAML::Node root = YAML::LoadFile(resolve_profile_path(noise_profile));
   auto n = root["noise"];
   if (!n) throw std::invalid_argument("noise profile missing noise node");
@@ -153,6 +161,139 @@ inline Norm4V3UkfConfig load_noise_profile_or_default(
   if (n["sigma_yaw"]) out.sigma_yaw = n["sigma_yaw"].as<double>();
   if (n["dual_raw_R_scale"]) out.dual_raw_R_scale = n["dual_raw_R_scale"].as<double>();
   return out;
+}
+
+inline MeasurementNoiseConfig parse_measurement_noise_config(
+    const std::string &profile_file) {
+  MeasurementNoiseConfig out;
+  YAML::Node root = YAML::LoadFile(resolve_profile_path(profile_file));
+  auto n = root["noise"];
+  if (!n) return out;
+
+  if (n["type"]) out.type = n["type"].as<std::string>();
+
+  // r_fixed
+  if (auto rf = n["r_fixed"]) {
+    if (rf["sigma_x"]) out.r_fixed.sigma_x = rf["sigma_x"].as<double>();
+    if (rf["sigma_y"]) out.r_fixed.sigma_y = rf["sigma_y"].as<double>();
+    if (rf["sigma_z"]) out.r_fixed.sigma_z = rf["sigma_z"].as<double>();
+    if (rf["sigma_yaw"]) out.r_fixed.sigma_yaw = rf["sigma_yaw"].as<double>();
+  }
+
+  // r_floor
+  if (auto rf = n["r_floor"]) {
+    if (rf["sigma_x"]) out.r_floor.sigma_x = rf["sigma_x"].as<double>();
+    if (rf["sigma_y"]) out.r_floor.sigma_y = rf["sigma_y"].as<double>();
+    if (rf["sigma_z"]) out.r_floor.sigma_z = rf["sigma_z"].as<double>();
+    if (rf["sigma_yaw"]) out.r_floor.sigma_yaw = rf["sigma_yaw"].as<double>();
+  }
+
+  // dynamic_blend
+  if (auto db = n["dynamic_blend"]) {
+    if (db["lambda"]) out.dynamic_blend.lambda = db["lambda"].as<double>();
+  }
+
+  // camera
+  if (auto cam = n["camera"]) {
+    if (cam["source"]) out.camera.source = cam["source"].as<std::string>();
+    if (cam["fx"]) out.camera.fx = cam["fx"].as<double>();
+    if (cam["fy"]) out.camera.fy = cam["fy"].as<double>();
+    if (cam["cx"]) out.camera.cx = cam["cx"].as<double>();
+    if (cam["cy"]) out.camera.cy = cam["cy"].as<double>();
+    if (cam["image_width"]) out.camera.image_width = cam["image_width"].as<int>();
+    if (cam["image_height"]) out.camera.image_height = cam["image_height"].as<int>();
+  }
+
+  // armor_geometry
+  if (auto ag = n["armor_geometry"]) {
+    if (auto s = ag["small"]) {
+      if (s["width"]) out.armor_geometry.small_width = s["width"].as<double>();
+      if (s["height"]) out.armor_geometry.small_height = s["height"].as<double>();
+    }
+    if (auto l = ag["large"]) {
+      if (l["width"]) out.armor_geometry.large_width = l["width"].as<double>();
+      if (l["height"]) out.armor_geometry.large_height = l["height"].as<double>();
+    }
+    if (auto o = ag["outpost"]) {
+      if (o["width"]) out.armor_geometry.outpost_width = o["width"].as<double>();
+      if (o["height"]) out.armor_geometry.outpost_height = o["height"].as<double>();
+    }
+  }
+
+  // ypd_prior
+  if (auto yp = n["ypd_prior"]) {
+    if (yp["sigma_center_px"]) out.ypd_prior.sigma_center_px = yp["sigma_center_px"].as<double>();
+    if (yp["sigma_size_px"]) out.ypd_prior.sigma_size_px = yp["sigma_size_px"].as<double>();
+    if (yp["sigma_corner_px"]) out.ypd_prior.sigma_corner_px = yp["sigma_corner_px"].as<double>();
+    if (yp["sigma_azi_min"]) out.ypd_prior.sigma_azi_min = yp["sigma_azi_min"].as<double>();
+    if (yp["sigma_azi_max"]) out.ypd_prior.sigma_azi_max = yp["sigma_azi_max"].as<double>();
+    if (yp["sigma_ele_min"]) out.ypd_prior.sigma_ele_min = yp["sigma_ele_min"].as<double>();
+    if (yp["sigma_ele_max"]) out.ypd_prior.sigma_ele_max = yp["sigma_ele_max"].as<double>();
+    if (yp["sigma_dist_min"]) out.ypd_prior.sigma_dist_min = yp["sigma_dist_min"].as<double>();
+    if (yp["sigma_dist_max"]) out.ypd_prior.sigma_dist_max = yp["sigma_dist_max"].as<double>();
+    if (yp["sigma_yaw_min"]) out.ypd_prior.sigma_yaw_min = yp["sigma_yaw_min"].as<double>();
+    if (yp["sigma_yaw_max"]) out.ypd_prior.sigma_yaw_max = yp["sigma_yaw_max"].as<double>();
+    if (yp["sigma_yaw_scale"]) out.ypd_prior.sigma_yaw_scale = yp["sigma_yaw_scale"].as<double>();
+    if (yp["global_scale"]) out.ypd_prior.global_scale = yp["global_scale"].as<double>();
+  }
+
+  // quality_scale
+  if (auto qs = n["quality_scale"]) {
+    if (qs["enable"]) out.quality_scale.enable = qs["enable"].as<bool>();
+    if (qs["confidence_floor"]) out.quality_scale.confidence_floor = qs["confidence_floor"].as<double>();
+    if (qs["min_scale"]) out.quality_scale.min_scale = qs["min_scale"].as<double>();
+    if (qs["max_scale"]) out.quality_scale.max_scale = qs["max_scale"].as<double>();
+  }
+
+  // ba_covariance
+  if (auto ba = n["ba_covariance"]) {
+    if (ba["enable"]) out.ba_covariance.enable = ba["enable"].as<bool>();
+    if (ba["require_cov_valid"]) out.ba_covariance.require_cov_valid = ba["require_cov_valid"].as<bool>();
+    if (ba["require_frame_aligned"]) out.ba_covariance.require_frame_aligned = ba["require_frame_aligned"].as<bool>();
+    if (ba["min_confidence"]) out.ba_covariance.min_confidence = ba["min_confidence"].as<double>();
+    if (ba["max_reproj_rms_px"]) out.ba_covariance.max_reproj_rms_px = ba["max_reproj_rms_px"].as<double>();
+    if (ba["max_condition_number"]) out.ba_covariance.max_condition_number = ba["max_condition_number"].as<double>();
+    if (ba["min_observations"]) out.ba_covariance.min_observations = ba["min_observations"].as<int>();
+    if (ba["min_inlier_ratio"]) out.ba_covariance.min_inlier_ratio = ba["min_inlier_ratio"].as<double>();
+    if (ba["max_weight"]) out.ba_covariance.max_weight = ba["max_weight"].as<double>();
+    if (ba["weight_power"]) out.ba_covariance.weight_power = ba["weight_power"].as<double>();
+    if (ba["scale"]) out.ba_covariance.scale = ba["scale"].as<double>();
+    if (auto ec = ba["eigen_clamp"]) {
+      if (ec["min"]) out.ba_covariance.eigen_clamp.min = ec["min"].as<double>();
+      if (ec["max"]) out.ba_covariance.eigen_clamp.max = ec["max"].as<double>();
+    }
+    if (auto dc = ba["diag_clamp"]) {
+      if (dc["x_min"]) out.ba_covariance.diag_clamp.x_min = dc["x_min"].as<double>();
+      if (dc["y_min"]) out.ba_covariance.diag_clamp.y_min = dc["y_min"].as<double>();
+      if (dc["z_min"]) out.ba_covariance.diag_clamp.z_min = dc["z_min"].as<double>();
+      if (dc["yaw_min"]) out.ba_covariance.diag_clamp.yaw_min = dc["yaw_min"].as<double>();
+      if (dc["x_max"]) out.ba_covariance.diag_clamp.x_max = dc["x_max"].as<double>();
+      if (dc["y_max"]) out.ba_covariance.diag_clamp.y_max = dc["y_max"].as<double>();
+      if (dc["z_max"]) out.ba_covariance.diag_clamp.z_max = dc["z_max"].as<double>();
+      if (dc["yaw_max"]) out.ba_covariance.diag_clamp.yaw_max = dc["yaw_max"].as<double>();
+    }
+  }
+
+  // debug
+  if (auto dbg = n["debug"]) {
+    if (dbg["enable_snapshot"]) out.debug.enable_snapshot = dbg["enable_snapshot"].as<bool>();
+    if (dbg["log_throttle_ms"]) out.debug.log_throttle_ms = dbg["log_throttle_ms"].as<int>();
+  }
+
+  return out;
+}
+
+inline std::unique_ptr<IMeasurementNoiseModel> create_noise_model(
+    const Norm4V3UkfConfig &ukf_cfg, const std::string &noise_profile) {
+  if (noise_profile == "default") {
+    return std::make_unique<FixedCartesianNoiseModel>(ukf_cfg);
+  }
+
+  auto noise_cfg = parse_measurement_noise_config(resolve_profile_path(noise_profile));
+  if (noise_cfg.type == "ypd_ba") {
+    return std::make_unique<BaAwareYpdNoiseModel>(noise_cfg, ukf_cfg);
+  }
+  return std::make_unique<FixedCartesianNoiseModel>(ukf_cfg);
 }
 
 inline std::shared_ptr<CompositeProcessModel> create_v2_process_model_by_profile(
@@ -205,7 +346,8 @@ inline std::unique_ptr<IStructuredBackend> create_backend(
             config, config.norm4_v3.backend_config.motion_profile);
         motion = std::make_unique<NativeProcessModelBundle>(proc_model);
       }
-      auto noise = std::make_unique<FixedCartesianNoiseModel>(ukf_cfg);
+      auto noise = create_noise_model(
+          ukf_cfg, config.norm4_v3.backend_config.noise_profile);
       return std::make_unique<UkfBackendV2>(std::move(motion),
                                             std::move(noise), ukf_cfg, config,
                                             dt);
@@ -220,7 +362,8 @@ inline std::unique_ptr<IStructuredBackend> create_backend(
             config, config.norm4_v3.backend_config.motion_profile);
         motion = std::make_unique<NativeProcessModelBundle>(proc_model);
       }
-      auto noise = std::make_unique<FixedCartesianNoiseModel>(ukf_cfg);
+      auto noise = create_noise_model(
+          ukf_cfg, config.norm4_v3.backend_config.noise_profile);
       std::unique_ptr<IStructureProvider> structure;
       const auto &bc = config.norm4_v3.backend_config;
       if (!config.norm4_v3.slow_structure.enable ||

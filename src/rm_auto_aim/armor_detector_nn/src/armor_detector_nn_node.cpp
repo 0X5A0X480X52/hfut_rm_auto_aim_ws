@@ -597,6 +597,22 @@ void ArmorDetectorNNNode::imageCallback(
         }
       }
 
+      // Fill refiner quality metadata (Phase 1: covariance always invalid)
+      armor.pose_estimate_mode = static_cast<uint8_t>(poses[i].mode);
+      armor.pose_quality_score = static_cast<float>(poses[i].quality_score);
+      armor.reproj_error_raw = static_cast<float>(poses[i].reproj_error_raw);
+      armor.reproj_error_refined = static_cast<float>(poses[i].reproj_error_refined);
+      armor.pose_condition_number = static_cast<float>(poses[i].condition_number);
+      armor.pose_num_points = static_cast<uint16_t>(poses[i].num_points);
+      armor.pose_num_inliers = static_cast<uint16_t>(poses[i].num_inliers);
+      armor.pose_covariance_valid = poses[i].covariance_valid;
+      for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+          armor.pose_covariance_xyz_yaw[r * 4 + c] =
+              poses[i].covariance_xyz_yaw(r, c);
+        }
+      }
+
       armors_msg.armors.push_back(armor);
     }
 

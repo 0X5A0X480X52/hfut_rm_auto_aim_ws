@@ -204,7 +204,7 @@ MeasurementEval InvariantPoseBackend::evaluateSingle(
   Eigen::Vector4d innov = z_obs - z_pred;
   innov(3) = normalize_angle(innov(3));
 
-  Eigen::Matrix4d R = noise_->build_R(UpdateKind::Single);
+  Eigen::Matrix4d R = noise_->build_single_R(obs);
 
   Eigen::Matrix4d S = H * ctx.P_prior * H.transpose() + R;
 
@@ -289,7 +289,7 @@ MeasurementEval InvariantPoseBackend::evaluateDual(
   innov(3) = normalize_angle(innov(3));
   innov(7) = normalize_angle(innov(7));
 
-  Eigen::Matrix<double, 8, 8> R = noise_->build_R(UpdateKind::Dual);
+  Eigen::Matrix<double, 8, 8> R = noise_->build_dual_R(obs0, obs1);
   Eigen::Matrix<double, 8, 8> S = H * ctx.P_prior * H.transpose() + R;
 
   MeasurementEval eval;
@@ -378,7 +378,7 @@ UkfTrial InvariantPoseBackend::tryUpdateSingle(
 
   double center_yaw_obs = normalize_angle(obs.yaw - p * (M_PI / 2.0));
   Eigen::Vector4d innov = eval.innovation;
-  Eigen::Matrix4d R = noise_->build_R(UpdateKind::Single);
+  Eigen::Matrix4d R = noise_->build_single_R(obs);
   Eigen::Matrix4d S = eval.S;
 
   // Kalman gain: K = P·Hᵀ·S⁻¹  (n × 4)
@@ -476,7 +476,7 @@ UkfTrial InvariantPoseBackend::tryUpdateDual(
   H << H0, H1;
 
   Eigen::Matrix<double, 8, 1> innov = eval.innovation;
-  Eigen::Matrix<double, 8, 8> R = noise_->build_R(UpdateKind::Dual);
+  Eigen::Matrix<double, 8, 8> R = noise_->build_dual_R(obs0, obs1);
   Eigen::Matrix<double, 8, 8> S = eval.S;
 
   // Kalman gain: K = P·Hᵀ·S⁻¹  (n × 8)

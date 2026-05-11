@@ -458,6 +458,113 @@ using Norm4V3ModeRoutingConfig = Norm4V2ModeRoutingConfig;
 using Norm4V3SinglePlateBridgeConfig = Norm4V2SinglePlateBridgeConfig;
 using Norm4V3FallbackConfig = Norm4V2FallbackConfig;
 
+// ── Norm4 V3 Observation Noise Config (Phase 1: YPD + BA dynamic R) ──
+
+struct MeasurementNoiseCameraConfig {
+  std::string source = "config";
+  double fx = 1556.34704;
+  double fy = 1557.43488;
+  double cx = 610.59754;
+  double cy = 503.80001;
+  int image_width = 1280;
+  int image_height = 1024;
+};
+
+struct MeasurementNoiseArmorGeometryConfig {
+  double small_width = 0.135;
+  double small_height = 0.055;
+  double large_width = 0.230;
+  double large_height = 0.055;
+  double outpost_width = 0.230;
+  double outpost_height = 0.055;
+};
+
+struct MeasurementNoiseRConfig {
+  double sigma_x = 0.060;
+  double sigma_y = 0.060;
+  double sigma_z = 0.080;
+  double sigma_yaw = 0.120;
+};
+
+struct MeasurementNoiseYpdPrior {
+  double sigma_center_px = 2.0;
+  double sigma_size_px = 2.0;
+  double sigma_corner_px = 1.5;
+  double sigma_azi_min = 0.0005;
+  double sigma_azi_max = 0.020;
+  double sigma_ele_min = 0.0005;
+  double sigma_ele_max = 0.020;
+  double sigma_dist_min = 0.02;
+  double sigma_dist_max = 1.00;
+  double sigma_yaw_min = 0.03;
+  double sigma_yaw_max = 0.50;
+  double sigma_yaw_scale = 10.0;
+  double global_scale = 1.0;
+};
+
+struct MeasurementNoiseQualityScale {
+  bool enable = true;
+  double confidence_floor = 0.30;
+  double min_scale = 1.0;
+  double max_scale = 3.0;
+};
+
+struct MeasurementNoiseBaEigenClamp {
+  double min = 1.0e-6;
+  double max = 4.0;
+};
+
+struct MeasurementNoiseBaDiagClamp {
+  double x_min = 1.0e-5;
+  double y_min = 1.0e-5;
+  double z_min = 4.0e-5;
+  double yaw_min = 1.0e-5;
+  double x_max = 1.0;
+  double y_max = 1.0;
+  double z_max = 4.0;
+  double yaw_max = 1.0;
+};
+
+struct MeasurementNoiseBaCovarianceConfig {
+  bool enable = true;
+  bool require_cov_valid = true;
+  bool require_frame_aligned = true;
+  double min_confidence = 0.60;
+  double max_reproj_rms_px = 3.0;
+  double max_condition_number = 10000000.0;
+  int min_observations = 4;
+  double min_inlier_ratio = 0.75;
+  double max_weight = 0.0;
+  double weight_power = 2.0;
+  double scale = 4.0;
+  MeasurementNoiseBaEigenClamp eigen_clamp;
+  MeasurementNoiseBaDiagClamp diag_clamp;
+};
+
+struct MeasurementNoiseDynamicBlend {
+  double lambda = 0.30;
+};
+
+struct MeasurementNoiseDebugConfig {
+  bool enable_snapshot = true;
+  int log_throttle_ms = 500;
+};
+
+struct MeasurementNoiseConfig {
+  std::string type = "fixed";
+  MeasurementNoiseRConfig r_fixed;
+  MeasurementNoiseRConfig r_floor;
+  MeasurementNoiseCameraConfig camera;
+  MeasurementNoiseArmorGeometryConfig armor_geometry;
+  MeasurementNoiseYpdPrior ypd_prior;
+  MeasurementNoiseQualityScale quality_scale;
+  MeasurementNoiseBaCovarianceConfig ba_covariance;
+  MeasurementNoiseDynamicBlend dynamic_blend;
+  MeasurementNoiseDebugConfig debug;
+};
+
+// ── Norm4 V3 Backend / Selector ──
+
 struct Norm4V3BackendConfig {
   std::string backend_type = "ukf_v1";       // "ukf_v1" | "ukf_v2" | "inekf"
   std::string motion_profile = "default";

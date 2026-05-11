@@ -67,6 +67,35 @@ inline ObservationData armor_to_observation(
     obs.image = std::move(img);
   }
 
+  // Phase 1: copy BA/PnP quality metadata when any BA-relevant field is present
+  const bool has_ba_meta =
+      (armor.pose_estimate_mode != 0) ||
+      armor.pose_covariance_valid ||
+      (armor.pose_num_points > 0) ||
+      (armor.pose_num_inliers > 0) ||
+      (armor.pose_quality_score > 0.0f) ||
+      (armor.reproj_error_refined > 0.0f) ||
+      (armor.pose_condition_number > 0.0f);
+  if (has_ba_meta) {
+    ObservationCovarianceMeta ba;
+    ba.valid = true;
+    ba.cov_valid = armor.pose_covariance_valid;
+    ba.confidence = static_cast<double>(armor.pose_quality_score);
+    ba.reproj_rms = static_cast<double>(armor.reproj_error_refined);
+    ba.condition_number = static_cast<double>(armor.pose_condition_number);
+    ba.num_observations = static_cast<int>(armor.pose_num_points);
+    ba.num_inliers = static_cast<int>(armor.pose_num_inliers);
+    ba.pose_estimate_mode = static_cast<int>(armor.pose_estimate_mode);
+    ba.frame_aligned = false;
+    if (ba.cov_valid) {
+      for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+          ba.cov_xyz_yaw(r, c) = static_cast<double>(
+              armor.pose_covariance_xyz_yaw[r * 4 + c]);
+    }
+    obs.ba_pnp = std::move(ba);
+  }
+
   return obs;
 }
 

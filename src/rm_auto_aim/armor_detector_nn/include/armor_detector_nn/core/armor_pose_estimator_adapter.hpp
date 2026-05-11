@@ -42,6 +42,13 @@ struct PoseEstimate {
   rclcpp::Time observation_stamp{};
   std::string publish_number;
   Eigen::Matrix3d R_imu_camera{Eigen::Matrix3d::Identity()};
+
+  // BA/PnP refiner covariance metadata (Phase 1: append-only)
+  bool covariance_valid{false};
+  Eigen::Matrix4d covariance_xyz_yaw{Eigen::Matrix4d::Identity()};
+  double condition_number{0.0};
+  int num_points{0};
+  int num_inliers{0};
 };
 
 class IPoseRefiner;

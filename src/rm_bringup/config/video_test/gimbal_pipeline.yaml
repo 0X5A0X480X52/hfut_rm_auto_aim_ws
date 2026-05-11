@@ -231,7 +231,7 @@ gimbal_pipeline:
       backend_config:
         backend_type: "inekf"
         motion_profile: "src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/motion/default.yaml"
-        noise_profile: "src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/noise/default.yaml"
+        noise_profile: "src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/noise/ypd_ba_low_weight.yaml"
         structure_profile: "slow"
         enable_shadow_mode: false
         shadow_convergence_frames: 30

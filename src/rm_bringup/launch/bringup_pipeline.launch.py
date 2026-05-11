@@ -133,6 +133,7 @@ def generate_launch_description():
 
     # ==================== 装甲板检测节点 (ComposableNode) ====================
     detector_type = str(launch_params.get('detector_type', 'armor_detector'))
+    print(f"Selected detector type: {detector_type}")
 
     if detector_type == 'armor_detector_nn':
         armor_detector_node = ComposableNode(

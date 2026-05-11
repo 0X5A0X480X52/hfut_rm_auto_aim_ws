@@ -1,0 +1,98 @@
+# Norm4 v3 observation noise profile: YPD + low-weight BA covariance fusion.
+# Use only after cov_valid/frame_aligned/NIS replay checks pass.
+noise:
+  type: ypd_ba
+
+  sigma_pos_xy: 0.06
+  sigma_pos_z: 0.08
+  sigma_yaw: 0.12
+  dual_raw_R_scale: 1.5
+
+  dynamic_blend:
+    lambda: 0.30
+
+  r_floor:
+    sigma_x: 0.005
+    sigma_y: 0.005
+    sigma_z: 0.010
+    sigma_yaw: 0.010
+
+  r_fixed:
+    sigma_x: 0.060
+    sigma_y: 0.060
+    sigma_z: 0.080
+    sigma_yaw: 0.120
+
+  camera:
+    source: config
+    fx: 1556.34704
+    fy: 1557.43488
+    cx: 610.59754
+    cy: 503.80001
+    image_width: 1280
+    image_height: 1024
+
+  armor_geometry:
+    small:
+      width: 0.135
+      height: 0.055
+    large:
+      width: 0.230
+      height: 0.055
+    outpost:
+      width: 0.230
+      height: 0.055
+
+  ypd_prior:
+    sigma_center_px: 2.0
+    sigma_size_px: 2.0
+    sigma_corner_px: 1.5
+    sigma_azi_min: 0.0005
+    sigma_azi_max: 0.020
+    sigma_ele_min: 0.0005
+    sigma_ele_max: 0.020
+    sigma_dist_min: 0.02
+    sigma_dist_max: 1.00
+    sigma_yaw_min: 0.03
+    sigma_yaw_max: 0.50
+    sigma_yaw_scale: 10.0
+    global_scale: 1.0
+
+  quality_scale:
+    enable: true
+    confidence_floor: 0.30
+    min_scale: 1.0
+    max_scale: 3.0
+
+  ba_covariance:
+    enable: true
+    require_cov_valid: true
+    require_frame_aligned: true
+    min_confidence: 0.65
+    max_reproj_rms_px: 2.5
+    max_condition_number: 5000000.0
+    min_observations: 4
+    min_inlier_ratio: 0.75
+
+    # Conservative phase-1 gray release: w <= 0.05 * confidence^2.
+    max_weight: 0.05
+    weight_power: 2.0
+    scale: 4.0
+
+    eigen_clamp:
+      min: 1.0e-6
+      max: 4.0
+
+    diag_clamp:
+      x_min: 1.0e-5
+      y_min: 1.0e-5
+      z_min: 4.0e-5
+      yaw_min: 1.0e-5
+      x_max: 1.0
+      y_max: 1.0
+      z_max: 4.0
+      yaw_max: 1.0
+
+  debug:
+    enable_snapshot: true
+    log_throttle_ms: 500

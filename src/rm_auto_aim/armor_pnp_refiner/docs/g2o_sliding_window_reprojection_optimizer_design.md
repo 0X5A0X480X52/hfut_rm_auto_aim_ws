@@ -1,5 +1,7 @@
 # g2o 滑窗重投影优化模块设计
 
+> 【旧文档】存在部分过时内容，已标注 `--- IGNORE ---`，请勿参考。新设计参考 [ArmorPnP Refiner修正版设计文档](armor_pnp_refiner_revised_design.md)
+
 ## 1. 背景与目标
 
 `armor_detector` 和 `armor_detector_nn` 当前都以 PnP 作为装甲板三维位姿估计的基础。传统 `armor_detector` 已有基于 g2o 的单帧 yaw BA，`armor_detector_nn` 已有手写的 `single_yaw` 与 `sliding_window` 位姿精修链路。两者都已经具备关键点、相机内参、PnP 初值、姿态回退等基础，但优化实现分散，接口不统一。
