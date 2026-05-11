@@ -10,7 +10,7 @@ video_player:
     loop_playback: true
     
     # Playback frame rate (fps)
-    fps: 30.0
+    fps: 120.0
     
     # Camera name for camera info manager
     # Note: frame_id will be camera_name + "_optical_frame", must match URDF definition

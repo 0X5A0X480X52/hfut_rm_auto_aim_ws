@@ -79,6 +79,8 @@ void InvariantPoseBackend::reset(const ObservationData &obs, int panel_id,
   last_nis_ = -1.0;
   last_update_type_ = 0;
 
+  if (structure_) structure_->reset(r1, r2, dza);
+
   initialized_ = true;
 }
 
@@ -184,10 +186,17 @@ Eigen::Vector4d InvariantPoseBackend::obs_model_single(
   double x_c = x(idx.X());
   double y_c = x(idx.Y());
   double z_mean = x(idx.Z());
-  double d_za = x(idx.DZA());
 
   const auto pp = get_panel_profile(panel_id);
-  double radius = pp.use_r2 ? x(idx.R2()) : x(idx.R1());
+  double radius, d_za;
+  if (structure_ && structure_->converged()) {
+    Eigen::Vector3d s = structure_->get_structure();
+    radius = pp.use_r2 ? s(1) : s(0);
+    d_za = s(2);
+  } else {
+    radius = pp.use_r2 ? x(idx.R2()) : x(idx.R1());
+    d_za = x(idx.DZA());
+  }
   double center_yaw = normalize_angle(x(idx.DELTA()));
 
   // Group action: p_armor = p + R(center_yaw) · b(θ, panel)
@@ -294,7 +303,15 @@ Eigen::MatrixXd InvariantPoseBackend::compute_body_frame_H(
   double sin_cy = std::sin(center_yaw_pred);
 
   const auto pp = get_panel_profile(panel_id);
-  double radius = pp.use_r2 ? x(idx.R2()) : x(idx.R1());
+
+  // Use slow structure estimates for radius when converged
+  double radius;
+  if (structure_ && structure_->converged()) {
+    Eigen::Vector3d s = structure_->get_structure();
+    radius = pp.use_r2 ? s(1) : s(0);
+  } else {
+    radius = pp.use_r2 ? x(idx.R2()) : x(idx.R1());
+  }
 
   // Start from world-frame H, rotate position rows
   Eigen::MatrixXd H_body = H_world;

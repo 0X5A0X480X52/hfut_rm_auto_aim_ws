@@ -16,6 +16,14 @@ class IStructureProvider {
 
   virtual Eigen::Vector3d get_structure() const = 0;
 
+  /// Reinitialize structure estimate (called on tracker reset).
+  virtual void reset(double r1, double r2, double dza) = 0;
+
+  /// Whether this provider maintains its own slow filter (vs. snapshot).
+  /// When true, the main KF should zero structure-parameter K rows so the
+  /// slow filter is the sole update path for [R1, R2, DZA].
+  virtual bool is_slow() const { return false; }
+
   /// Update structure estimate from posterior.
   /// @param is_dual  true for dual-armor update (more trust), false for single
   virtual void update(const Eigen::VectorXd &x_post,
@@ -35,6 +43,10 @@ class UkfSnapshotStructureProvider : public IStructureProvider {
       : state_idx_(motion_bundle.state_idx()) {}
 
   Eigen::Vector3d get_structure() const override { return structure_; }
+
+  void reset(double r1, double r2, double dza) override {
+    structure_ << r1, r2, dza;
+  }
 
   void update(const Eigen::VectorXd &x_post, const Eigen::MatrixXd &,
               int, double, bool) override {
@@ -108,6 +120,18 @@ class SlowStructureErrorUpdaterProvider : public IStructureProvider {
   }
 
   Eigen::Vector3d get_structure() const override { return theta_; }
+
+  bool is_slow() const override { return true; }
+
+  void reset(double r1, double r2, double dza) override {
+    theta_ << r1, r2, dza;
+    P_theta_ = Eigen::Vector3d(cfg_.prior_sigma_r * cfg_.prior_sigma_r,
+                                cfg_.prior_sigma_r * cfg_.prior_sigma_r,
+                                cfg_.prior_sigma_dza * cfg_.prior_sigma_dza)
+                   .asDiagonal();
+    frames_ = 0;
+    converged_ = false;
+  }
 
   void update(const Eigen::VectorXd &x_post, const Eigen::MatrixXd &P_post,
               int, double dt, bool is_dual) override {
