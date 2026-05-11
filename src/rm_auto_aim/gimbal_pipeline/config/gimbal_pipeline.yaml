@@ -337,8 +337,43 @@ gimbal_pipeline:
           max_dza_jump: 0.03
       ukf_v2:
         enabled: true
+      # ── InEKF (Left-Invariant Error-State EKF) 配置 ──
+      # 使用左不变误差 + 体系框架创新，与 ukf_v1/ukf_v2 解耦。
+      # 关键差异:
+      #   - 创新在 body frame 定义（ν_pos = R̂⁻¹·(z_pos − h_pos)）
+      #   - H 的 yaw/radius 导数仅依赖 panel phase φ（不含 center_yaw）
+      #   - R 矩阵从世界系旋转到本体系
+      #   - NIS 在坐标变换下严格不变，Gate 阈值与 ukf_v1 保持一致
       inekf:
         enabled: true
+        force_rotation_ca: false
+        dual_raw_batch: true
+        sigma_pos_xy: 0.06
+        sigma_pos_z: 0.08
+        sigma_yaw: 0.12
+        dual_raw_R_scale: 1.5
+        gate:
+          single_total_nis: 25.0
+          single_pos_chi2: 16.0
+          single_yaw_chi2: 9.0
+          dual_total_nis: 45.0
+          dual_each_pos_chi2: 16.0
+          dual_each_yaw_chi2: 9.0
+        single_update:
+          structural_gain_r: 0.0
+          structural_gain_dza: 0.0
+        dual_update:
+          structural_gain_r: 0.05
+          structural_gain_dza: 0.02
+        posterior_sanity:
+          max_center_jump: 0.25
+          max_yaw_jump: 0.80
+          min_r: 0.05
+          max_r: 0.50
+          max_r_jump: 0.05
+          min_dza: 0.0
+          max_dza: 0.15
+          max_dza_jump: 0.03
       # InEKF 专用运行时配置（仅 backend_type=inekf 时生效）
       # 用于单独覆盖 InEKF 的运动模型/过程噪声/观测噪声 profile，不影响 ukf_v2。
       inekf_runtime:
