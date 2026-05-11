@@ -92,6 +92,8 @@ private:
 
   // Pose Solver
   bool use_ba_;
+  bool use_pnp_refiner_{false};
+  std::string pnp_refiner_mode_{"none"};
   std::unique_ptr<ArmorPoseEstimator> armor_pose_estimator_;
 
   // Detected armors publisher

@@ -29,6 +29,9 @@ ros__parameters:
 
   # Pose / other options
   use_ba: true
+  use_pnp_refiner: false
+  pnp_refiner:
+    mode: 'none'   # none | single_yaw | single_xyz_yaw | sliding_window
   target_frame: 'odom'
 
   # Debug

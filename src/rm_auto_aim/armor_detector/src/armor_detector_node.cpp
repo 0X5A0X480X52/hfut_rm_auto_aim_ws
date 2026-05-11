@@ -65,6 +65,9 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
 
   // Tricks to make pose more accurate
   use_ba_ = this->declare_parameter("use_ba", true);
+  use_pnp_refiner_ = this->declare_parameter("use_pnp_refiner", false);
+  pnp_refiner_mode_ = this->declare_parameter(
+      "pnp_refiner.mode", std::string("none"));
 
   // Armors Publisher
   armors_pub_ = this->create_publisher<rm_interfaces::msg::Armors>(
@@ -121,6 +124,7 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
         // Setup armor pose solver
         armor_pose_estimator_ = std::make_unique<ArmorPoseEstimator>(cam_info_);
         armor_pose_estimator_->enableBA(use_ba_);
+        armor_pose_estimator_->configurePnpRefiner(use_pnp_refiner_, pnp_refiner_mode_);
         cam_info_sub_.reset();
       });
 

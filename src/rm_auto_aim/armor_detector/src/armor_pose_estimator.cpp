@@ -34,9 +34,35 @@ ArmorPoseEstimator::ArmorPoseEstimator(
                                                      LARGE_ARMOR_HEIGHT));
   // BA solver
   ba_solver_ = std::make_unique<BaSolver>(camera_info->k, camera_info->d);
+  camera_matrix_ = cv::Mat(3, 3, CV_64F);
+  for (int r = 0; r < 3; ++r) {
+    for (int c = 0; c < 3; ++c) {
+      camera_matrix_.at<double>(r, c) = camera_info->k[r * 3 + c];
+    }
+  }
+  dist_coeffs_ =
+      cv::Mat(static_cast<int>(camera_info->d.size()), 1, CV_64F);
+  for (size_t i = 0; i < camera_info->d.size(); ++i) {
+    dist_coeffs_.at<double>(static_cast<int>(i), 0) = camera_info->d[i];
+  }
 
   R_gimbal_camera_ = Eigen::Matrix3d::Identity();
   R_gimbal_camera_ << 0, 0, 1, -1, 0, 0, 0, -1, 0;
+}
+
+void ArmorPoseEstimator::configurePnpRefiner(bool enable, const std::string &mode) {
+  use_pnp_refiner_ = enable;
+  pnp_refiner_mode_ = mode;
+  if (!use_pnp_refiner_ || pnp_refiner_mode_ == "none") {
+    pnp_refiner_.reset();
+    return;
+  }
+
+  armor_pnp_refiner::PnpRefinerConfig cfg;
+  cfg.mode = pnp_refiner_mode_;
+  // Keep Phase0 behavior as close to legacy detector BA as possible.
+  cfg.prefer_legacy_single_yaw = true;
+  pnp_refiner_ = std::make_unique<armor_pnp_refiner::ArmorPnpRefiner>(cfg);
 }
 
 std::vector<rm_interfaces::msg::Armor>
@@ -61,10 +87,48 @@ ArmorPoseEstimator::extractArmorPoses(const std::vector<Armor> &armors,
       double armor_roll =
           rotationMatrixToRPY(R_gimbal_camera_ * R)[0] * 180 / M_PI;
 
-      if (use_ba_ && armor_roll < 15) {
+      const bool use_legacy_single_yaw =
+          use_pnp_refiner_ && pnp_refiner_mode_ == "single_yaw";
+      if ((use_ba_ || use_legacy_single_yaw) && armor_roll < 15) {
         // Use BA alogorithm to optimize the pose from PnP
         // solveBa() will modify the rotation_matrix
         R = ba_solver_->solveBa(armor, t, R, R_imu_camera);
+      }
+
+      if (use_pnp_refiner_ && pnp_refiner_ != nullptr && pnp_refiner_mode_ != "single_yaw") {
+        armor_pnp_refiner::PnpRefineInput input;
+        input.t_camera_armor = t;
+        input.q_camera_armor = Eigen::Quaterniond(R);
+        auto rpy = rotationMatrixToRPY(R);
+        input.roll_rad = rpy[0];
+        input.pitch_rad = rpy[1];
+        input.yaw_rad = rpy[2];
+        input.rvec = rvecs[0];
+        input.tvec = tvecs[0];
+        input.image_points = armor.landmarks();
+        input.object_points =
+            (armor.type == ArmorType::SMALL)
+                ? Armor::buildObjectPoints<cv::Point3f>(SMALL_ARMOR_WIDTH,
+                                                        SMALL_ARMOR_HEIGHT)
+                : Armor::buildObjectPoints<cv::Point3f>(LARGE_ARMOR_WIDTH,
+                                                        LARGE_ARMOR_HEIGHT);
+        input.camera_matrix = camera_matrix_;
+        input.dist_coeffs = dist_coeffs_;
+        input.stamp_sec = 0.0;
+        input.armor_number = armor.number;
+        input.armor_type = (armor.number == "outpost")
+                               ? armor_pnp_refiner::ArmorSizeType::OUTPOST
+                               : (armor.type == ArmorType::SMALL
+                                      ? armor_pnp_refiner::ArmorSizeType::SMALL
+                                      : armor_pnp_refiner::ArmorSizeType::LARGE);
+        input.R_imu_camera = R_imu_camera;
+        input.use_fixed_pitch_roll = false;
+
+        const auto refined = pnp_refiner_->refine(input);
+        if (refined.valid) {
+          R = refined.q_camera_armor.toRotationMatrix();
+          t = refined.t_camera_armor;
+        }
       }
       Eigen::Quaterniond q(R);
 

@@ -27,6 +27,7 @@ find_package(TBB REQUIRED COMPONENTS tbb)
 find_package(G2O REQUIRED)
 find_package(fmt REQUIRED)
 find_package(Sophus REQUIRED)
+find_package(armor_pnp_refiner REQUIRED)
 ament_auto_find_build_dependencies()
 
 ###########
@@ -66,6 +67,7 @@ find_package(G2O REQUIRED)
 #find_package(fmt REQUIRED HINTS ${FMT_DIR})
 find_package(fmt REQUIRED)
 find_package(Sophus REQUIRED)
+find_package(armor_pnp_refiner REQUIRED)
 #find_package(openVINO REQUIRED HINTS ${OpenVINO_DIR} COMPONENTS Runtime ONNX)
 ament_auto_find_build_dependencies()
 
