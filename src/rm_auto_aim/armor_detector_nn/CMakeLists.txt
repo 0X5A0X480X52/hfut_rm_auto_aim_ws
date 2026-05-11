@@ -102,6 +102,7 @@ endif()
 set(POSTPROCESS_SOURCES
   src/postprocess/decode_strategy_factory.cpp
   src/postprocess/ultralytics_pose_decode_strategy.cpp
+  src/postprocess/robotpilots_landmark_decode_strategy.cpp
 )
 
 # --- geometry sources ---

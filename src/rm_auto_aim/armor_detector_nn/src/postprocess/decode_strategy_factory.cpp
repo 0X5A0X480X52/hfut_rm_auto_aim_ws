@@ -1,5 +1,6 @@
 #include "armor_detector_nn/postprocess/decode_strategy_factory.hpp"
 
+#include "armor_detector_nn/postprocess/robotpilots_landmark_decode_strategy.hpp"
 #include "armor_detector_nn/postprocess/ultralytics_pose_decode_strategy.hpp"
 
 namespace fyt::auto_aim {
@@ -13,6 +14,9 @@ std::unique_ptr<IDecodeStrategy> DecodeStrategyFactory::create(const Postprocess
 
   if (config.strategy == "ultralytics_pose") {
     return std::make_unique<UltralyticsPoseDecodeStrategy>();
+  }
+  if (config.strategy == "robotpilots_landmark") {
+    return std::make_unique<RobotPilotsLandmarkDecodeStrategy>();
   }
 
   return nullptr;

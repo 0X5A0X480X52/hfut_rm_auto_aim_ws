@@ -5,6 +5,7 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <openvino/openvino.hpp>
 
 #include "armor_detector_nn/backend/inference_backend.hpp"
 
@@ -27,12 +28,13 @@ public:
   BackendInfo info() const override;
 
 private:
-  void loadModel(const std::string& xml_path, const std::string& bin_path,
+  void loadModel(const std::string& model_path, const std::string& bin_path,
                  const std::string& device, int num_threads);
   void configurePreprocessing(const BackendConfig& config);
   void validateModelIO(const BackendConfig& config);
   void detectQuantizationPrecision();
   std::string selectAvailableDevice(const std::string& preferred_device);
+  ov::Tensor makeInputTensor(const TensorInput& input) const;
 
   std::unique_ptr<ov::Core> core_;
   std::unique_ptr<ov::CompiledModel> compiled_model_;

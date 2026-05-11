@@ -1,6 +1,7 @@
 #include "armor_detector_nn/backend/openvino_backend.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <stdexcept>
 
@@ -43,17 +44,29 @@ OpenVINOBackend::~OpenVINOBackend() = default;
 void OpenVINOBackend::load(const BackendConfig& config) {
   core_ = std::make_unique<ov::Core>();
 
-  std::string xml_path = resolvePath(config.openvino_xml_path);
+  std::string model_path = resolvePath(config.openvino_xml_path);
+  if (model_path.empty()) {
+    model_path = resolvePath(config.model_path);
+  }
   std::string bin_path = resolvePath(config.openvino_bin_path);
 
-  if (xml_path.empty()) {
-    throw std::runtime_error("OpenVINOBackend: openvino_model_xml path is empty");
+  if (model_path.empty()) {
+    throw std::runtime_error("OpenVINOBackend: model path is empty (openvino_model_xml/model_path)");
   }
-  if (bin_path.empty()) {
-    bin_path = xml_path;
-    size_t ext = bin_path.rfind(".xml");
-    if (ext != std::string::npos) {
-      bin_path.replace(ext, 4, ".bin");
+
+  std::string model_ext;
+  const size_t ext_pos = model_path.find_last_of('.');
+  if (ext_pos != std::string::npos) {
+    model_ext = model_path.substr(ext_pos);
+    std::transform(model_ext.begin(), model_ext.end(), model_ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  }
+
+  if (model_ext == ".xml" && bin_path.empty()) {
+    bin_path = model_path;
+    const size_t xml_ext = bin_path.rfind(".xml");
+    if (xml_ext != std::string::npos) {
+      bin_path.replace(xml_ext, 4, ".bin");
     }
   }
 
@@ -65,9 +78,9 @@ void OpenVINOBackend::load(const BackendConfig& config) {
   use_native_preprocess_ = false;  // gated by config in future
 
   FYT_INFO("armor_detector_nn", "OpenVINOBackend loading: %s on %s",
-           xml_path.c_str(), device.c_str());
+           model_path.c_str(), device.c_str());
 
-  loadModel(xml_path, bin_path, device, config.num_threads);
+  loadModel(model_path, bin_path, device, config.num_threads);
   detectQuantizationPrecision();
   validateModelIO(config);
 
@@ -87,7 +100,7 @@ std::vector<TensorOutput> OpenVINOBackend::infer(const TensorInput& input) {
   std::lock_guard<std::mutex> lock(infer_mutex_);
 
   {
-    auto input_tensor = infer_request_->get_tensor(input_name_);
+    const auto input_tensor = makeInputTensor(input);
     const auto& in_shape = input.info.shape;
     size_t num_elements = 1;
     for (auto d : in_shape) num_elements *= d;
@@ -99,9 +112,7 @@ std::vector<TensorOutput> OpenVINOBackend::infer(const TensorInput& input) {
         std::to_string(input.host_data.size()));
     }
 
-    std::memcpy(input_tensor.data<float>(),
-                input.host_data.data(),
-                num_elements * sizeof(float));
+    infer_request_->set_tensor(input_name_, input_tensor);
   }
 
   // Synchronous inference
@@ -139,11 +150,11 @@ void OpenVINOBackend::warmup(int iterations) {
 
   size_t num_elements = 1;
   for (auto d : input_shape_) num_elements *= d;
-  std::vector<float> dummy(num_elements, 0.0F);
-
-  auto input_tensor = infer_request_->get_tensor(input_name_);
-  std::memcpy(input_tensor.data<float>(), dummy.data(),
-              num_elements * sizeof(float));
+  TensorInput dummy;
+  dummy.info.shape = input_shape_;
+  dummy.host_data.assign(num_elements, 0.0F);
+  const auto input_tensor = makeInputTensor(dummy);
+  infer_request_->set_tensor(input_name_, input_tensor);
 
   for (int i = 0; i < iterations; ++i) {
     infer_request_->infer();
@@ -156,7 +167,7 @@ BackendInfo OpenVINOBackend::info() const {
   return info_;
 }
 
-void OpenVINOBackend::loadModel(const std::string& xml_path,
+void OpenVINOBackend::loadModel(const std::string& model_path,
                                  const std::string& bin_path,
                                  const std::string& device,
                                  int num_threads) {
@@ -166,9 +177,14 @@ void OpenVINOBackend::loadModel(const std::string& xml_path,
   }
 
   // Read model
-  auto model = core_->read_model(xml_path, bin_path);
+  std::shared_ptr<ov::Model> model;
+  if (bin_path.empty()) {
+    model = core_->read_model(model_path);
+  } else {
+    model = core_->read_model(model_path, bin_path);
+  }
   if (!model) {
-    throw std::runtime_error("OpenVINOBackend: failed to read model from " + xml_path);
+    throw std::runtime_error("OpenVINOBackend: failed to read model from " + model_path);
   }
 
   // Configure preprocessing if native mode
@@ -287,6 +303,41 @@ std::string OpenVINOBackend::selectAvailableDevice(
   }
 
   return {};
+}
+
+ov::Tensor OpenVINOBackend::makeInputTensor(const TensorInput& input) const {
+  const auto port = compiled_model_->input();
+  const auto expected_shape = port.get_shape();
+  const auto expected_type = port.get_element_type();
+
+  size_t expected_elements = 1;
+  for (const auto dim : expected_shape) expected_elements *= dim;
+  if (expected_elements != input.host_data.size()) {
+    throw std::runtime_error(
+      "OpenVINOBackend::makeInputTensor: input size mismatch. Expected " +
+      std::to_string(expected_elements) + ", got " +
+      std::to_string(input.host_data.size()));
+  }
+
+  if (expected_type == ov::element::f32) {
+    ov::Tensor tensor(expected_type, expected_shape);
+    std::memcpy(tensor.data<float>(), input.host_data.data(),
+                expected_elements * sizeof(float));
+    return tensor;
+  }
+
+  if (expected_type == ov::element::f16) {
+    ov::Tensor tensor(expected_type, expected_shape);
+    auto* dst = tensor.data<ov::float16>();
+    for (size_t i = 0; i < expected_elements; ++i) {
+      dst[i] = ov::float16(input.host_data[i]);
+    }
+    return tensor;
+  }
+
+  throw std::runtime_error(
+    "OpenVINOBackend::makeInputTensor: unsupported model input element type: " +
+    expected_type.get_type_name());
 }
 
 }  // namespace fyt::auto_aim
