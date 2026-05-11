@@ -95,6 +95,7 @@ ArmorPoseEstimator::extractArmorPoses(const std::vector<Armor> &armors,
         R = ba_solver_->solveBa(armor, t, R, R_imu_camera);
       }
 
+      std::optional<armor_pnp_refiner::PnpRefineOutput> refined_opt;
       if (use_pnp_refiner_ && pnp_refiner_ != nullptr && pnp_refiner_mode_ != "single_yaw") {
         armor_pnp_refiner::PnpRefineInput input;
         input.t_camera_armor = t;
@@ -125,6 +126,7 @@ ArmorPoseEstimator::extractArmorPoses(const std::vector<Armor> &armors,
         input.use_fixed_pitch_roll = false;
 
         const auto refined = pnp_refiner_->refine(input);
+        refined_opt = refined;
         if (refined.valid) {
           R = refined.q_camera_armor.toRotationMatrix();
           t = refined.t_camera_armor;
@@ -179,6 +181,25 @@ ArmorPoseEstimator::extractArmorPoses(const std::vector<Armor> &armors,
       armor_msg.bbox_xywh[3] = std::max(0.0f, max_y - min_y);
       // 0: LB,LT,RT,RB (legacy detector convention).
       armor_msg.corners_ordering = 0;
+
+      // Fill refiner quality metadata (Phase 1: covariance always invalid)
+      if (refined_opt.has_value()) {
+        const auto &ref = *refined_opt;
+        armor_msg.pose_estimate_mode = static_cast<uint8_t>(ref.mode);
+        armor_msg.pose_quality_score = static_cast<float>(ref.confidence);
+        armor_msg.reproj_error_raw = static_cast<float>(ref.reproj_error_raw_px);
+        armor_msg.reproj_error_refined = static_cast<float>(ref.reproj_error_refined_px);
+        armor_msg.pose_condition_number = static_cast<float>(ref.condition_number);
+        armor_msg.pose_num_points = static_cast<uint16_t>(ref.num_points);
+        armor_msg.pose_num_inliers = static_cast<uint16_t>(ref.num_inliers);
+        armor_msg.pose_covariance_valid = ref.covariance_valid;
+        for (int r = 0; r < 4; ++r) {
+          for (int c = 0; c < 4; ++c) {
+            armor_msg.pose_covariance_xyz_yaw[r * 4 + c] =
+                ref.covariance_xyz_yaw(r, c);
+          }
+        }
+      }
 
       armors_msg.push_back(std::move(armor_msg));
     } else {

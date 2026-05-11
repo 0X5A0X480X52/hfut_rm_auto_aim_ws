@@ -176,7 +176,7 @@ MeasurementEval UkfBackendV2::evaluateSingle(const PredictContext &ctx,
   Eigen::Vector4d innov = z_obs - z_pred;
   innov(3) = normalize_angle(innov(3));
 
-  Eigen::Matrix4d R = noise_->build_R(UpdateKind::Single);
+  Eigen::Matrix4d R = noise_->build_single_R(obs);
 
   Eigen::MatrixXd diff_z(n_sigma, 4);
   for (int i = 0; i < n_sigma; ++i) {
@@ -278,7 +278,7 @@ MeasurementEval UkfBackendV2::evaluateDual(const PredictContext &ctx,
   innov(3) = normalize_angle(innov(3));
   innov(7) = normalize_angle(innov(7));
 
-  Eigen::Matrix<double, 8, 8> R = noise_->build_R(UpdateKind::Dual);
+  Eigen::Matrix<double, 8, 8> R = noise_->build_dual_R(obs0, obs1);
 
   Eigen::MatrixXd diff_z(n_sigma, 8);
   for (int i = 0; i < n_sigma; ++i) {
@@ -396,7 +396,7 @@ UkfTrial UkfBackendV2::tryUpdateSingle(const PredictContext &ctx,
   Eigen::Vector4d innov = z_obs - z_pred;
   innov(3) = normalize_angle(innov(3));
 
-  Eigen::Matrix4d R = noise_->build_R(UpdateKind::Single);
+  Eigen::Matrix4d R = noise_->build_single_R(obs);
 
   Eigen::MatrixXd diff_z(n_sigma, 4);
   for (int i = 0; i < n_sigma; ++i) {
@@ -519,7 +519,7 @@ UkfTrial UkfBackendV2::tryUpdateDual(const PredictContext &ctx,
   innov(3) = normalize_angle(innov(3));
   innov(7) = normalize_angle(innov(7));
 
-  Eigen::Matrix<double, 8, 8> R = noise_->build_R(UpdateKind::Dual);
+  Eigen::Matrix<double, 8, 8> R = noise_->build_dual_R(obs0, obs1);
 
   Eigen::MatrixXd diff_z(n_sigma, 8);
   for (int i = 0; i < n_sigma; ++i) {

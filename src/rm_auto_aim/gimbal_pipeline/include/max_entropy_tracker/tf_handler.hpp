@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 
+#include <Eigen/Geometry>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rm_interfaces/msg/armor.hpp>
@@ -71,6 +72,38 @@ class TFHandler {
     obs.z = tf_obs.z;
     obs.yaw = tf_obs.yaw;
     obs.timestamp = tf_obs.timestamp;
+
+    // Rotate BA covariance from source frame to target frame:
+    // P' = A * P * A^T, A = diag(R_tf, 1), state = [x, y, z, yaw].
+    // Yaw offset is additive constant under frame transform, so yaw variance is
+    // preserved and xyz-yaw cross-cov rotates with xyz block.
+    if (obs.ba_pnp.has_value()) {
+      auto &ba = *obs.ba_pnp;
+      ba.frame_aligned = false;
+      if (ba.valid && ba.cov_valid && ba.cov_xyz_yaw.allFinite()) {
+        try {
+          const auto tf = tf_buffer_->lookupTransform(
+              target_frame_, source_frame, ps.header.stamp, tf2::durationFromSec(0.0));
+          const auto &q_msg = tf.transform.rotation;
+          Eigen::Quaterniond q_tf(q_msg.w, q_msg.x, q_msg.y, q_msg.z);
+          Eigen::Matrix3d R_tf = q_tf.toRotationMatrix();
+          Eigen::Matrix4d A = Eigen::Matrix4d::Identity();
+          A.block<3, 3>(0, 0) = R_tf;
+          ba.cov_xyz_yaw = A * ba.cov_xyz_yaw * A.transpose();
+          ba.cov_xyz_yaw = 0.5 * (ba.cov_xyz_yaw + ba.cov_xyz_yaw.transpose());
+          ba.frame_aligned = ba.cov_xyz_yaw.allFinite();
+          if (!ba.frame_aligned) {
+            ba.cov_valid = false;
+          }
+        } catch (const tf2::TransformException &ex) {
+          RCLCPP_WARN(rclcpp::get_logger("tf_handler"),
+                      "BA covariance TF lookup failed at stamp %.4f: %s",
+                      rclcpp::Time(ps.header.stamp).seconds(), ex.what());
+          ba.cov_valid = false;
+        }
+      }
+    }
+
     return obs;
   }
 

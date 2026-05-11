@@ -4,17 +4,25 @@
 
 #include <Eigen/Dense>
 
+#include <string>
+
 #include "max_entropy_tracker/core/config.hpp"
+#include "max_entropy_tracker/core/observation.hpp"
 
 namespace fyt::auto_aim::norm4_v3 {
-
-enum class UpdateKind { Single, Dual };
 
 class IMeasurementNoiseModel {
  public:
   virtual ~IMeasurementNoiseModel() = default;
 
-  virtual Eigen::MatrixXd build_R(UpdateKind kind) const = 0;
+  virtual Eigen::Matrix4d build_single_R(
+      const ObservationData &obs) const = 0;
+
+  virtual Eigen::Matrix<double, 8, 8> build_dual_R(
+      const ObservationData &obs0,
+      const ObservationData &obs1) const = 0;
+
+  virtual std::string name() const = 0;
 
   virtual double sigma_pos_xy() const = 0;
   virtual double sigma_pos_z() const = 0;
@@ -31,18 +39,23 @@ class FixedCartesianNoiseModel : public IMeasurementNoiseModel {
         sy_(ukf_cfg.sigma_yaw),
         dual_scale_(ukf_cfg.dual_raw_R_scale) {}
 
-  Eigen::MatrixXd build_R(UpdateKind kind) const override {
-    if (kind == UpdateKind::Single) {
-      Eigen::Vector4d diag(sp_ * sp_, sp_ * sp_, sz_ * sz_, sy_ * sy_);
-      return diag.asDiagonal();
-    } else {
-      Eigen::Matrix<double, 8, 1> diag;
-      diag << sp_ * sp_, sp_ * sp_, sz_ * sz_, sy_ * sy_,
-              sp_ * sp_, sp_ * sp_, sz_ * sz_, sy_ * sy_;
-      diag *= dual_scale_;
-      return diag.asDiagonal();
-    }
+  Eigen::Matrix4d build_single_R(
+      const ObservationData & /*obs*/) const override {
+    Eigen::Vector4d diag(sp_ * sp_, sp_ * sp_, sz_ * sz_, sy_ * sy_);
+    return diag.asDiagonal();
   }
+
+  Eigen::Matrix<double, 8, 8> build_dual_R(
+      const ObservationData & /*obs0*/,
+      const ObservationData & /*obs1*/) const override {
+    Eigen::Matrix<double, 8, 1> diag;
+    diag << sp_ * sp_, sp_ * sp_, sz_ * sz_, sy_ * sy_,
+            sp_ * sp_, sp_ * sp_, sz_ * sz_, sy_ * sy_;
+    diag *= dual_scale_;
+    return diag.asDiagonal();
+  }
+
+  std::string name() const override { return "fixed"; }
 
   double sigma_pos_xy() const override { return sp_; }
   double sigma_pos_z() const override { return sz_; }
