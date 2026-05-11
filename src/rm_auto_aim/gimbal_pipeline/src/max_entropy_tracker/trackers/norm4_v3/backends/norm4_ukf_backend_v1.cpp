@@ -1,5 +1,5 @@
 // Copyright (C) Max Entropy Tracker. Licensed under the MIT License.
-#include "max_entropy_tracker/trackers/norm4_v3/norm4_ukf_backend_v1.hpp"
+#include "max_entropy_tracker/trackers/norm4_v3/backends/norm4_ukf_backend_v1.hpp"
 
 #include <algorithm>
 #include <cmath>

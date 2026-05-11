@@ -1,0 +1,5 @@
+noise:
+  sigma_pos_xy: 0.04
+  sigma_pos_z: 0.06
+  sigma_yaw: 0.08
+  dual_raw_R_scale: 1.3

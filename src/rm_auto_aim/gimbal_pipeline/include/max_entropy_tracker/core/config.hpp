@@ -451,6 +451,42 @@ using Norm4V3ModeRoutingConfig = Norm4V2ModeRoutingConfig;
 using Norm4V3SinglePlateBridgeConfig = Norm4V2SinglePlateBridgeConfig;
 using Norm4V3FallbackConfig = Norm4V2FallbackConfig;
 
+struct Norm4V3BackendConfig {
+  std::string backend_type = "ukf_v1";       // "ukf_v1" | "ukf_v2" | "inekf"
+  std::string motion_profile = "default";
+  std::string noise_profile = "default";
+  std::string structure_profile = "slow";
+  bool enable_shadow_mode = false;
+  int shadow_convergence_frames = 30;
+};
+
+struct Norm4V3SlowStructureConfig {
+  bool enable = true;
+  double q_theta_r1 = 1.0e-6;
+  double q_theta_r2 = 1.0e-6;
+  double q_theta_dza = 5.0e-7;
+
+  double prior_r1 = 0.15;
+  double prior_r2 = 0.20;
+  double prior_dza = 0.0;
+  double prior_sigma_r = 0.06;
+  double prior_sigma_dza = 0.06;
+
+  double alpha_r1_single = 0.00;
+  double alpha_r2_single = 0.00;
+  double alpha_dza_single = 0.00;
+  double alpha_r1_dual = 0.05;
+  double alpha_r2_dual = 0.05;
+  double alpha_dza_dual = 0.02;
+
+  double prior_pull_gain = 0.002;
+
+  double min_r = 0.05;
+  double max_r = 0.50;
+  double min_dza = 0.0;
+  double max_dza = 0.12;
+};
+
 struct Norm4V3Config {
   bool enable_common_pipeline = false;
   bool enable_phase_memory = true;
@@ -460,11 +496,15 @@ struct Norm4V3Config {
   PhaseMemoryConfig phase_memory;
 
   Norm4V3UkfConfig ukf_v1;
+  Norm4V3UkfConfig ukf_v2;
+  Norm4V3UkfConfig inekf;
+  Norm4V3SlowStructureConfig slow_structure;
   Norm4V3SelectorConfig hypothesis_selector;
   Norm4V3WarmupConfig warmup;
   Norm4V3ModeRoutingConfig mode_routing;
   Norm4V3SinglePlateBridgeConfig single_plate_bridge;
   Norm4V3FallbackConfig fallback;
+  Norm4V3BackendConfig backend_config;
 };
 
 // ======================== Unified Config ========================

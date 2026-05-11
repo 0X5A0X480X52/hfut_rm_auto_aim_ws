@@ -1,0 +1,14 @@
+motion:
+  type: native
+  native:
+    translation_model: ca
+    rotation_model: ca
+    translation:
+      cv_process_noise_vel: 0.5
+      ca_process_noise_acc: 1.0
+    rotation:
+      cv_process_noise_rate: 0.5
+      ca_process_noise_acc: 1.0
+    structural:
+      process_noise_r: 0.008
+      process_noise_dz: 0.003

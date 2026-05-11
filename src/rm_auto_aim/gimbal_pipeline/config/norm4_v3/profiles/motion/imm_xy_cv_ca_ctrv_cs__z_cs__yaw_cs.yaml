@@ -1,0 +1,21 @@
+motion:
+  type: imm
+  imm:
+    enable_cv: true
+    enable_ca: true
+    enable_cs: true
+    enable_ctrv: true
+    q_cv: 0.45
+    q_ca: 0.9
+    q_z_vel: 0.7
+    q_yaw_rate: 0.7
+    cs_alpha: 0.6
+    cs_a_max: 12.0
+    p_stay: 0.84
+    p_switch: 0.053
+    z_model: cs
+    yaw_model: cs
+    q_r: 0.02
+    q_dza: 0.005
+    r_pos_base: 0.01
+    r_yaw_base: 0.03

@@ -10,9 +10,10 @@
 #include "max_entropy_tracker/core/observation.hpp"
 #include "max_entropy_tracker/evidence/evidence_builder.hpp"
 #include "max_entropy_tracker/trackers/base_tracker.hpp"
-#include "max_entropy_tracker/trackers/norm4_v3/norm4_hypothesis_generator.hpp"
-#include "max_entropy_tracker/trackers/norm4_v3/norm4_hypothesis_types.hpp"
-#include "max_entropy_tracker/trackers/norm4_v3/norm4_ukf_backend_v1.hpp"
+#include "max_entropy_tracker/trackers/norm4_v3/hypothesis/norm4_hypothesis_generator.hpp"
+#include "max_entropy_tracker/trackers/norm4_v3/hypothesis/norm4_hypothesis_types.hpp"
+#include "max_entropy_tracker/trackers/norm4_v3/interfaces/norm4_backend_interface.hpp"
+#include "max_entropy_tracker/trackers/norm4_v3/backends/norm4_backend_factory.hpp"
 #include "max_entropy_tracker/utils/maneuver_detector.hpp"
 
 namespace fyt::auto_aim {
@@ -67,7 +68,7 @@ class Norm4ArmorTrackerV2 : public BaseTracker {
                    double *confidence_out, double *margin_out) const;
 
   UnifiedConfig config_;
-  std::unique_ptr<norm4_v3::Norm4UkfBackendV1> backend_;
+  std::unique_ptr<norm4_v3::IStructuredBackend> backend_;
   norm4_v3::HypothesisGenerator hypothesis_generator_;
   ManeuverDetector maneuver_detector_;
 

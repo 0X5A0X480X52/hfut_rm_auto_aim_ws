@@ -1,0 +1,5 @@
+motion:
+  type: native
+  native:
+    translation_model: cv
+    rotation_model: cv

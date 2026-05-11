@@ -16,7 +16,7 @@
 #include "max_entropy_tracker/trackers/base_tracker.hpp"
 #include "max_entropy_tracker/trackers/adaptive_armor_tracker.hpp"
 #include "max_entropy_tracker/trackers/norm_4armor_tracker.hpp"
-#include "max_entropy_tracker/trackers/norm4_v3/norm4_tracker_v2.hpp"
+#include "max_entropy_tracker/trackers/norm4_v3/tracker/norm4_tracker_v2.hpp"
 #include "max_entropy_tracker/trackers/outpost_armor_tracker.hpp"
 #include "max_entropy_tracker/trackers/outpost_tracker_v2.hpp"
 #include "max_entropy_tracker/utils/observation_outlier_filter.hpp"

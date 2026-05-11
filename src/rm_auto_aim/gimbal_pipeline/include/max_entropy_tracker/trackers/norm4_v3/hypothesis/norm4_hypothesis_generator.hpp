@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "max_entropy_tracker/core/observation.hpp"
-#include "max_entropy_tracker/trackers/norm4_v3/norm4_hypothesis_types.hpp"
+#include "max_entropy_tracker/trackers/norm4_v3/hypothesis/norm4_hypothesis_types.hpp"
 
 namespace fyt::auto_aim::norm4_v3 {
 

@@ -286,6 +286,13 @@ gimbal_pipeline:
       enable_kinematic_anti_pingpong: true
       enable_2d_tracker: true
       enable_proxy_manager: true
+      backend_config:
+        backend_type: "ukf_v1"
+        motion_profile: "src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/motion/default.yaml"
+        noise_profile: "src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/noise/default.yaml"
+        structure_profile: "slow"
+        enable_shadow_mode: false
+        shadow_convergence_frames: 30
       phase_memory:
         enable_phase_memory: true
         enable_kinematic_anti_pingpong: true
@@ -328,6 +335,31 @@ gimbal_pipeline:
           min_dza: 0.0
           max_dza: 0.15
           max_dza_jump: 0.03
+      ukf_v2:
+        enabled: true
+      inekf:
+        enabled: true
+      slow_structure:
+        enable: true
+        q_theta_r1: 1.0e-6
+        q_theta_r2: 1.0e-6
+        q_theta_dza: 5.0e-7
+        prior_r1: 0.15
+        prior_r2: 0.20
+        prior_dza: 0.0
+        prior_sigma_r: 0.06
+        prior_sigma_dza: 0.06
+        alpha_r1_single: 0.0
+        alpha_r2_single: 0.0
+        alpha_dza_single: 0.0
+        alpha_r1_dual: 0.05
+        alpha_r2_dual: 0.05
+        alpha_dza_dual: 0.02
+        prior_pull_gain: 0.002
+        min_r: 0.05
+        max_r: 0.50
+        min_dza: 0.0
+        max_dza: 0.12
       hypothesis_selector:
         topk: 4
         commit_top1_only: true

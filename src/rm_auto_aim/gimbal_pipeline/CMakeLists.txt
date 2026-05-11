@@ -28,6 +28,7 @@ find_package(Eigen3 REQUIRED)
 find_package(qpOASES REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(cv_bridge REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 # ─── Include directories ───────────────────────────────────────
 include_directories(
@@ -68,6 +69,7 @@ target_link_libraries(${PROJECT_NAME}
   Eigen3::Eigen
   ${qpOASES_LIBRARY}
   ${OpenCV_LIBS}
+  yaml-cpp
 )
 
 # ─── Register composable node ─────────────────────────────────

@@ -30,7 +30,7 @@
 
 #include "max_entropy_tracker/msg_converter.hpp"
 #include "max_entropy_tracker/trackers/norm_4armor_tracker.hpp"
-#include "max_entropy_tracker/trackers/norm4_v3/norm4_tracker_v2.hpp"
+#include "max_entropy_tracker/trackers/norm4_v3/tracker/norm4_tracker_v2.hpp"
 #include "max_entropy_tracker/visualization.hpp"
 
 // Gimbal strategies
@@ -1329,7 +1329,7 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("norm4_v2.fallback.predict_only_on_reject", true);
   declare_parameter("norm4_v2.fallback.enable_ambiguous_single_fallback", true);
 
-  // Norm4 V3 (dedicated for trackers/norm4_v3/norm4_tracker_v2.hpp)
+  // Norm4 V3 (dedicated for trackers/norm4_v3/tracker/norm4_tracker_v2.hpp)
   declare_parameter("norm4_v3.enable_common_pipeline", false);
   declare_parameter("norm4_v3.enable_phase_memory", true);
   declare_parameter("norm4_v3.enable_kinematic_anti_pingpong", true);
@@ -1372,6 +1372,84 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("norm4_v3.ukf_v1.posterior_sanity.min_dza", 0.0);
   declare_parameter("norm4_v3.ukf_v1.posterior_sanity.max_dza", 0.15);
   declare_parameter("norm4_v3.ukf_v1.posterior_sanity.max_dza_jump", 0.03);
+
+  declare_parameter("norm4_v3.ukf_v2.enabled", true);
+  declare_parameter("norm4_v3.ukf_v2.force_rotation_ca", false);
+  declare_parameter("norm4_v3.ukf_v2.dual_raw_batch", true);
+  declare_parameter("norm4_v3.ukf_v2.sigma_pos_xy", 0.06);
+  declare_parameter("norm4_v3.ukf_v2.sigma_pos_z", 0.08);
+  declare_parameter("norm4_v3.ukf_v2.sigma_yaw", 0.12);
+  declare_parameter("norm4_v3.ukf_v2.dual_raw_R_scale", 1.5);
+  declare_parameter("norm4_v3.ukf_v2.gate.single_total_nis", 25.0);
+  declare_parameter("norm4_v3.ukf_v2.gate.single_pos_chi2", 16.0);
+  declare_parameter("norm4_v3.ukf_v2.gate.single_yaw_chi2", 9.0);
+  declare_parameter("norm4_v3.ukf_v2.gate.dual_total_nis", 45.0);
+  declare_parameter("norm4_v3.ukf_v2.gate.dual_each_pos_chi2", 16.0);
+  declare_parameter("norm4_v3.ukf_v2.gate.dual_each_yaw_chi2", 9.0);
+  declare_parameter("norm4_v3.ukf_v2.single_update.structural_gain_r", 0.0);
+  declare_parameter("norm4_v3.ukf_v2.single_update.structural_gain_dza", 0.0);
+  declare_parameter("norm4_v3.ukf_v2.dual_update.structural_gain_r", 0.05);
+  declare_parameter("norm4_v3.ukf_v2.dual_update.structural_gain_dza", 0.02);
+  declare_parameter("norm4_v3.ukf_v2.posterior_sanity.max_center_jump", 0.25);
+  declare_parameter("norm4_v3.ukf_v2.posterior_sanity.max_yaw_jump", 0.80);
+  declare_parameter("norm4_v3.ukf_v2.posterior_sanity.min_r", 0.05);
+  declare_parameter("norm4_v3.ukf_v2.posterior_sanity.max_r", 0.50);
+  declare_parameter("norm4_v3.ukf_v2.posterior_sanity.max_r_jump", 0.05);
+  declare_parameter("norm4_v3.ukf_v2.posterior_sanity.min_dza", 0.0);
+  declare_parameter("norm4_v3.ukf_v2.posterior_sanity.max_dza", 0.15);
+  declare_parameter("norm4_v3.ukf_v2.posterior_sanity.max_dza_jump", 0.03);
+
+  declare_parameter("norm4_v3.inekf.enabled", true);
+  declare_parameter("norm4_v3.inekf.force_rotation_ca", false);
+  declare_parameter("norm4_v3.inekf.dual_raw_batch", true);
+  declare_parameter("norm4_v3.inekf.sigma_pos_xy", 0.06);
+  declare_parameter("norm4_v3.inekf.sigma_pos_z", 0.08);
+  declare_parameter("norm4_v3.inekf.sigma_yaw", 0.12);
+  declare_parameter("norm4_v3.inekf.dual_raw_R_scale", 1.5);
+  declare_parameter("norm4_v3.inekf.gate.single_total_nis", 25.0);
+  declare_parameter("norm4_v3.inekf.gate.single_pos_chi2", 16.0);
+  declare_parameter("norm4_v3.inekf.gate.single_yaw_chi2", 9.0);
+  declare_parameter("norm4_v3.inekf.gate.dual_total_nis", 45.0);
+  declare_parameter("norm4_v3.inekf.gate.dual_each_pos_chi2", 16.0);
+  declare_parameter("norm4_v3.inekf.gate.dual_each_yaw_chi2", 9.0);
+  declare_parameter("norm4_v3.inekf.single_update.structural_gain_r", 0.0);
+  declare_parameter("norm4_v3.inekf.single_update.structural_gain_dza", 0.0);
+  declare_parameter("norm4_v3.inekf.dual_update.structural_gain_r", 0.05);
+  declare_parameter("norm4_v3.inekf.dual_update.structural_gain_dza", 0.02);
+  declare_parameter("norm4_v3.inekf.posterior_sanity.max_center_jump", 0.25);
+  declare_parameter("norm4_v3.inekf.posterior_sanity.max_yaw_jump", 0.80);
+  declare_parameter("norm4_v3.inekf.posterior_sanity.min_r", 0.05);
+  declare_parameter("norm4_v3.inekf.posterior_sanity.max_r", 0.50);
+  declare_parameter("norm4_v3.inekf.posterior_sanity.max_r_jump", 0.05);
+  declare_parameter("norm4_v3.inekf.posterior_sanity.min_dza", 0.0);
+  declare_parameter("norm4_v3.inekf.posterior_sanity.max_dza", 0.15);
+  declare_parameter("norm4_v3.inekf.posterior_sanity.max_dza_jump", 0.03);
+
+  declare_parameter("norm4_v3.slow_structure.enable", true);
+  declare_parameter("norm4_v3.slow_structure.q_theta_r1", 1.0e-6);
+  declare_parameter("norm4_v3.slow_structure.q_theta_r2", 1.0e-6);
+  declare_parameter("norm4_v3.slow_structure.q_theta_dza", 5.0e-7);
+  declare_parameter("norm4_v3.slow_structure.prior_r1", 0.15);
+  declare_parameter("norm4_v3.slow_structure.prior_r2", 0.20);
+  declare_parameter("norm4_v3.slow_structure.prior_dza", 0.0);
+  declare_parameter("norm4_v3.slow_structure.prior_sigma_r", 0.06);
+  declare_parameter("norm4_v3.slow_structure.prior_sigma_dza", 0.06);
+  declare_parameter("norm4_v3.slow_structure.alpha_r1_single", 0.0);
+  declare_parameter("norm4_v3.slow_structure.alpha_r2_single", 0.0);
+  declare_parameter("norm4_v3.slow_structure.alpha_dza_single", 0.0);
+  declare_parameter("norm4_v3.slow_structure.alpha_r1_dual", 0.05);
+  declare_parameter("norm4_v3.slow_structure.alpha_r2_dual", 0.05);
+  declare_parameter("norm4_v3.slow_structure.alpha_dza_dual", 0.02);
+  declare_parameter("norm4_v3.slow_structure.prior_pull_gain", 0.002);
+  declare_parameter("norm4_v3.slow_structure.min_r", 0.05);
+  declare_parameter("norm4_v3.slow_structure.max_r", 0.50);
+  declare_parameter("norm4_v3.slow_structure.min_dza", 0.0);
+  declare_parameter("norm4_v3.slow_structure.max_dza", 0.12);
+
+  declare_parameter("norm4_v3.backend_config.backend_type", "ukf_v1");
+  declare_parameter("norm4_v3.backend_config.motion_profile", "default");
+  declare_parameter("norm4_v3.backend_config.noise_profile", "default");
+  declare_parameter("norm4_v3.backend_config.structure_profile", "slow");
 
   declare_parameter("norm4_v3.hypothesis_selector.topk", 4);
   declare_parameter("norm4_v3.hypothesis_selector.commit_top1_only", true);
@@ -2266,6 +2344,108 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("norm4_v3.ukf_v1.posterior_sanity.max_dza").as_double();
   c.norm4_v3.ukf_v1.posterior_sanity.max_dza_jump =
       get_parameter("norm4_v3.ukf_v1.posterior_sanity.max_dza_jump").as_double();
+
+  auto load_norm4_v3_ukf_cfg = [this](const std::string &prefix,
+                                      Norm4V3UkfConfig *out) {
+    out->enabled = get_parameter(prefix + ".enabled").as_bool();
+    out->force_rotation_ca =
+        get_parameter(prefix + ".force_rotation_ca").as_bool();
+    out->dual_raw_batch = get_parameter(prefix + ".dual_raw_batch").as_bool();
+    out->sigma_pos_xy = get_parameter(prefix + ".sigma_pos_xy").as_double();
+    out->sigma_pos_z = get_parameter(prefix + ".sigma_pos_z").as_double();
+    out->sigma_yaw = get_parameter(prefix + ".sigma_yaw").as_double();
+    out->dual_raw_R_scale =
+        get_parameter(prefix + ".dual_raw_R_scale").as_double();
+    out->gate.single_total_nis =
+        get_parameter(prefix + ".gate.single_total_nis").as_double();
+    out->gate.single_pos_chi2 =
+        get_parameter(prefix + ".gate.single_pos_chi2").as_double();
+    out->gate.single_yaw_chi2 =
+        get_parameter(prefix + ".gate.single_yaw_chi2").as_double();
+    out->gate.dual_total_nis =
+        get_parameter(prefix + ".gate.dual_total_nis").as_double();
+    out->gate.dual_each_pos_chi2 =
+        get_parameter(prefix + ".gate.dual_each_pos_chi2").as_double();
+    out->gate.dual_each_yaw_chi2 =
+        get_parameter(prefix + ".gate.dual_each_yaw_chi2").as_double();
+    out->single_update.structural_gain_r =
+        get_parameter(prefix + ".single_update.structural_gain_r").as_double();
+    out->single_update.structural_gain_dza =
+        get_parameter(prefix + ".single_update.structural_gain_dza")
+            .as_double();
+    out->dual_update.structural_gain_r =
+        get_parameter(prefix + ".dual_update.structural_gain_r").as_double();
+    out->dual_update.structural_gain_dza =
+        get_parameter(prefix + ".dual_update.structural_gain_dza").as_double();
+    out->posterior_sanity.max_center_jump =
+        get_parameter(prefix + ".posterior_sanity.max_center_jump").as_double();
+    out->posterior_sanity.max_yaw_jump =
+        get_parameter(prefix + ".posterior_sanity.max_yaw_jump").as_double();
+    out->posterior_sanity.min_r =
+        get_parameter(prefix + ".posterior_sanity.min_r").as_double();
+    out->posterior_sanity.max_r =
+        get_parameter(prefix + ".posterior_sanity.max_r").as_double();
+    out->posterior_sanity.max_r_jump =
+        get_parameter(prefix + ".posterior_sanity.max_r_jump").as_double();
+    out->posterior_sanity.min_dza =
+        get_parameter(prefix + ".posterior_sanity.min_dza").as_double();
+    out->posterior_sanity.max_dza =
+        get_parameter(prefix + ".posterior_sanity.max_dza").as_double();
+    out->posterior_sanity.max_dza_jump =
+        get_parameter(prefix + ".posterior_sanity.max_dza_jump").as_double();
+  };
+  load_norm4_v3_ukf_cfg("norm4_v3.ukf_v2", &c.norm4_v3.ukf_v2);
+  load_norm4_v3_ukf_cfg("norm4_v3.inekf", &c.norm4_v3.inekf);
+
+  c.norm4_v3.slow_structure.enable =
+      get_parameter("norm4_v3.slow_structure.enable").as_bool();
+  c.norm4_v3.slow_structure.q_theta_r1 =
+      get_parameter("norm4_v3.slow_structure.q_theta_r1").as_double();
+  c.norm4_v3.slow_structure.q_theta_r2 =
+      get_parameter("norm4_v3.slow_structure.q_theta_r2").as_double();
+  c.norm4_v3.slow_structure.q_theta_dza =
+      get_parameter("norm4_v3.slow_structure.q_theta_dza").as_double();
+  c.norm4_v3.slow_structure.prior_r1 =
+      get_parameter("norm4_v3.slow_structure.prior_r1").as_double();
+  c.norm4_v3.slow_structure.prior_r2 =
+      get_parameter("norm4_v3.slow_structure.prior_r2").as_double();
+  c.norm4_v3.slow_structure.prior_dza =
+      get_parameter("norm4_v3.slow_structure.prior_dza").as_double();
+  c.norm4_v3.slow_structure.prior_sigma_r =
+      get_parameter("norm4_v3.slow_structure.prior_sigma_r").as_double();
+  c.norm4_v3.slow_structure.prior_sigma_dza =
+      get_parameter("norm4_v3.slow_structure.prior_sigma_dza").as_double();
+  c.norm4_v3.slow_structure.alpha_r1_single =
+      get_parameter("norm4_v3.slow_structure.alpha_r1_single").as_double();
+  c.norm4_v3.slow_structure.alpha_r2_single =
+      get_parameter("norm4_v3.slow_structure.alpha_r2_single").as_double();
+  c.norm4_v3.slow_structure.alpha_dza_single =
+      get_parameter("norm4_v3.slow_structure.alpha_dza_single").as_double();
+  c.norm4_v3.slow_structure.alpha_r1_dual =
+      get_parameter("norm4_v3.slow_structure.alpha_r1_dual").as_double();
+  c.norm4_v3.slow_structure.alpha_r2_dual =
+      get_parameter("norm4_v3.slow_structure.alpha_r2_dual").as_double();
+  c.norm4_v3.slow_structure.alpha_dza_dual =
+      get_parameter("norm4_v3.slow_structure.alpha_dza_dual").as_double();
+  c.norm4_v3.slow_structure.prior_pull_gain =
+      get_parameter("norm4_v3.slow_structure.prior_pull_gain").as_double();
+  c.norm4_v3.slow_structure.min_r =
+      get_parameter("norm4_v3.slow_structure.min_r").as_double();
+  c.norm4_v3.slow_structure.max_r =
+      get_parameter("norm4_v3.slow_structure.max_r").as_double();
+  c.norm4_v3.slow_structure.min_dza =
+      get_parameter("norm4_v3.slow_structure.min_dza").as_double();
+  c.norm4_v3.slow_structure.max_dza =
+      get_parameter("norm4_v3.slow_structure.max_dza").as_double();
+
+  c.norm4_v3.backend_config.backend_type =
+      get_parameter("norm4_v3.backend_config.backend_type").as_string();
+  c.norm4_v3.backend_config.motion_profile =
+      get_parameter("norm4_v3.backend_config.motion_profile").as_string();
+  c.norm4_v3.backend_config.noise_profile =
+      get_parameter("norm4_v3.backend_config.noise_profile").as_string();
+  c.norm4_v3.backend_config.structure_profile =
+      get_parameter("norm4_v3.backend_config.structure_profile").as_string();
 
   c.norm4_v3.hypothesis_selector.topk =
       get_parameter("norm4_v3.hypothesis_selector.topk").as_int();

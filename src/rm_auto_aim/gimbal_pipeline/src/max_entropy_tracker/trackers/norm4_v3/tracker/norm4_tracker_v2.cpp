@@ -1,5 +1,5 @@
 // Copyright (C) Max Entropy Tracker. Licensed under the MIT License.
-#include "max_entropy_tracker/trackers/norm4_v3/norm4_tracker_v2.hpp"
+#include "max_entropy_tracker/trackers/norm4_v3/tracker/norm4_tracker_v2.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -13,7 +13,10 @@ Norm4ArmorTrackerV2::Norm4ArmorTrackerV2(const UnifiedConfig &config, double dt,
                                          bool /*enable_oscillation*/)
     : BaseTracker(dt),
       config_(config),
-      backend_(std::make_unique<norm4_v3::Norm4UkfBackendV1>(config, dt)),
+      backend_(norm4_v3::create_backend(
+          norm4_v3::backend_type_from_string(
+              config_.norm4_v3.backend_config.backend_type),
+          config, dt)),
       maneuver_detector_(config.maneuver) {}
 
 void Norm4ArmorTrackerV2::initialize(const std::vector<ObservationData> &obs,
@@ -241,30 +244,36 @@ bool Norm4ArmorTrackerV2::update(const std::vector<ObservationData> &obs) {
 }
 
 Eigen::Vector3d Norm4ArmorTrackerV2::get_center_position() const {
-  return backend_->get_center_position();
+  return backend_->spin_filter().get_center_position();
 }
 
-double Norm4ArmorTrackerV2::get_yaw() const { return backend_->get_yaw(); }
+double Norm4ArmorTrackerV2::get_yaw() const {
+  return backend_->spin_filter().get_yaw();
+}
 
 std::pair<double, double> Norm4ArmorTrackerV2::get_radii() const {
-  return backend_->get_radii();
+  return backend_->spin_filter().get_radii();
 }
 
-SpinFilterInterface &Norm4ArmorTrackerV2::spin_filter() { return *backend_; }
+SpinFilterInterface &Norm4ArmorTrackerV2::spin_filter() {
+  return backend_->spin_filter();
+}
 
 const SpinFilterInterface &Norm4ArmorTrackerV2::spin_filter() const {
-  return *backend_;
+  return backend_->spin_filter();
 }
 
 ManeuverResult Norm4ArmorTrackerV2::assess_maneuver() const {
-  return maneuver_detector_.detect(backend_->last_nis(),
-                                   backend_->last_innov_xyz().norm(),
-                                   backend_->last_update_type());
+  const auto &sf = backend_->spin_filter();
+  return maneuver_detector_.detect(sf.last_nis(),
+                                   sf.last_innov_xyz().norm(),
+                                   sf.last_update_type());
 }
 
 Eigen::Vector3d Norm4ArmorTrackerV2::get_publish_velocity() const {
-  const auto idx = backend_->state_idx();
-  const auto &x = backend_->x();
+  const auto &sf = backend_->spin_filter();
+  const auto &idx = sf.state_idx();
+  const auto &x = sf.x();
   Eigen::Vector3d vel(x(idx.VX()), x(idx.VY()), x(idx.VZ()));
   return vel;
 }

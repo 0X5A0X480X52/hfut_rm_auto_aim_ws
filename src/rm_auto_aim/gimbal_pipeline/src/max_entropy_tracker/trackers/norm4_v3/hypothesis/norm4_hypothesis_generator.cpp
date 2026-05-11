@@ -1,5 +1,5 @@
 // Copyright (C) Max Entropy Tracker. Licensed under the MIT License.
-#include "max_entropy_tracker/trackers/norm4_v3/norm4_hypothesis_generator.hpp"
+#include "max_entropy_tracker/trackers/norm4_v3/hypothesis/norm4_hypothesis_generator.hpp"
 
 #include <sstream>
 
