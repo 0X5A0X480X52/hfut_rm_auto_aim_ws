@@ -536,7 +536,7 @@ gimbal_pipeline:
       delay:
         prediction_extra_s: 0.0      # 预测补偿额外项(s)
         control_latency_s: 0.0       # 控制链路延时(s)
-        trigger_to_muzzle_s: 0.0     # 触发到出膛延时(s)
+        trigger_to_muzzle_s: 0.025     # 触发到出膛延时(s)
         max_processing_delay_s: 0.5  # 处理延时上限保护(s)
         flight_time_iters: 2         # 飞行时间迭代次数
 
@@ -546,7 +546,7 @@ gimbal_pipeline:
         trigger_to_muzzle_s: 0.0
         decision_policy: "axis_threshold"
         flight_time_iters: 2
-        facing_filter_opening_angle_deg: 30.0
+        facing_filter_opening_angle_deg: 60.0
         use_gimbal_kinematics: false
         target_visibility_policy: "facing_only"
 
@@ -583,7 +583,7 @@ gimbal_pipeline:
             require_front_face: true
             v_activate_min: 8.0
             front_epsilon: 1e-4
-            max_complement_angle_deg: 25.0
+            max_complement_angle_deg: 35.0
 
           sigma_point:
             # sigma点传播：对速度/延时不确定性做概率传播
@@ -639,7 +639,7 @@ gimbal_pipeline:
       # - q/r 比值越大，输出越激进；反之更平滑保守
       mpc:
         N: 5
-        dt: 0.025
+        dt: 0.05
         control_delay_s: 0.00
         max_accel: 30.0
         q_yaw: 1000.0
@@ -648,8 +648,8 @@ gimbal_pipeline:
         q_pitch_vel: 1.0
         r_yaw: 0.001
         r_pitch: 0.001
-        s_yaw: 0.001
-        s_pitch: 0.001
+        s_yaw: 0.01
+        s_pitch: 0.01
         enable_delay_compensation: true
         prediction_delay_s: 0.10
         flight_time_iters: 2
