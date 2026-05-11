@@ -225,10 +225,11 @@ MeasurementEval Norm4UkfBackendV1::evaluateSingle(
   for (int i = 0; i < n_sigma; ++i) {
     z_pred += Wm(i) * z_pred_pts.row(i).transpose();
   }
+  z_pred(3) = weighted_angle_mean(z_pred_pts, Wm, 3);
 
   // Innovation with yaw wrap
   Eigen::Vector4d innov = z_obs - z_pred;
-  innov(3) = normalize_angle(innov(3));
+  innov(3) = angle_difference(z_obs(3), z_pred(3));
 
   // Build R using configurable noise parameters
   const auto &v1 = config_.norm4_v3.ukf_v1;
@@ -242,7 +243,7 @@ MeasurementEval Norm4UkfBackendV1::evaluateSingle(
   Eigen::MatrixXd diff_z(n_sigma, 4);
   for (int i = 0; i < n_sigma; ++i) {
     diff_z.row(i) = z_pred_pts.row(i) - z_pred.transpose();
-    diff_z(i, 3) = normalize_angle(diff_z(i, 3));
+    diff_z(i, 3) = angle_difference(z_pred_pts(i, 3), z_pred(3));
   }
 
   Eigen::Matrix4d Pzz = R;
@@ -340,10 +341,12 @@ MeasurementEval Norm4UkfBackendV1::evaluateDual(
   for (int i = 0; i < n_sigma; ++i) {
     z_pred += Wm(i) * z_pred_pts.row(i).transpose();
   }
+  z_pred(3) = weighted_angle_mean(z_pred_pts, Wm, 3);
+  z_pred(7) = weighted_angle_mean(z_pred_pts, Wm, 7);
 
   Eigen::Matrix<double, 8, 1> innov = z_obs - z_pred;
-  innov(3) = normalize_angle(innov(3));
-  innov(7) = normalize_angle(innov(7));
+  innov(3) = angle_difference(z_obs(3), z_pred(3));
+  innov(7) = angle_difference(z_obs(7), z_pred(7));
 
   const auto &v1 = config_.norm4_v3.ukf_v1;
   double sp = v1.sigma_pos_xy;
@@ -359,8 +362,8 @@ MeasurementEval Norm4UkfBackendV1::evaluateDual(
   Eigen::MatrixXd diff_z(n_sigma, 8);
   for (int i = 0; i < n_sigma; ++i) {
     diff_z.row(i) = z_pred_pts.row(i) - z_pred.transpose();
-    diff_z(i, 3) = normalize_angle(diff_z(i, 3));
-    diff_z(i, 7) = normalize_angle(diff_z(i, 7));
+    diff_z(i, 3) = angle_difference(z_pred_pts(i, 3), z_pred(3));
+    diff_z(i, 7) = angle_difference(z_pred_pts(i, 7), z_pred(7));
   }
 
   Eigen::Matrix<double, 8, 8> Pzz = R;

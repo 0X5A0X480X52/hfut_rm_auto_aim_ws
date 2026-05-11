@@ -2,7 +2,7 @@
 ## This file is intended to be passed directly as a node parameter file.
 ros__parameters:
   # Image preprocessing
-  binary_thres: 160
+  binary_thres: 80
 
   # Light extraction parameters
   light:

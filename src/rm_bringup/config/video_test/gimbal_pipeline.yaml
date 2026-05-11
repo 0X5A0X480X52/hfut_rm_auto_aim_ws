@@ -229,7 +229,7 @@ gimbal_pipeline:
       enable_2d_tracker: true
       enable_proxy_manager: true
       backend_config:
-        backend_type: "ukf_v2"
+        backend_type: "ukf_v1"  # ukf_v1 | ukf_v2 | inekf
         motion_profile: "/home/amatrix/Userfiles/Robomaster/hfut_rm_auto_aim_ws/src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/motion/default.yaml"
         noise_profile: "/home/amatrix/Userfiles/Robomaster/hfut_rm_auto_aim_ws/src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/noise/default.yaml"
         structure_profile: "slow"
@@ -308,8 +308,8 @@ gimbal_pipeline:
         prior_dza: 0.0              # 高差先验
 
         # 3) 先验方差：越大=越不信先验；越小=更强地拉回先验
-        prior_sigma_r: 0.9         # 半径先验不确定度
-        prior_sigma_dza: 0.9       # dza 先验不确定度
+        prior_sigma_r: 10.0         # 半径先验不确定度
+        prior_sigma_dza: 10.0       # dza 先验不确定度
 
         # 4) 单板更新增益：通常保持 0（单板信息不足，避免误更新）
         alpha_r1_single: 1.0
@@ -323,7 +323,7 @@ gimbal_pipeline:
         alpha_dza_dual: 0.05        # dza 建议小于 r（常用 0.01~0.05）
 
         # 6) 先验回拉强度：长期防漂移，过大会“拉死”真实变化
-        prior_pull_gain: 0.0002      # 常用范围 0.0005~0.005
+        prior_pull_gain: 0.0001      # 常用范围 0.0005~0.005
 
         # 7) 物理约束：硬边界，避免数值跑飞
         min_r: 0.05
@@ -377,10 +377,10 @@ gimbal_pipeline:
       # 输出平滑器
       # 调试建议：先只开一种平滑，再逐项叠加，避免难以定位延迟来源。
       enable: true
-      enable_position_smooth: true
+      enable_position_smooth: false
       enable_yaw_smooth: false
       enable_velocity_smooth: true
-      enable_structural_convergence: true
+      enable_structural_convergence: false
       # One-Euro 族参数：min_cutoff 控静态平滑，beta 控速度自适应，d_cutoff 控导数平滑
       pos_min_cutoff: 1.0
       pos_beta: 0.01
@@ -388,9 +388,9 @@ gimbal_pipeline:
       yaw_min_cutoff: 1.0
       yaw_beta: 0.005
       yaw_d_cutoff: 1.0
-      vel_min_cutoff: 0.10
-      vel_beta: 0.01
-      vel_d_cutoff: 1.0
+      vel_min_cutoff: 0.0010
+      vel_beta: 0.1
+      vel_d_cutoff: 0.001
       # RM 参数：initial_step大=收敛快但波动大，gamma大=后期更新更慢
       rm_initial_step: 0.5
       rm_gamma: 0.75
