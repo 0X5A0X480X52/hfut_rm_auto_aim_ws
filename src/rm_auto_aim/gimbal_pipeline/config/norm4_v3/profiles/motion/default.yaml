@@ -2,14 +2,14 @@ motion:
   type: native
   native:
     translation_model: singer
-    rotation_model: cA
+    rotation_model: ca
     translation:
       cv_process_noise_vel: 0.5
       ca_process_noise_acc: 1.0
-      singer_alpha: 0.5
-      singer_sigma: 2.0
+      singer_alpha: 5.0
+      singer_sigma: 10.0
     rotation:
-      cv_process_noise_rate: 0.5
+      cv_process_noise_rate: 1.0
       ca_process_noise_acc: 1.0
     structural:
       process_noise_r: 0.008

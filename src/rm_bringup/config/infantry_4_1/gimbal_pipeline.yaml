@@ -228,6 +228,13 @@ gimbal_pipeline:
       enable_kinematic_anti_pingpong: true
       enable_2d_tracker: true
       enable_proxy_manager: true
+      backend_config:
+        backend_type: "inekf"
+        motion_profile: "/home/hfut/hfut_rm_auto_aim_ws/src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/motion/default.yaml"
+        noise_profile: "/home/hfut/hfut_rm_auto_aim_ws/src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/noise/ypd_ba_low_weight.yaml"
+        structure_profile: "snapshot"
+        enable_shadow_mode: true
+        shadow_convergence_frames: 30
       phase_memory:
         enable_phase_memory: true
         enable_kinematic_anti_pingpong: true
@@ -270,6 +277,47 @@ gimbal_pipeline:
           min_dza: 0.0
           max_dza: 0.15
           max_dza_jump: 0.03
+      ukf_v2:
+        enabled: true
+      inekf:
+        enabled: true
+      slow_structure:
+        enable: true                # 是否启用慢结构滤波（建议 true）
+
+        # 1) 过程噪声 Q_theta：越大=结构参数跟踪越快，但更抖；越小=更稳但收敛慢
+        q_theta_r1: 1.00          # r1 随时间漂移强度；抖动大就减小，跟不上就增大
+        q_theta_r2: 1.00          # r2 同上
+        q_theta_dza: 5.0         # dza 建议比 r 更小（通常更稳定）
+
+        # 2) 先验中心：结构参数先验均值（初始化和长期回拉目标）
+        prior_r1: 0.15              # 小装甲半径先验
+        prior_r2: 0.20              # 大装甲半径先验
+        prior_dza: 0.0              # 高差先验
+
+        # 3) 先验方差：越大=越不信先验；越小=更强地拉回先验
+        prior_sigma_r: 0.9         # 半径先验不确定度
+        prior_sigma_dza: 0.9       # dza 先验不确定度
+
+        # 4) 单板更新增益：通常保持 0（单板信息不足，避免误更新）
+        alpha_r1_single: 1.0
+        alpha_r2_single: 1.0
+        alpha_dza_single: 1.0
+
+        # 5) 双板更新增益：主调参旋钮
+        #    越大=收敛更快但更敏感；越小=更稳但更慢
+        alpha_r1_dual: 1.0         # 常用范围 0.02~0.10
+        alpha_r2_dual: 1.0         # 常用范围 0.02~0.10
+        alpha_dza_dual: 1.0        # dza 建议小于 r（常用 0.01~0.05）
+
+        # 6) 先验回拉强度：长期防漂移，过大会“拉死”真实变化
+        prior_pull_gain: 0.0002      # 常用范围 0.0005~0.005
+
+        # 7) 物理约束：硬边界，避免数值跑飞
+        min_r: 0.05
+        max_r: 0.50
+        min_dza: 0.0
+        max_dza: 0.12
+
       hypothesis_selector:
         topk: 4
         commit_top1_only: true
@@ -277,21 +325,21 @@ gimbal_pipeline:
         min_top1_top2_margin: 0.0
         ambiguous_margin: 1.0
         include_rejected_in_debug: true
-        evidence_prior_enable: false
+        evidence_prior_enable: true
         max_reconstruction_pos_error: 0.30
       warmup:
         enable_dual_seed_01: true
         warmup_frames: 8
         min_settle_frames: 3
-        min_margin_to_commit: 1.5
-        min_confidence_to_commit: 0.70
+        min_margin_to_commit: 0.5
+        min_confidence_to_commit: 0.10
       mode_routing:
         ambiguous_output: "single_plate_3d"
         structured_output: "structured_ukf"
         ambiguous_structured_backend_mode: "shallow_or_predict"
         structured_single_plate_mode: "shallow"
       single_plate_bridge:
-        enable: true
+        enable: false
         source_semantic: "track2d_id"
         backend_type: "norm4_ambiguous_backend"
         require_semantic_stable_frames: 2
