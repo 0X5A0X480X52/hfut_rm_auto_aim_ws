@@ -39,6 +39,7 @@ private:
   std::string result_img_compressed_topic_;
   bool is_big_rune_{true};
   bool mode_managed_{true};
+  bool inference_enabled_{false};
   bool debug_view_{false};
   float min_confidence_{0.35F};
   int debug_jpeg_quality_{70};

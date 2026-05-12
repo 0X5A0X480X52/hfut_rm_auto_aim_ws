@@ -19,7 +19,7 @@ virtual_serial: true
 debug: true
 
 # enable_auto_buff: (true | false) 是否开启打符链路
-enable_auto_buff: false
+enable_auto_buff: true
 
 # detector_type: (armor_detector | armor_detector_nn)
 # armor_detector:    使用传统 OpenCV 灯条检测器
