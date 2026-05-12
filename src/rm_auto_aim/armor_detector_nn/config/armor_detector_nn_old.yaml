@@ -6,19 +6,19 @@ armor_detector:
     publish_in_target_frame: false
 
     backend:
-      type: "openvino"
-      device: "CPU"
+      type: "tensorrt"
+      device: "cuda"
       precision: "fp16"
-      model_path: "package://armor_detector_nn/model/RobotDetectionModel/0526.onnx"
-      engine_path: "package://armor_detector_nn/model/RobotDetectionModel/0526.onnx"
+      model_path: "package://armor_detector_nn/model/demo01/best.onnx"
+      engine_path: "package://armor_detector_nn/model/demo01/armor_pose_fp16.engine"
       openvino_model_xml: ""
       openvino_model_bin: ""
       calibration_cache: ""
       input_name: "images"
-      output_names: ["output"]
+      output_names: ["output0"]
       warmup_iterations: 10
       num_threads: 2
-      allow_fallback: true
+      allow_fallback: false
       fallback_type: "onnxruntime"
       openvino_use_native_preprocess: false
       openvino_cache_dir: ""
@@ -38,20 +38,20 @@ armor_detector:
       pad_value: 114.0
 
     postprocess:
-      strategy: "robotpilots_landmark"
-      output_layout: "candidates_first"
+      strategy: "ultralytics_pose"
+      output_layout: "channels_first"
       num_classes: 14
       num_keypoints: 4
       keypoint_dims: 2
       bbox_offset: 0
       class_offset: 4
       keypoint_offset: 18
-      box_format: "xyxy_from_kpts"
-      conf_threshold: 0.65
-      nms_threshold: 0.45
+      box_format: "cxcywh"
+      conf_threshold: 0.7
+      nms_threshold: 0.7
       max_detections: 32
       class_agnostic_nms: false
-      keypoint_remap: [0, 1, 2, 3]
+      keypoint_remap: [1, 0, 3, 2]
       head_already_applied: true
       keypoint_auto_reorder: false
 
@@ -59,9 +59,9 @@ armor_detector:
       path: "package://armor_detector_nn/config/label_map.yaml"
 
     number_classifier:
-      enabled: false
-      model_path: ""
-      label_path: ""
+      enabled: true
+      model_path: "package://armor_detector/model/lenet.onnx"
+      label_path: "package://armor_detector/model/label.txt"
       threshold: 0.8
       ignore_classes: ["negative"]
 
@@ -72,10 +72,9 @@ armor_detector:
       small_armor_height: 0.050
       large_armor_width: 0.225
       large_armor_height: 0.050
-      pose.force_pnp_rotate_180: true
 
       refiner:
-        mode: "sliding_window"
+        mode: "single_yaw"   # none | single_yaw | sliding_window
 
       single_yaw:
         max_iterations: 8
@@ -107,7 +106,7 @@ armor_detector:
         require_finite: true
 
     tracker:
-      strategy: "internal_iou"
+      strategy: "internal_iou"   # internal_iou | muit_sort
       iou_threshold: 0.30
       max_missed: 15
       min_hits: 2
@@ -138,7 +137,7 @@ armor_detector:
       scheduling_mode: "sync"
       frame_queue_size: 2
       batch_min_size: 1
-      batch_max_size: 1
+      batch_max_size: 2
       batch_timeout_ms: 2.0
       max_observation_age_ms: 50.0
       publish_out_of_order: false

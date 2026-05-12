@@ -8,6 +8,7 @@
 #include <string>
 #include <yaml-cpp/yaml.h>
 
+#include "rm_utils/url_resolver.hpp"
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/filters/process_models/composite.hpp"
 #include "max_entropy_tracker/filters/process_models/rotation.hpp"
@@ -52,6 +53,12 @@ inline bool is_profile_file(const std::string &profile) {
 }
 
 inline std::string resolve_profile_path(const std::string &profile) {
+  const bool is_package_url = profile.rfind("package://", 0) == 0;
+  const bool is_file_url = profile.rfind("file://", 0) == 0;
+  if (is_package_url || is_file_url) {
+    return fyt::utils::URLResolver::getResolvedPath(profile).string();
+  }
+
   if (!is_profile_file(profile)) {
     if (profile == "default") return profile;
     std::filesystem::path alias =
@@ -328,50 +335,120 @@ inline std::shared_ptr<CompositeProcessModel> create_v2_process_model_by_profile
   return create_default_process_model(translation, rotation, tc, rc, sc, 3);
 }
 
+inline UnifiedConfig apply_inekf_motion_overrides(const UnifiedConfig &config) {
+  UnifiedConfig local = config;
+  const auto &o = config.norm4_v3.inekf_runtime;
+  if (!o.translation_model.empty()) {
+    local.motion.translation_model = translation_model_from_string(o.translation_model);
+  }
+  if (o.cv_process_noise_vel >= 0.0) local.motion.cv_process_noise_vel = o.cv_process_noise_vel;
+  if (o.ca_process_noise_acc >= 0.0) local.motion.ca_process_noise_acc = o.ca_process_noise_acc;
+  if (o.singer_alpha >= 0.0) local.motion.singer_alpha = o.singer_alpha;
+  if (o.singer_sigma >= 0.0) local.motion.singer_sigma = o.singer_sigma;
+  if (o.process_noise_r >= 0.0) local.motion.process_noise_r = o.process_noise_r;
+  if (o.process_noise_dz >= 0.0) local.motion.process_noise_dz = o.process_noise_dz;
+  if (o.spin_process_noise_delta_rate >= 0.0) {
+    local.spin.spin_process_noise_delta_rate = o.spin_process_noise_delta_rate;
+  }
+  if (o.spin_process_noise_delta_acc >= 0.0) {
+    local.spin.spin_process_noise_delta_acc = o.spin_process_noise_delta_acc;
+  }
+  return local;
+}
+
 inline std::unique_ptr<IStructuredBackend> create_backend(
     BackendType type, const UnifiedConfig &config, double dt) {
   const auto &base_ukf_cfg = select_ukf_config(config, type);
-  Norm4V3UkfConfig ukf_cfg = load_noise_profile_or_default(
-      base_ukf_cfg, config.norm4_v3.backend_config.noise_profile);
   switch (type) {
-    case BackendType::UKF_V1:
+    case BackendType::UKF_V1: {
+      Norm4V3UkfConfig ukf_cfg = load_noise_profile_or_default(
+          base_ukf_cfg, config.norm4_v3.backend_config.noise_profile);
+      (void)ukf_cfg;
       return std::make_unique<UkfBackendV1Adapter>(config, dt);
+    }
     case BackendType::UKF_V2: {
+      const std::string &motion_profile = config.norm4_v3.backend_config.motion_profile;
+      const std::string &noise_profile = config.norm4_v3.backend_config.noise_profile;
+      Norm4V3UkfConfig ukf_cfg =
+          load_noise_profile_or_default(base_ukf_cfg, noise_profile);
       std::unique_ptr<IMotionModelBundle> motion;
-      if (is_profile_file(config.norm4_v3.backend_config.motion_profile)) {
-        motion = create_motion_bundle_from_file(
-            config, config.norm4_v3.backend_config.motion_profile);
+      if (is_profile_file(motion_profile)) {
+        motion = create_motion_bundle_from_file(config, motion_profile);
       } else {
-        auto proc_model = create_v2_process_model_by_profile(
-            config, config.norm4_v3.backend_config.motion_profile);
+        auto proc_model = create_v2_process_model_by_profile(config, motion_profile);
         motion = std::make_unique<NativeProcessModelBundle>(proc_model);
       }
-      auto noise = create_noise_model(
-          ukf_cfg, config.norm4_v3.backend_config.noise_profile);
+      auto noise = create_noise_model(ukf_cfg, noise_profile);
       return std::make_unique<UkfBackendV2>(std::move(motion),
                                             std::move(noise), ukf_cfg, config,
                                             dt);
     }
     case BackendType::INEKF: {
+      UnifiedConfig local_cfg = apply_inekf_motion_overrides(config);
+      const std::string motion_profile =
+          local_cfg.norm4_v3.inekf_runtime.motion_profile.empty()
+              ? local_cfg.norm4_v3.backend_config.motion_profile
+              : local_cfg.norm4_v3.inekf_runtime.motion_profile;
+      const std::string noise_profile =
+          local_cfg.norm4_v3.inekf_runtime.noise_profile.empty()
+              ? local_cfg.norm4_v3.backend_config.noise_profile
+              : local_cfg.norm4_v3.inekf_runtime.noise_profile;
+      const std::string structure_profile =
+          local_cfg.norm4_v3.inekf_runtime.structure_profile.empty()
+              ? local_cfg.norm4_v3.backend_config.structure_profile
+              : local_cfg.norm4_v3.inekf_runtime.structure_profile;
+      Norm4V3UkfConfig ukf_cfg =
+          load_noise_profile_or_default(base_ukf_cfg, noise_profile);
+
       std::unique_ptr<IMotionModelBundle> motion;
-      if (is_profile_file(config.norm4_v3.backend_config.motion_profile)) {
-        motion = create_motion_bundle_from_file(
-            config, config.norm4_v3.backend_config.motion_profile);
+      if (is_profile_file(motion_profile)) {
+        motion = create_motion_bundle_from_file(local_cfg, motion_profile);
       } else {
-        auto proc_model = create_v2_process_model_by_profile(
-            config, config.norm4_v3.backend_config.motion_profile);
+        TranslationConfig tc;
+        tc.cv_process_noise_vel = local_cfg.motion.cv_process_noise_vel;
+        tc.ca_process_noise_acc = local_cfg.motion.ca_process_noise_acc;
+        tc.singer_alpha = local_cfg.motion.singer_alpha;
+        tc.singer_sigma = local_cfg.motion.singer_sigma;
+
+        RotationConfig rc;
+        rc.cv_process_noise_rate = local_cfg.spin.spin_process_noise_delta_rate;
+        rc.ca_process_noise_acc = local_cfg.spin.spin_process_noise_delta_acc;
+
+        StructuralConfig sc;
+        sc.process_noise_r = local_cfg.motion.process_noise_r;
+        sc.process_noise_dz = local_cfg.motion.process_noise_dz;
+
+        TranslationModel translation = local_cfg.motion.translation_model;
+        RotationModel rotation = RotationModel::CV;
+        if (motion_profile == "cv") {
+          translation = TranslationModel::CV;
+        } else if (motion_profile == "ca") {
+          translation = TranslationModel::CA;
+        } else if (motion_profile == "singer") {
+          translation = TranslationModel::SINGER;
+        } else if (motion_profile == "yaw_ca") {
+          rotation = RotationModel::CA;
+        } else if (motion_profile != "default") {
+          throw std::invalid_argument("Unsupported motion_profile: " +
+                                      motion_profile);
+        }
+        // inekf_runtime.translation_model has the highest priority for InEKF.
+        if (!local_cfg.norm4_v3.inekf_runtime.translation_model.empty()) {
+          translation = translation_model_from_string(
+              local_cfg.norm4_v3.inekf_runtime.translation_model);
+        }
+        auto proc_model =
+            create_default_process_model(translation, rotation, tc, rc, sc, 3);
         motion = std::make_unique<NativeProcessModelBundle>(proc_model);
       }
-      auto noise = create_noise_model(
-          ukf_cfg, config.norm4_v3.backend_config.noise_profile);
+      auto noise = create_noise_model(ukf_cfg, noise_profile);
       std::unique_ptr<IStructureProvider> structure;
-      const auto &bc = config.norm4_v3.backend_config;
-      if (!config.norm4_v3.slow_structure.enable ||
-          bc.structure_profile == "snapshot") {
+      if (!local_cfg.norm4_v3.slow_structure.enable ||
+          structure_profile == "snapshot") {
         structure = std::make_unique<UkfSnapshotStructureProvider>(*motion);
       } else {
         SlowStructureErrorUpdaterProvider::Config scfg;
-        const auto &cfg = config.norm4_v3.slow_structure;
+        const auto &cfg = local_cfg.norm4_v3.slow_structure;
         scfg.q_theta_r1 = cfg.q_theta_r1;
         scfg.q_theta_r2 = cfg.q_theta_r2;
         scfg.q_theta_dza = cfg.q_theta_dza;
@@ -397,7 +474,7 @@ inline std::unique_ptr<IStructuredBackend> create_backend(
       return std::make_unique<InvariantPoseBackend>(std::move(motion),
                                                     std::move(noise),
                                                     std::move(structure),
-                                                    ukf_cfg, config, dt);
+                                                    ukf_cfg, local_cfg, dt);
     }
   }
   throw std::invalid_argument("Unknown backend type");

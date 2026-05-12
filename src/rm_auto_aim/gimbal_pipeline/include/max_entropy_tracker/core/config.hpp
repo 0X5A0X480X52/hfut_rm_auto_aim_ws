@@ -574,6 +574,25 @@ struct Norm4V3BackendConfig {
   int shadow_convergence_frames = 30;
 };
 
+struct Norm4V3InEKFRuntimeConfig {
+  // Backend-local profile selection (overrides backend_config.* for inekf only).
+  std::string motion_profile = "default";
+  std::string noise_profile = "default";
+  std::string structure_profile = "slow";
+
+  // Optional motion-model overrides for inekf only.
+  // Keep negative values to mean "inherit global motion/spin config".
+  std::string translation_model = "";  // "CV" | "CA" | "Singer", empty=inherited
+  double cv_process_noise_vel = -1.0;
+  double ca_process_noise_acc = -1.0;
+  double singer_alpha = -1.0;
+  double singer_sigma = -1.0;
+  double process_noise_r = -1.0;
+  double process_noise_dz = -1.0;
+  double spin_process_noise_delta_rate = -1.0;
+  double spin_process_noise_delta_acc = -1.0;
+};
+
 struct Norm4V3SlowStructureConfig {
   bool enable = true;
   double q_theta_r1 = 1.0e-6;
@@ -601,6 +620,12 @@ struct Norm4V3SlowStructureConfig {
   double max_dza = 0.12;
 };
 
+struct Norm4V3DebugLogConfig {
+  bool enable = false;
+  int throttle_ms = 500;
+  bool verbose = false;
+};
+
 struct Norm4V3Config {
   bool enable_common_pipeline = false;
   bool enable_phase_memory = true;
@@ -619,6 +644,8 @@ struct Norm4V3Config {
   Norm4V3SinglePlateBridgeConfig single_plate_bridge;
   Norm4V3FallbackConfig fallback;
   Norm4V3BackendConfig backend_config;
+  Norm4V3InEKFRuntimeConfig inekf_runtime;
+  Norm4V3DebugLogConfig debug_log;
 };
 
 // ======================== Unified Config ========================

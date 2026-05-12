@@ -96,6 +96,9 @@ void DetectorNode::imageCallback(const sensor_msgs::msg::Image::SharedPtr msg)
   if (!msg) {
     return;
   }
+  if (!inference_enabled_) {
+    return;
+  }
   cv_bridge::CvImageConstPtr cv_ptr;
   try {
     cv_ptr = cv_bridge::toCvShare(msg, "bgr8");
@@ -221,6 +224,8 @@ void DetectorNode::onSetMode(
     return;
   }
   const int mode = static_cast<int>(request->mode);
+  const bool rune_mode = (mode == 2 || mode == 3 || mode == 4 || mode == 5);
+  inference_enabled_ = rune_mode;
   if (!mode_managed_) {
     response->message = "mode_managed=false, keep current is_big_rune";
     return;

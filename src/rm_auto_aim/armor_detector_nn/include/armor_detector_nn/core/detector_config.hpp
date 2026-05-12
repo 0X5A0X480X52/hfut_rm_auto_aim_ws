@@ -172,6 +172,7 @@ struct PoseConfig {
   SingleYawConfig single_yaw;
   SlidingWindowConfig sliding;
   GateConfig gate;
+  bool force_pnp_rotate_180{false};
 };
 
 struct RuntimeConfig {

@@ -41,7 +41,8 @@ public:
   explicit ArmorPoseEstimator(sensor_msgs::msg::CameraInfo::SharedPtr camera_info);
 
   std::vector<rm_interfaces::msg::Armor> extractArmorPoses(const std::vector<Armor> &armors,
-                                               Eigen::Matrix3d R_imu_camera);
+                                               Eigen::Matrix3d R_imu_camera,
+                                               double stamp_sec = 0.0);
 
   void enableBA(bool enable) { use_ba_ = enable; }
   void configurePnpRefiner(bool enable, const std::string &mode);

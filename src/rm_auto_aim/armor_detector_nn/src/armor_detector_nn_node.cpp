@@ -261,6 +261,9 @@ void ArmorDetectorNNNode::initializeParameters() {
     config_.pose.single_yaw.roll_deg_default = this->declare_parameter("pose.single_yaw.roll_deg_default", 0.0);
     config_.pose.single_yaw.outpost_pitch_sign = this->declare_parameter("pose.single_yaw.outpost_pitch_sign", true);
 
+    // Optional: force PnP result rotate 180 degrees (workaround for select-solution ambiguity)
+    config_.pose.force_pnp_rotate_180 = this->declare_parameter("pose.force_pnp_rotate_180", false);
+
     // Phase 4 — sliding-window refiner
     config_.pose.sliding.window_size = this->declare_parameter("pose.sliding.window_size", 8);
     config_.pose.sliding.min_frames = this->declare_parameter("pose.sliding.min_frames", 4);
@@ -374,9 +377,11 @@ void ArmorDetectorNNNode::imageCallback(
     const sensor_msgs::msg::Image::ConstSharedPtr& img_msg)
 {
   if (current_mode_ == DetectMode::DISABLED) {
+    FYT_INFO("armor_detector", "Received image frame but detection is DISABLED. Ignoring.");
     return;
   }
   if (!detector_ || !detector_->isInitialized()) {
+    FYT_ERROR("armor_detector", "Detector not initialized. Cannot process image.");
     return;
   }
 

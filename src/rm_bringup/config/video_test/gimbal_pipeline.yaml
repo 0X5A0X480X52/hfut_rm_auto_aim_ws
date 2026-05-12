@@ -10,8 +10,8 @@ gimbal_pipeline:
     target_frame: "odom"                 # 目标输出坐标系
     source_frame: "camera_optical_frame" # 观测输入坐标系
     visualization_frame: "odom"          # 可视化 marker 坐标系
-    predict_rate: 20.0                   # 预测/更新频率(Hz)
-    tracker_timeout: 5.50                # 观测超时(s)
+    predict_rate: 100.0                   # 预测/更新频率(Hz)
+    tracker_timeout: 0.50                # 观测超时(s)
     debug_mode: true                     # 调试日志与可视化
     enable_oscillation_detection: false  # 跟踪抖动检测
     default_r1: 0.15                     # 初始半径1(m)
@@ -48,14 +48,14 @@ gimbal_pipeline:
       alpha: 0.001                    # UKF sigma 点分布参数，通常保持默认
       beta: 2.0                       # 高斯分布推荐值
       kappa: 0.0                      # 次要调节项，通常保持默认
-      obs_noise_pos: 0.0003             # 位置观测噪声，增大更稳/更钝，减小更灵敏
-      obs_noise_yaw: 0.0003             # yaw观测噪声，过小易引发抖动
-      enable_ypd_observation_noise: false
+      obs_noise_pos: 0.03             # 位置观测噪声，增大更稳/更钝，减小更灵敏
+      obs_noise_yaw: 0.03             # yaw观测噪声，过小易引发抖动
+      enable_ypd_observation_noise: true
       ypd_sigma_azi: 0.01             # YPD方位角噪声(仅启用YPD时生效)
       ypd_sigma_ele: 0.01             # YPD俯仰噪声
-      ypd_sigma_dist_coeff: 0.0008      # YPD距离噪声系数，远距离可适当增大
-      dual_obs_noise_pos: 0.0001        # 双观测位置噪声
-      dual_obs_noise_yaw: 0.0003        # 双观测yaw噪声
+      ypd_sigma_dist_coeff: 0.08      # YPD距离噪声系数，远距离可适当增大
+      dual_obs_noise_pos: 0.01        # 双观测位置噪声
+      dual_obs_noise_yaw: 0.03        # 双观测yaw噪声
       dual_obs_geometry_noise_scale: 0.02 # 双观测几何不一致惩罚
       single_obs_update_weight_pos: 5.0   # 单观测位置更新权重，越大越相信单观测
       enable_innovation_gating: false # 异常观测门控，环境复杂建议开启
@@ -65,14 +65,14 @@ gimbal_pipeline:
       translation_model: "Singer"  # "CV"匀速 | "CA"匀加速 | "Singer"机动更鲁棒
       cv_process_noise_vel: 1.20    # CV速度过程噪声，越大越能跟突变
       ca_process_noise_acc: 0.1     # CA加速度噪声，过大可能导致轨迹毛刺
-      singer_alpha: 0.8             # Singer相关时间参数，越大速度变化越平滑
-      singer_sigma: 0.5             # Singer机动强度，越大越“敢跟”
-      process_noise_r: 0.02         # 几何半径状态噪声
-      process_noise_dz: 0.05      # 高低板差状态噪声
+      singer_alpha: 5.5             # Singer相关时间参数，越大速度变化越平滑
+      singer_sigma: 1.5             # Singer机动强度，越大越“敢跟”
+      process_noise_r: 0.002         # 几何半径状态噪声
+      process_noise_dz: 0.00005      # 高低板差状态噪声
 
     spin:
-      spin_process_noise_yaw_rate: 4.5   # yaw角速度过程噪声
-      spin_process_noise_yaw_acc: 18.0   # yaw角加速度过程噪声
+      spin_process_noise_yaw_rate: 10.5   # yaw角速度过程噪声
+      spin_process_noise_yaw_acc: 10.0   # yaw角加速度过程噪声
       spin_process_noise_delta_rate: 3.50 # 面间相位变化速度噪声
       spin_process_noise_delta_acc: 45.0  # 面间相位变化加速度噪声
 
@@ -101,7 +101,7 @@ gimbal_pipeline:
         width: 960           # 画布宽度（像素）
         height: 540          # 画布高度（像素）
         jpeg_quality: 70     # JPEG质量(20~100), 越小带宽越低
-      implementation: "norm4_v2" # 非 outpost 目标: "adaptive" | "norm4" | "norm4_v2"
+      implementation: "norm4_v2" # 非 outpost 目标: "adaptive" | "norm4"
       tracking_thres: 2          # 连续命中多少帧进入TRACKING
       lost_thres: 4              # 连续丢失多少帧进入LOST
       temp_lost_thres: 3         # 连续丢失多少帧进入TEMP_LOST
@@ -118,7 +118,7 @@ gimbal_pipeline:
 
       # 跳变绑定证据
       # 调试建议：出现“0123->0101”类来回扭动时，优先调此组参数。
-      jump_binding_enable: true
+      jump_binding_enable: false
       jump_binding_confirm_frames: 3      # 连续满足条件多少帧才切板
       jump_binding_z_jump_min: 0.015      # 判定高低跳变的最小z跳变量
       jump_binding_dz_match_tolerance: 0.03 # dz匹配容差
@@ -131,7 +131,7 @@ gimbal_pipeline:
 
       # 单观测退化模式
       # 调试建议：远距/遮挡频繁时开启，短时单板可更稳。
-      degraded_single_obs_enable: true
+      degraded_single_obs_enable: false
       degraded_single_obs_streak: 8  # 连续单观测触发阈值
       degraded_q_scale_r: 4.0        # 退化时半径过程噪声放大倍数
       degraded_q_scale_dza: 4.0      # 退化时dz过程噪声放大倍数
@@ -229,12 +229,25 @@ gimbal_pipeline:
       enable_2d_tracker: true
       enable_proxy_manager: true
       backend_config:
-        backend_type: "inekf"
-        motion_profile: "src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/motion/default.yaml"
-        noise_profile: "src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/noise/ypd_ba_low_weight.yaml"
+        backend_type: "inekf"  # ukf_v1 | ukf_v2 | inekf
+        motion_profile: "package://gimbal_pipeline/config/norm4_v3/profiles/motion/default.yaml"
+        noise_profile: "package://gimbal_pipeline/config/norm4_v3/profiles/noise/default.yaml"
         structure_profile: "slow"
-        enable_shadow_mode: false
+        enable_shadow_mode: true
         shadow_convergence_frames: 30
+      inekf_runtime:
+        motion_profile: "ca"  # default|cv|ca|singer|yaw_ca|<motion_profile.yaml路径>
+        noise_profile: "package://gimbal_pipeline/config/norm4_v3/profiles/noise/ypd_ba_low_weight.yaml"
+        structure_profile: "slow"  # slow|snapshot
+        translation_model: "CA"    # ""=继承全局 motion.translation_model
+        cv_process_noise_vel: 1.0
+        ca_process_noise_acc: 1.0
+        singer_alpha: -1.0
+        singer_sigma: -1.0
+        process_noise_r: 1.0
+        process_noise_dz: 1.0
+        spin_process_noise_delta_rate: 1.0
+        spin_process_noise_delta_acc: 1.0
       phase_memory:
         enable_phase_memory: true
         enable_kinematic_anti_pingpong: true
@@ -295,13 +308,13 @@ gimbal_pipeline:
         prior_dza: 0.0              # 高差先验
 
         # 3) 先验方差：越大=越不信先验；越小=更强地拉回先验
-        prior_sigma_r: 0.06         # 半径先验不确定度
-        prior_sigma_dza: 0.001      # dza 先验不确定度
+        prior_sigma_r: 10.0         # 半径先验不确定度
+        prior_sigma_dza: 10.0       # dza 先验不确定度
 
         # 4) 单板更新增益：通常保持 0（单板信息不足，避免误更新）
-        alpha_r1_single: 0.01
-        alpha_r2_single: 0.01
-        alpha_dza_single: 0.01
+        alpha_r1_single: 1.0
+        alpha_r2_single: 1.0
+        alpha_dza_single: 1.0
 
         # 5) 双板更新增益：主调参旋钮
         #    越大=收敛更快但更敏感；越小=更稳但更慢
@@ -310,7 +323,7 @@ gimbal_pipeline:
         alpha_dza_dual: 0.05        # dza 建议小于 r（常用 0.01~0.05）
 
         # 6) 先验回拉强度：长期防漂移，过大会“拉死”真实变化
-        prior_pull_gain: 0.002      # 常用范围 0.0005~0.005
+        prior_pull_gain: 0.0001      # 常用范围 0.0005~0.005
 
         # 7) 物理约束：硬边界，避免数值跑飞
         min_r: 0.05
@@ -325,14 +338,14 @@ gimbal_pipeline:
         min_top1_top2_margin: 0.0
         ambiguous_margin: 1.0
         include_rejected_in_debug: true
-        evidence_prior_enable: false
+        evidence_prior_enable: true
         max_reconstruction_pos_error: 0.30
       warmup:
         enable_dual_seed_01: true
         warmup_frames: 8
         min_settle_frames: 3
-        min_margin_to_commit: 1.5
-        min_confidence_to_commit: 0.70
+        min_margin_to_commit: 0.5
+        min_confidence_to_commit: 0.10
       mode_routing:
         ambiguous_output: "single_plate_3d"
         structured_output: "structured_ukf"
@@ -346,6 +359,10 @@ gimbal_pipeline:
       fallback:
         predict_only_on_reject: true
         enable_ambiguous_single_fallback: true
+      debug_log:
+        enable: true
+        throttle_ms: 300
+        verbose: true
 
     panel_mismatch:
       # 板匹配审计器：用于发现“内部id反转/层级错位”
@@ -359,11 +376,11 @@ gimbal_pipeline:
     smoother:
       # 输出平滑器
       # 调试建议：先只开一种平滑，再逐项叠加，避免难以定位延迟来源。
-      enable: false
+      enable: true
       enable_position_smooth: false
       enable_yaw_smooth: false
-      enable_velocity_smooth: false
-      enable_structural_convergence: true
+      enable_velocity_smooth: true
+      enable_structural_convergence: false
       # One-Euro 族参数：min_cutoff 控静态平滑，beta 控速度自适应，d_cutoff 控导数平滑
       pos_min_cutoff: 1.0
       pos_beta: 0.01
@@ -371,9 +388,9 @@ gimbal_pipeline:
       yaw_min_cutoff: 1.0
       yaw_beta: 0.005
       yaw_d_cutoff: 1.0
-      vel_min_cutoff: 0.10
-      vel_beta: 0.01
-      vel_d_cutoff: 1.0
+      vel_min_cutoff: 0.0010
+      vel_beta: 0.1
+      vel_d_cutoff: 0.001
       # RM 参数：initial_step大=收敛快但波动大，gamma大=后期更新更慢
       rm_initial_step: 0.5
       rm_gamma: 0.75
@@ -405,8 +422,8 @@ gimbal_pipeline:
     # - 切换太保守：降低 binding_min_candidate_prob / min_candidate_margin。
     # =========================
     outpost:
-      translation_model: "CV"   # Outpost平移模型
-      rotation_model: "CV"      # Outpost旋转模型
+      translation_model: "CA"   # Outpost平移模型
+      rotation_model: "CA"      # Outpost旋转模型
       use_tracker_v2: false
       tracking_thres: 2
       lost_thres: 50
@@ -525,7 +542,7 @@ gimbal_pipeline:
     controller:
       bullet_speed: 22.5
       control_rate: 250.0
-      strategy: "predicted" # "current" | "predicted" | "mpc" | "state_machine"
+      strategy: "mpc" # "current" | "predicted" | "mpc" | "state_machine"
       ballistic_mode: "local" # "service" | "local"
 
       solver:
@@ -543,11 +560,11 @@ gimbal_pipeline:
         iteration_times: 20
         pitch_offset: 0.0
         yaw_offset: 0.0
-        facing_enter_angle: 65.0
-        facing_exit_angle: 85.0
+        facing_enter_angle: 25.0
+        facing_exit_angle: 35.0
         controller_delay: 0.01     # 旧链路兼容延时(s)
         trigger_to_muzzle_s: 0.0   # 旧链路枪口延时(s)
-        selection_method: "min_movement_with_facing"
+        selection_method: "facing_or_virtual_pose"
 
         radial_dynamic:
           # 高转速时自动收缩“径向选板角阈值”，减少跟随反向跳板
@@ -561,7 +578,7 @@ gimbal_pipeline:
         virtual_pose:
           # 虚拟板策略：高速旋转下可降低目标角速度突变
           auto_switch:
-            enable: true
+            enable: false
             enter_vyaw: 8.0
             exit_vyaw: 6.0
             selection_method: "virtual_pose" # "virtual_pose" | "virtual_fixed_id"
@@ -584,7 +601,7 @@ gimbal_pipeline:
       delay:
         prediction_extra_s: 0.0      # 预测补偿额外项(s)
         control_latency_s: 0.0       # 控制链路延时(s)
-        trigger_to_muzzle_s: 0.0     # 触发到出膛延时(s)
+        trigger_to_muzzle_s: 0.025     # 触发到出膛延时(s)
         max_processing_delay_s: 0.5  # 处理延时上限保护(s)
         flight_time_iters: 2         # 飞行时间迭代次数
 
@@ -594,7 +611,7 @@ gimbal_pipeline:
         trigger_to_muzzle_s: 0.0
         decision_policy: "axis_threshold"
         flight_time_iters: 2
-        facing_filter_opening_angle_deg: 180.0
+        facing_filter_opening_angle_deg: 60.0
         use_gimbal_kinematics: false
         target_visibility_policy: "facing_only"
 
@@ -602,12 +619,12 @@ gimbal_pipeline:
           # 命中概率模块：窗口预测 + 融合 + 门控，适合高速/机动目标
           # 参数组建议：
           # - 先调窗口(future_window/step)，再调融合(softmax/window_fusion)，最后调门控(gate.*)
-          enable: false
-          future_window_ms: 50.0 # 预测窗口长度(ms)
-          future_step_ms: 10.0   # 采样步长(ms)
+          enable: true
+          future_window_ms: 1.0 # 预测窗口长度(ms)
+          future_step_ms: 0.10   # 采样步长(ms)
           window_fusion: "max"
           softmax_beta: 20.0     # 结果尖锐度，越大越“赢家通吃”
-          use_tracker_covariance: true
+          use_tracker_covariance: false # 是否使用跟踪器协方差，启用后会考虑不确定性做更保守的概率估计
           strict_covariance: false # true时协方差缺失会更保守
           fallback_sigma_x: 0.02
           fallback_sigma_y: 0.02
@@ -615,14 +632,14 @@ gimbal_pipeline:
           ballistic_sigma_x0: 0.010
           ballistic_sigma_y0: 0.015
           ballistic_sigma_z0: 0.015
-          ballistic_growth_x: 0.03
-          ballistic_growth_y: 0.06
-          ballistic_growth_z: 0.08
+          ballistic_growth_x: 0.003
+          ballistic_growth_y: 0.006
+          ballistic_growth_z: 0.008
 
           normal_velocity_weight:
             # 法向速度权重：目标面朝向“正对”时会抬升开火概率
-            enable: false
-            v_ref: 28.0
+            enable: true
+            v_ref: 10.0
             w_min: 0.5
 
           normal_velocity_gate:
@@ -631,7 +648,7 @@ gimbal_pipeline:
             require_front_face: true
             v_activate_min: 8.0
             front_epsilon: 1e-4
-            max_complement_angle_deg: 90.0
+            max_complement_angle_deg: 35.0
 
           sigma_point:
             # sigma点传播：对速度/延时不确定性做概率传播
@@ -686,7 +703,7 @@ gimbal_pipeline:
       # - dt: 0.01~0.05；N: 20~80；N*dt 通常 0.4~2.0s
       # - q/r 比值越大，输出越激进；反之更平滑保守
       mpc:
-        N: 50
+        N: 5
         dt: 0.05
         control_delay_s: 0.00
         max_accel: 30.0
@@ -696,8 +713,8 @@ gimbal_pipeline:
         q_pitch_vel: 1.0
         r_yaw: 0.001
         r_pitch: 0.001
-        s_yaw: 0.001
-        s_pitch: 0.001
+        s_yaw: 0.01
+        s_pitch: 0.01
         enable_delay_compensation: true
         prediction_delay_s: 0.10
         flight_time_iters: 2

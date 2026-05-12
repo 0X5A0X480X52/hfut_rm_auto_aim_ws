@@ -1,45 +1,46 @@
 ## Default parameters for armor_detector node
 ## This file is intended to be passed directly as a node parameter file.
-ros__parameters:
-  # Image preprocessing
-  binary_thres: 160
+armor_detector_node:  
+  ros__parameters:
+    # Image preprocessing
+    binary_thres: 80
 
-  # Light extraction parameters
-  light:
-    min_ratio: 0.08
-    max_ratio: 0.4
-    max_angle: 40.0
-    color_diff_thresh: 25
+    # Light extraction parameters
+    light:
+      min_ratio: 0.08
+      max_ratio: 0.4
+      max_angle: 40.0
+      color_diff_thresh: 25
 
-  # Armor matching parameters
-  armor:
-    min_light_ratio: 0.6
-    min_small_center_distance: 0.8
-    max_small_center_distance: 3.2
-    min_large_center_distance: 3.2
-    max_large_center_distance: 5.0
-    max_angle: 35.0
+    # Armor matching parameters
+    armor:
+      min_light_ratio: 0.6
+      min_small_center_distance: 0.8
+      max_small_center_distance: 3.2
+      min_large_center_distance: 3.2
+      max_large_center_distance: 5.0
+      max_angle: 35.0
 
-  # Classifier
-  classifier_threshold: 0.7
-  ignore_classes: ['negative']
+    # Classifier
+    classifier_threshold: 0.7
+    ignore_classes: ['negative']
 
-  # Corner corrector
-  use_pca: true
+    # Corner corrector
+    use_pca: true
 
-  # Pose / other options
-  use_ba: true
-  use_pnp_refiner: true
-  pnp_refiner:
-    mode: 'sliding_window'   # none | single_yaw | single_xyz_yaw | sliding_window
-  target_frame: 'odom'
+    # Pose / other options
+    use_ba: true
+    use_pnp_refiner: true
+    pnp_refiner:
+      mode: 'single_xyz_yaw'   # none | single_yaw | single_xyz_yaw | sliding_window
+    target_frame: 'odom'
 
-  # Debug
-  debug: true
+    # Debug
+    debug: true
 
-  # Image publisher JPEG qualities (used when debug=True)
-  armor_detector:
-    result_img:
-      jpeg_quality: 50
-    binary_img:
-      jpeg_quality: 50
+    # Image publisher JPEG qualities (used when debug=True)
+    armor_detector:
+      result_img:
+        jpeg_quality: 50
+      binary_img:
+        jpeg_quality: 50

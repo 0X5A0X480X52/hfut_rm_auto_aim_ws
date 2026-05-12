@@ -14,14 +14,31 @@
 
 namespace fyt::auto_aim::norm4_v3 {
 
-/// Full InEKF / invariant error-state EKF backend.
+/// Error type for invariant EKF.
 ///
-/// Fast states (position, velocity, yaw, yaw_rate) are updated via analytical
-/// Jacobian + Joseph-form covariance.  Slow structure parameters (r1, r2, dza)
-/// are gated through IStructureProvider.
+/// LEFT_INVARIANT:  X = Exp(δξ) · X̂
+///   R = Exp(δψ·e_z) · R̂      (left perturbation on SO(2))
+///   p = p̂ + δρ                (additive in world frame)
+///   v = v̂ + δv                (additive in world frame)
+///   β = β̂ + δβ                (additive)
+///   θ = θ̂ + δθ                (additive, slow structure)
+///
+/// Innovation is formed in body frame:  ν_pos = R̂⁻¹·(z_pos − h_pos(X̂))
+/// This decouples the position residual from the global yaw estimate.
+enum class InvariantErrorType { LEFT_INVARIANT };
+
+/// Full Left-Invariant Error-State EKF backend.
+///
+/// Fast states (position, velocity, yaw, yaw_rate) are updated via
+/// analytical Jacobian on the Lie algebra + Joseph-form covariance.
+/// Slow structure parameters (r1, r2, dza) are gated through
+/// IStructureProvider with reduced Kalman gain.
 ///
 /// Error state (11D baseline, grows with motion model):
-///   δx = [δρ(3), δv(3), δψ, δβ, δr1, δr2, δdza]  + optional AX/AY/AZ
+///   δx = [δρ₃, δv₃, δψ, δβ, δr₁, δr₂, δdza]ᵀ  + optional AX/AY/AZ/DELTA_ACC
+///
+/// Innovation coordinate: body frame (left-invariant residual)
+///   ν_body = [R̂⁻¹·(p_obs − p_pred);  wrap(yaw_obs − yaw_pred)]
 class InvariantPoseBackend : public IStructuredBackend,
                                public SpinFilterInterface {
  public:
@@ -85,14 +102,43 @@ class InvariantPoseBackend : public IStructuredBackend,
   double last_nis() const override { return last_nis_; }
   int last_update_type() const override { return last_update_type_; }
 
+  /// Error type in use.
+  static constexpr InvariantErrorType kErrorType = InvariantErrorType::LEFT_INVARIANT;
+
  private:
-  // ── Observation model ──
+  // ── Lie group operations (SO(2)) ──
+  /// SO(2) exponential: ψ → R_z(ψ). For SO(2), this is just the angle itself.
+  static double exp_SO2(double dpsi) { return dpsi; }
+  /// SO(2) logarithm: R_z(ψ) → ψ. Identity at ψ=0.
+  static double log_SO2(double /* R_angle */) { return 0.0; }  // unused at retraction-time
+  /// SO(2) adjoint: Ad_Rz(ψ) on a 2D vector v.
+  static Eigen::Matrix2d adjoint_SO2(double psi);
+  /// Left Jacobian of SO(2): J_l(δψ) = sin(δψ)/δψ. For small δψ, ≈ 1.
+  static double left_jacobian_SO2(double dpsi);
+  /// Right Jacobian of SO(2): J_r(δψ) = sin(δψ)/δψ. For small δψ, ≈ 1.
+  static double right_jacobian_SO2(double dpsi);
+
+  // ── Observation model (world-frame prediction) ──
   Eigen::Vector4d obs_model_single(const Eigen::VectorXd &x, int k,
                                     int panel_id) const;
 
-  // ── Analytical Jacobian for single-obs (4 × n) ──
-  Eigen::MatrixXd obs_jacobian_single(const Eigen::VectorXd &x, int k,
-                                       int panel_id) const;
+  // ── Analytical Jacobian for single-obs (4 × n), world-frame ──
+  Eigen::MatrixXd obs_jacobian_single_world(const Eigen::VectorXd &x, int k,
+                                             int panel_id) const;
+
+  // ── Body-frame innovation:  ν = [R̂⁻¹·(z_pos − h_pos);  wrap(yaw_obs, yaw_pred)] ──
+  Eigen::Vector4d compute_left_invariant_innovation(
+      const Eigen::Vector4d &z_obs, const Eigen::Vector4d &z_pred,
+      double center_yaw_pred) const;
+
+  // ── Body-frame H Jacobian: H_body = Ad_Rz⁻¹ · H_world (with structural simplification) ──
+  Eigen::MatrixXd compute_body_frame_H(const Eigen::MatrixXd &H_world,
+                                        double center_yaw_pred, int panel_id,
+                                        const Eigen::VectorXd &x) const;
+
+  // ── Body-frame R matrix: R_body = Ad_Rz⁻¹ · R_world · Ad_Rz⁻ᵀ ──
+  Eigen::Matrix4d rotate_R_to_body_frame(const Eigen::Matrix4d &R_world,
+                                          double center_yaw_pred) const;
 
   // ── Posterior checks ──
   bool check_posterior_sanity(const Eigen::VectorXd &x_prior,
@@ -102,6 +148,17 @@ class InvariantPoseBackend : public IStructuredBackend,
   double compute_reconstruction_error(const Eigen::VectorXd &x_post, int k,
                                        const ObservationData &obs,
                                        int panel_id) const;
+
+  // ── State retraction (left-invariant):  X̂⁺ = Exp(δξ̂) ∘ X̂ ──
+  // For SO(2): yaw⁺ = normalize_angle(yaw + δψ)
+  // For ℝⁿ:  x⁺ = x + δx
+  Eigen::VectorXd retract_left_invariant(const Eigen::VectorXd &x_prior,
+                                          const Eigen::VectorXd &dx) const;
+
+  Eigen::VectorXd initialize_invariant_state(const ObservationData &obs,
+                                              int panel_id, double r1,
+                                              double r2, double dza) const;
+  Eigen::MatrixXd build_invariant_Q(double dt) const;
 
   void apply_state_constraints();
 
@@ -119,6 +176,7 @@ class InvariantPoseBackend : public IStructuredBackend,
   int k_ = 0;
   int last_k_ = 0;
   int current_panel_id_ = -1;
+  int phase_index_ = -1;
 
   Eigen::VectorXd last_innov_xyz_;
   double last_innov_yaw_ = 0.0;

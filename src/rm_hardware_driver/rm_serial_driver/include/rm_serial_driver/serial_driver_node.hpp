@@ -17,9 +17,11 @@
 #define SERIAL_DRIVER_SERIAL_DRIVER_NODE_HPP_
 
 // std
+#include <atomic>
 #include <geometry_msgs/msg/detail/twist__struct.hpp>
 #include <memory>
 #include <thread>
+#include <vector>
 // ros2
 #include <tf2_ros/transform_broadcaster.h>
 
@@ -56,11 +58,14 @@ public:
   struct SetModeClient {
     SetModeClient(rclcpp::Client<rm_interfaces::srv::SetMode>::SharedPtr p) : ptr(p) {}
     std::atomic<bool> on_waiting = false;
+    std::atomic<bool> mode_timer_active = false;
     std::atomic<int> mode = -1;
     rclcpp::Client<rm_interfaces::srv::SetMode>::SharedPtr ptr;
   };
   std::unordered_map<std::string, SetModeClient> set_mode_clients_;
   void setMode(SetModeClient &client, const uint8_t mode);
+  void setModeCallback(SetModeClient &client, uint8_t mode);
+  void setModeTimerTick(SetModeClient *client, uint8_t mode);
 
 private:
   // Heartbeat
@@ -84,6 +89,7 @@ private:
   // Broadcast tf from odom to gimbal_link
   double timestamp_offset_ = 0;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+  std::vector<rclcpp::TimerBase::SharedPtr> timers_;
 };
 
 }  // namespace fyt::serial_driver

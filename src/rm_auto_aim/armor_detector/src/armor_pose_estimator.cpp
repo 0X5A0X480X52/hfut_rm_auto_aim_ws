@@ -67,7 +67,8 @@ void ArmorPoseEstimator::configurePnpRefiner(bool enable, const std::string &mod
 
 std::vector<rm_interfaces::msg::Armor>
 ArmorPoseEstimator::extractArmorPoses(const std::vector<Armor> &armors,
-                                   Eigen::Matrix3d R_imu_camera) {
+                                   Eigen::Matrix3d R_imu_camera,
+                                   double stamp_sec) {
   std::vector<rm_interfaces::msg::Armor> armors_msg;
 
   for (const auto &armor : armors) {
@@ -115,7 +116,7 @@ ArmorPoseEstimator::extractArmorPoses(const std::vector<Armor> &armors,
                                                         LARGE_ARMOR_HEIGHT);
         input.camera_matrix = camera_matrix_;
         input.dist_coeffs = dist_coeffs_;
-        input.stamp_sec = 0.0;
+        input.stamp_sec = stamp_sec;
         input.armor_number = armor.number;
         input.armor_type = (armor.number == "outpost")
                                ? armor_pnp_refiner::ArmorSizeType::OUTPOST
