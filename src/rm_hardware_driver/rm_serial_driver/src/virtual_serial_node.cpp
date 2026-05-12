@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <future>
 #include <memory>
+#include <vector>
 #include <opencv2/calib3d.hpp>
 #include <rclcpp/executors.hpp>
 #include <thread>
@@ -30,6 +31,7 @@ class VirtualSerialNode : public rclcpp::Node {
     SetModeClient(rclcpp::Client<rm_interfaces::srv::SetMode>::SharedPtr p) : ptr(p) {}
     std::atomic<bool> on_waiting = false;
     std::atomic<int> mode = -1;
+    std::atomic<bool> mode_timer_active = false;
     rclcpp::Client<rm_interfaces::srv::SetMode>::SharedPtr ptr;
   };
 
@@ -116,34 +118,64 @@ public:
     });
   }
 
-  void setMode(SetModeClient &client, const uint8_t mode) {
-    using namespace std::chrono_literals;
-
+  void setModeCallback(SetModeClient &client, uint8_t mode) {
     std::string service_name = client.ptr->get_service_name();
-    // Wait for service
-    while (!client.ptr->wait_for_service(1s)) {
-      if (!rclcpp::ok()) {
-        FYT_ERROR(
-          "serial_driver", "Interrupted while waiting for the service {}. Exiting.", service_name);
-        return;
-      }
-      FYT_INFO("serial_driver", "service {} not available, waiting again...", service_name);
-    }
     if (!client.ptr->service_is_ready()) {
-      FYT_WARN("serial_driver", "Service: {} is not available!", service_name);
+      FYT_WARN(
+        "serial_driver", "Service {} not ready when calling callback", service_name);
+      client.on_waiting.store(false);
+      client.mode_timer_active.store(false);
       return;
     }
-    // Send request
+
     auto req = std::make_shared<rm_interfaces::srv::SetMode::Request>();
     req->mode = mode;
-    client.on_waiting.store(true);
     auto result = client.ptr->async_send_request(
       req, [mode, &client](rclcpp::Client<rm_interfaces::srv::SetMode>::SharedFuture result) {
         client.on_waiting.store(false);
+        client.mode_timer_active.store(false);
         if (result.get()->success) {
           client.mode.store(mode);
         }
       });
+  }
+
+  void setMode(SetModeClient &client, const uint8_t mode) {
+    using namespace std::chrono_literals;
+
+    if (client.mode_timer_active.exchange(true)) {
+      return;
+    }
+
+    client.on_waiting.store(true);
+
+    auto timer = this->create_wall_timer(500ms, [this, &client, mode]() {
+      setModeTimerTick(&client, mode);
+    });
+
+    timers_.push_back(timer);
+  }
+
+  void setModeTimerTick(SetModeClient *client, uint8_t mode) {
+    using namespace std::chrono_literals;
+
+    std::string service_name = client->ptr->get_service_name();
+    if (!rclcpp::ok()) {
+      client->on_waiting.store(false);
+      client->mode_timer_active.store(false);
+      return;
+    }
+
+    if (client->mode.load() == mode) {
+      client->mode_timer_active.store(false);
+      return;
+    }
+
+    if (client->ptr->wait_for_service(100ms)) {
+      setModeCallback(*client, mode);
+    } else {
+      FYT_INFO("serial_driver", "Service {} not ready yet, retrying...", service_name);
+    }
   }
 
 private:
@@ -157,6 +189,7 @@ private:
   bool has_rune_;
 
   std::unordered_map<std::string, SetModeClient> set_mode_clients_;
+  std::vector<rclcpp::TimerBase::SharedPtr> timers_;
 };
 }  // namespace fyt::serial_driver
 
