@@ -288,8 +288,8 @@ gimbal_pipeline:
       enable_proxy_manager: true
       backend_config:
         backend_type: "ukf_v1"
-        motion_profile: "src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/motion/default.yaml"
-        noise_profile: "src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/noise/default.yaml"
+        motion_profile: "package://gimbal_pipeline/config/norm4_v3/profiles/motion/default.yaml"
+        noise_profile: "package://gimbal_pipeline/config/norm4_v3/profiles/noise/default.yaml"
         structure_profile: "slow"
         enable_shadow_mode: false
         shadow_convergence_frames: 30
@@ -378,7 +378,7 @@ gimbal_pipeline:
       # 用于单独覆盖 InEKF 的运动模型/过程噪声/观测噪声 profile，不影响 ukf_v2。
       inekf_runtime:
         motion_profile: "ca"  # default|cv|ca|singer|yaw_ca|<motion_profile.yaml路径>
-        noise_profile: "src/rm_auto_aim/gimbal_pipeline/config/norm4_v3/profiles/noise/ypd_ba_low_weight.yaml"
+        noise_profile: "package://gimbal_pipeline/config/norm4_v3/profiles/noise/ypd_ba_low_weight.yaml"
         structure_profile: "slow"  # slow|snapshot
         translation_model: "CA"    # ""=继承全局 motion.translation_model
         cv_process_noise_vel: -1.0

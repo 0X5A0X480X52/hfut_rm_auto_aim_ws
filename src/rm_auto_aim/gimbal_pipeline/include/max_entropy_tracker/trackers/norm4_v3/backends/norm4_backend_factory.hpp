@@ -8,6 +8,7 @@
 #include <string>
 #include <yaml-cpp/yaml.h>
 
+#include "rm_utils/url_resolver.hpp"
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/filters/process_models/composite.hpp"
 #include "max_entropy_tracker/filters/process_models/rotation.hpp"
@@ -52,6 +53,12 @@ inline bool is_profile_file(const std::string &profile) {
 }
 
 inline std::string resolve_profile_path(const std::string &profile) {
+  const bool is_package_url = profile.rfind("package://", 0) == 0;
+  const bool is_file_url = profile.rfind("file://", 0) == 0;
+  if (is_package_url || is_file_url) {
+    return fyt::utils::URLResolver::getResolvedPath(profile).string();
+  }
+
   if (!is_profile_file(profile)) {
     if (profile == "default") return profile;
     std::filesystem::path alias =

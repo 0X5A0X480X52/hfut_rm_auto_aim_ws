@@ -29,7 +29,7 @@ detector_type: 'armor_detector'
 # use_camera_detector_container: (true | false)
 # true:  相机节点和检测节点放在同一 ComposableNodeContainer 中 (intra-process 零拷贝)
 # false: 相机节点和检测节点分别作为独立节点运行
-use_camera_detector_container: true
+use_camera_detector_container: false
 
 # tracker_impl: (cpp | python)
 # cpp:    使用 C++ 组件节点 (rclcpp_components)

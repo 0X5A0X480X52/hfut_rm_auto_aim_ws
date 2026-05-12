@@ -9,7 +9,7 @@ armor_detector:
       type: "openvino"
       device: "CPU"
       precision: "fp16"
-      model_path: "package://armor_detector_nn/model/demo01/best.onnx"
+      model_path: "package://armor_detector_nn/model/RobotDetectionModel/0526.onnx"
       engine_path: "package://armor_detector_nn/model/RobotDetectionModel/0526.onnx"
       openvino_model_xml: ""
       openvino_model_bin: ""
@@ -72,6 +72,7 @@ armor_detector:
       small_armor_height: 0.050
       large_armor_width: 0.225
       large_armor_height: 0.050
+      pose.force_pnp_rotate_180: true
 
       refiner:
         mode: "sliding_window"

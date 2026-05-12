@@ -336,6 +336,29 @@ PoseEstimate ArmorPoseEstimatorAdapter::solvePnP(
     rvecToEulerLikeArmorDetector(
       result.rvec, result.yaw, result.pitch, result.roll);
 
+    // If configured, only rotate yaw by 180 degrees (keep translation)
+    if (config_.force_pnp_rotate_180) {
+      result.yaw += M_PI;
+
+      // Rebuild rotation from modified yaw/pitch/roll using tf2 semantics
+      tf2::Matrix3x3 m;
+      m.setRPY(result.roll, result.pitch, result.yaw);
+      tf2::Quaternion tf_q;
+      m.getRotation(tf_q);
+
+      // Convert tf2 quaternion -> Eigen
+      Eigen::Quaterniond new_q(tf_q.w(), tf_q.x(), tf_q.y(), tf_q.z());
+      result.rotation = new_q;
+
+      // Update eigen_R and rvec to remain consistent with modified rotation
+      Eigen::Matrix3d new_R;
+      new_R = new_q.toRotationMatrix();
+      cv::Mat R_cv;
+      cv::eigen2cv(new_R, R_cv);
+      cv::Rodrigues(R_cv, result.rvec);
+      // Keep result.tvec / translation unchanged
+    }
+
     // Per-point average reprojection error
     result.reproj_error_raw = result.reprojection_error / 4.0;
     result.reproj_error_refined = result.reproj_error_raw;

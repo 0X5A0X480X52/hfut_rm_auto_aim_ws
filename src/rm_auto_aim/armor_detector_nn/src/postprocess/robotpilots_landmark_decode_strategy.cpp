@@ -128,10 +128,10 @@ int RobotPilotsLandmarkDecodeStrategy::mapToClassId(int color_idx, int number_id
     default: return -1;         // Bb / unknown
   }
 
-  if (color_idx == 0) {       // red
+  if (color_idx == 1) {       // red
     return 7 + offset;
   }
-  if (color_idx == 1) {       // blue
+  if (color_idx == 0) {       // blue
     return offset;
   }
   return -1;

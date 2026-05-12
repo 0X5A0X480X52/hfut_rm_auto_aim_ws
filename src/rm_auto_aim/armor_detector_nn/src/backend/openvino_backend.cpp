@@ -142,6 +142,8 @@ std::vector<TensorOutput> OpenVINOBackend::infer(const TensorInput& input) {
     results.push_back(std::move(out));
   }
 
+  FYT_DEBUG("armor_detector_nn", "OpenVINOBackend inference complete.");
+
   return results;
 }
 
@@ -160,7 +162,7 @@ void OpenVINOBackend::warmup(int iterations) {
     infer_request_->infer();
   }
 
-  FYT_INFO("armor_detector_nn", "OpenVINOBackend: warmup complete (%d iters)", iterations);
+  FYT_INFO("armor_detector_nn", "OpenVINOBackend: warmup complete ({} iters)", iterations);
 }
 
 BackendInfo OpenVINOBackend::info() const {

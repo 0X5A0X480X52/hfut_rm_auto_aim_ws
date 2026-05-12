@@ -155,6 +155,10 @@ std::vector<FrameDetections> ArmorDetectorNN::detectBatch(
         FYT_INFO("armor_detector_nn", "NMS completed in {:.2f} ms, {} detections remaining",
                  std::chrono::duration<double, std::milli>(t_nms_end - t_detect_end).count(),
                  nms_result.size());
+          for (const auto& rd : nms_result) {
+            FYT_INFO("armor_detector_nn", "NMS candidate: class_id={} confidence={}",
+               rd.class_id, rd.confidence);
+          }
         last_profile_.after_nms = static_cast<int>(nms_result.size());
 
         // Label map
