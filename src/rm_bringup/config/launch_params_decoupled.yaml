@@ -4,22 +4,22 @@
 
 # --------- 通用参数 ---------
 # 机器人配置标签，用于选择 rm_bringup/config/<robot>/ 下的真实参数
-robot: 'video_test'  # 可选: 'video_test', 'wheel_6mm', 'leg_6mm', 'hero', 'sentinel'
+robot: 'infantry_4_1'  # 可选: 'video_test', 'wheel_6mm', 'leg_6mm', 'hero', 'sentinel'
 
 # 命名空间 所有节点、话题都会以这个命名空间开头
 namespace: ''
 
 # image_source: (video | mindvision | hik)
-image_source: 'video'
+image_source: 'hik'
 
 # true: 虚拟下位机 false: 实车
-virtual_serial: true
+virtual_serial: false
 
 # true: 开启调试模式 (发布可视化markers)
 debug: true
 
 # enable_auto_buff: (true | false) 是否开启打符链路
-enable_auto_buff: true
+enable_auto_buff: false
 
 # detector_type: (armor_detector | armor_detector_nn)
 # armor_detector:    使用传统 OpenCV 灯条检测器

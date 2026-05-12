@@ -22,3 +22,4 @@ MvSdkLog/**
 rosbag2_**/**
 **.patch
 .claude/**
+screen.output
