@@ -65,6 +65,7 @@ void ProbabilityEngine::setConfig(
   cfg_ = cfg;
   sigma_cfg_ = sigma_cfg;
   gate_cfg_ = gate_cfg;
+  resetGateState();
 }
 
 double ProbabilityEngine::clamp(double v, double lo, double hi)
@@ -203,7 +204,56 @@ std::vector<Eigen::Vector2d> ProbabilityEngine::buildSigmaPoints(
   return points;
 }
 
-void ProbabilityEngine::updateGate(double p_window, double dt_s)
+void ProbabilityEngine::resetGateState()
+{
+  score_ = 0.0;
+  fire_state_ = false;
+  burst_probability_ = 0.0;
+  log_evidence_ = 0.0;
+  evidence_sum_ = 0.0;
+  evidence_strength_ = 0.0;
+  evidence_window_.clear();
+  burst_state_ = BurstGateState::kIdle;
+  burst_state_time_s_ = 0.0;
+}
+
+double ProbabilityEngine::burstProbability(
+  const std::vector<double> & p_hits,
+  int burst_count,
+  int min_hit_count)
+{
+  if (p_hits.empty()) {
+    return 0.0;
+  }
+
+  const int n = std::max(0, std::min(static_cast<int>(p_hits.size()), burst_count));
+  if (n <= 0) {
+    return 0.0;
+  }
+
+  const int m = std::max(1, min_hit_count);
+  if (m > n) {
+    return 0.0;
+  }
+
+  std::vector<double> dp(n + 1, 0.0);
+  dp[0] = 1.0;
+  for (int i = 0; i < n; ++i) {
+    const double p = clamp(p_hits[i], 0.0, 1.0);
+    for (int k = i; k >= 0; --k) {
+      dp[k + 1] += dp[k] * p;
+      dp[k] *= (1.0 - p);
+    }
+  }
+
+  double sum = 0.0;
+  for (int k = m; k <= n; ++k) {
+    sum += dp[k];
+  }
+  return clamp(sum, 0.0, 1.0);
+}
+
+void ProbabilityEngine::updateGateLegacy(double p_window, double dt_s)
 {
   const double dt = std::max(dt_s, 1e-4);
   if (gate_cfg_.integrator_mode) {
@@ -223,6 +273,109 @@ void ProbabilityEngine::updateGate(double p_window, double dt_s)
   } else if (fire_state_ && score_ < gate_cfg_.fire_off_th) {
     fire_state_ = false;
   }
+
+  burst_probability_ = 0.0;
+  log_evidence_ = 0.0;
+  evidence_sum_ = 0.0;
+  evidence_strength_ = 0.0;
+  burst_state_ = BurstGateState::kIdle;
+  burst_state_time_s_ = 0.0;
+}
+
+void ProbabilityEngine::updateGateBurstEvidence(const std::vector<double> & p_hits, double dt_s)
+{
+  const double dt = std::max(dt_s, 1e-4);
+  const int burst_count = std::max(1, gate_cfg_.burst_bullet_count);
+  const int min_hit = std::max(1, gate_cfg_.min_hit_count);
+
+  burst_probability_ = burstProbability(p_hits, burst_count, min_hit);
+
+  const double eps = std::max(gate_cfg_.evidence_epsilon, 1e-6);
+  const double p0 = clamp(gate_cfg_.reference_probability_p0, eps, 1.0 - eps);
+  const double pb = clamp(burst_probability_, eps, 1.0 - eps);
+  log_evidence_ = std::log((pb * (1.0 - p0)) / (p0 * (1.0 - pb)));
+  const double clip = std::max(gate_cfg_.log_evidence_clip, 1e-6);
+  log_evidence_ = clamp(log_evidence_, -clip, clip);
+
+  const double window_s = std::max(gate_cfg_.evidence_window_ms, 0.0) * 1e-3;
+  const int max_size = std::max(1, static_cast<int>(std::round(window_s / dt)));
+  evidence_window_.push_back(log_evidence_);
+  evidence_sum_ += log_evidence_;
+  while (evidence_window_.size() > static_cast<size_t>(max_size)) {
+    evidence_sum_ -= evidence_window_.front();
+    evidence_window_.pop_front();
+  }
+
+  const double ml = static_cast<double>(max_size) * clip;
+  if (ml > 1e-9) {
+    evidence_strength_ = clamp((evidence_sum_ + ml) / (2.0 * ml), 0.0, 1.0);
+  } else {
+    evidence_strength_ = 0.5;
+  }
+
+  const double T = clamp(gate_cfg_.temperature, 0.0, 1.0);
+  const double theta_on = clamp(
+    gate_cfg_.theta_on_cold - (gate_cfg_.theta_on_cold - gate_cfg_.theta_on_hot) * T,
+    0.0,
+    1.0);
+  const double theta_hold = clamp(
+    gate_cfg_.theta_hold_cold - (gate_cfg_.theta_hold_cold - gate_cfg_.theta_hold_hot) * T,
+    0.0,
+    1.0);
+  const double theta_reset = clamp(
+    gate_cfg_.theta_reset_cold - (gate_cfg_.theta_reset_cold - gate_cfg_.theta_reset_hot) * T,
+    0.0,
+    1.0);
+  const double min_fire_s = std::max(gate_cfg_.min_fire_ms, 0.0) * 1e-3;
+  const double cooldown_s = std::max(gate_cfg_.cooldown_ms, 0.0) * 1e-3;
+
+  switch (burst_state_) {
+    case BurstGateState::kIdle:
+      burst_state_time_s_ = 0.0;
+      if (evidence_strength_ >= theta_on) {
+        burst_state_ = BurstGateState::kFireCommit;
+        burst_state_time_s_ = 0.0;
+        fire_state_ = true;
+      } else {
+        fire_state_ = false;
+      }
+      break;
+    case BurstGateState::kFireCommit:
+      fire_state_ = true;
+      burst_state_time_s_ += dt;
+      if (burst_state_time_s_ >= min_fire_s) {
+        if (evidence_strength_ < theta_hold) {
+          burst_state_ = BurstGateState::kCooldown;
+          burst_state_time_s_ = 0.0;
+          fire_state_ = false;
+        }
+      }
+      break;
+    case BurstGateState::kCooldown:
+      fire_state_ = false;
+      burst_state_time_s_ += dt;
+      if (burst_state_time_s_ >= cooldown_s) {
+        if (evidence_strength_ <= theta_reset) {
+          burst_state_ = BurstGateState::kIdle;
+          burst_state_time_s_ = 0.0;
+        } else {
+          burst_state_time_s_ = cooldown_s;
+        }
+      }
+      break;
+  }
+
+  score_ = evidence_strength_;
+}
+
+void ProbabilityEngine::updateGate(double p_window, const std::vector<double> & p_hits, double dt_s)
+{
+  if (gate_cfg_.strategy == FireGateConfig::Strategy::kBurstEvidence) {
+    updateGateBurstEvidence(p_hits, dt_s);
+    return;
+  }
+
+  updateGateLegacy(p_window, dt_s);
 }
 
 ProbabilityDebugResult ProbabilityEngine::evaluate(
@@ -250,8 +403,7 @@ ProbabilityDebugResult ProbabilityEngine::evaluate(
 
   if (active_target_id_ != target_id) {
     active_target_id_ = target_id;
-    score_ = 0.0;
-    fire_state_ = false;
+    resetGateState();
   }
 
   Eigen::Matrix3d tracker_cov_xyz = Eigen::Matrix3d::Zero();
@@ -282,6 +434,8 @@ ProbabilityDebugResult ProbabilityEngine::evaluate(
   const auto sigma_points = buildSigmaPoints(sigma_cfg_, wm, wc);
 
   double best_p = -1.0;
+  std::vector<double> p_hits;
+  p_hits.reserve(static_cast<size_t>(steps) + 1);
   for (int i = 0; i <= steps; ++i) {
     const double tau = i * step_s;
     const Eigen::Vector3d c_nominal = armor_center + v_center * tau;
@@ -420,6 +574,7 @@ ProbabilityDebugResult ProbabilityEngine::evaluate(
     s.impact_y = p3.y();
     s.impact_z = p3.z();
     out.tau_samples.push_back(s);
+    p_hits.push_back(p_hit);
 
     if (p_hit > best_p) {
       best_p = p_hit;
@@ -453,9 +608,15 @@ ProbabilityDebugResult ProbabilityEngine::evaluate(
     out.p_window = out.best_p_hit;
   }
 
-  updateGate(out.p_window, dt_s);
+  updateGate(out.p_window, p_hits, dt_s);
   out.fire_score = score_;
   out.fire_state = fire_state_;
+  out.burst_probability = burst_probability_;
+  out.log_evidence = log_evidence_;
+  out.evidence_sum = evidence_sum_;
+  out.evidence_strength = evidence_strength_;
+  out.gate_strategy = static_cast<int>(gate_cfg_.strategy);
+  out.gate_state = static_cast<int>(burst_state_);
   out.valid = true;
   return out;
 }

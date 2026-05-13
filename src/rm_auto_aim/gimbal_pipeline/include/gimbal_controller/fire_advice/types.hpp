@@ -22,6 +22,13 @@ struct SigmaPointConfig
 
 struct FireGateConfig
 {
+  enum class Strategy
+  {
+    kLegacy = 0,
+    kBurstEvidence = 1
+  };
+
+  Strategy strategy{Strategy::kLegacy};
   bool integrator_mode{false};
   double alpha{0.85};
   double fire_on_th{0.65};
@@ -29,6 +36,24 @@ struct FireGateConfig
   double integrator_base_probability{0.45};
   double integrator_rise{8.0};
   double integrator_fall{6.0};
+
+  int burst_bullet_count{5};
+  int min_hit_count{1};
+  double reference_probability_p0{0.60};
+  double evidence_window_ms{50.0};
+  double log_evidence_clip{2.0};
+  double evidence_epsilon{1e-3};
+
+  double temperature{0.5};
+  double theta_on_cold{0.90};
+  double theta_on_hot{0.75};
+  double theta_hold_cold{0.70};
+  double theta_hold_hot{0.55};
+  double theta_reset_cold{0.45};
+  double theta_reset_hot{0.35};
+
+  double min_fire_ms{20.0};
+  double cooldown_ms{80.0};
 };
 
 struct ProbabilityConfig
@@ -89,6 +114,12 @@ struct ProbabilityDebugResult
   double p_window{0.0};
   double fire_score{0.0};
   bool fire_state{false};
+  double burst_probability{0.0};
+  double log_evidence{0.0};
+  double evidence_sum{0.0};
+  double evidence_strength{0.0};
+  int gate_strategy{0};
+  int gate_state{0};
   double best_tau_s{0.0};
   double best_p_hit{0.0};
   double best_e_u{0.0};

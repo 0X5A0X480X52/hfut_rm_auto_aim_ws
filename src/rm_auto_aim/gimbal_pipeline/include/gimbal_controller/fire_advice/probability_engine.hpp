@@ -1,6 +1,7 @@
 #ifndef GIMBAL_CONTROLLER__FIRE_ADVICE__PROBABILITY_ENGINE_HPP_
 #define GIMBAL_CONTROLLER__FIRE_ADVICE__PROBABILITY_ENGINE_HPP_
 
+#include <deque>
 #include <string>
 
 #include "gimbal_controller/fire_advice/types.hpp"
@@ -44,7 +45,21 @@ private:
     std::vector<double> & wm,
     std::vector<double> & wc);
 
-  void updateGate(double p_window, double dt_s);
+  void updateGate(double p_window, const std::vector<double> & p_hits, double dt_s);
+  void updateGateLegacy(double p_window, double dt_s);
+  void updateGateBurstEvidence(const std::vector<double> & p_hits, double dt_s);
+  void resetGateState();
+  static double burstProbability(
+    const std::vector<double> & p_hits,
+    int burst_count,
+    int min_hit_count);
+
+  enum class BurstGateState
+  {
+    kIdle = 0,
+    kFireCommit = 1,
+    kCooldown = 2
+  };
   bool extractTrackerCovariance(
     const rm_interfaces::msg::TrackedRobot & robot,
     Eigen::Matrix3d & cov_xyz,
@@ -56,6 +71,13 @@ private:
 
   double score_{0.0};
   bool fire_state_{false};
+  double burst_probability_{0.0};
+  double log_evidence_{0.0};
+  double evidence_sum_{0.0};
+  double evidence_strength_{0.0};
+  std::deque<double> evidence_window_;
+  BurstGateState burst_state_{BurstGateState::kIdle};
+  double burst_state_time_s_{0.0};
   std::string active_target_id_;
 };
 

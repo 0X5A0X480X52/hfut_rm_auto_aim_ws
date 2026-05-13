@@ -163,6 +163,12 @@ bool GimbalControlOrchestrator::evaluateFireAdvice(
     last_fire_debug_.probability_enabled = result.probability_enabled;
     last_fire_debug_.p_hit_window = result.p_hit_window;
     last_fire_debug_.fire_score = result.fire_score;
+    last_fire_debug_.burst_probability = result.burst_probability;
+    last_fire_debug_.log_evidence = result.log_evidence;
+    last_fire_debug_.evidence_sum = result.evidence_sum;
+    last_fire_debug_.evidence_strength = result.evidence_strength;
+    last_fire_debug_.gate_strategy = result.gate_strategy;
+    last_fire_debug_.gate_state = result.gate_state;
     last_fire_debug_.best_tau_ms = result.best_tau_s * 1e3;
     last_fire_debug_.e_u = result.e_u;
     last_fire_debug_.e_v = result.e_v;

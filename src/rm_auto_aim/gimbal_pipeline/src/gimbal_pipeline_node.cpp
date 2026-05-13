@@ -553,6 +553,38 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     get_parameter("controller.fire.probability.window_fusion").as_string();
   const double fire_probability_softmax_beta =
     get_parameter("controller.fire.probability.softmax_beta").as_double();
+  const std::string fire_probability_gate_strategy =
+    get_parameter("controller.fire.probability.gate.strategy").as_string();
+  const int fire_probability_burst_count =
+    get_parameter("controller.fire.probability.burst.burst_bullet_count").as_int();
+  const int fire_probability_min_hit_count =
+    get_parameter("controller.fire.probability.burst.min_hit_count").as_int();
+  const double fire_probability_ref_p0 =
+    get_parameter("controller.fire.probability.evidence.reference_probability_p0").as_double();
+  const double fire_probability_evidence_window_ms =
+    get_parameter("controller.fire.probability.evidence.window_ms").as_double();
+  const double fire_probability_evidence_log_clip =
+    get_parameter("controller.fire.probability.evidence.log_clip").as_double();
+  const double fire_probability_evidence_epsilon =
+    get_parameter("controller.fire.probability.evidence.epsilon").as_double();
+  const double fire_probability_temperature =
+    get_parameter("controller.fire.probability.temperature.value").as_double();
+  const double fire_probability_theta_on_cold =
+    get_parameter("controller.fire.probability.temperature.theta_on_cold").as_double();
+  const double fire_probability_theta_on_hot =
+    get_parameter("controller.fire.probability.temperature.theta_on_hot").as_double();
+  const double fire_probability_theta_hold_cold =
+    get_parameter("controller.fire.probability.temperature.theta_hold_cold").as_double();
+  const double fire_probability_theta_hold_hot =
+    get_parameter("controller.fire.probability.temperature.theta_hold_hot").as_double();
+  const double fire_probability_theta_reset_cold =
+    get_parameter("controller.fire.probability.temperature.theta_reset_cold").as_double();
+  const double fire_probability_theta_reset_hot =
+    get_parameter("controller.fire.probability.temperature.theta_reset_hot").as_double();
+  const double fire_probability_min_fire_ms =
+    get_parameter("controller.fire.probability.commit.min_fire_ms").as_double();
+  const double fire_probability_cooldown_ms =
+    get_parameter("controller.fire.probability.commit.cooldown_ms").as_double();
   fire_prob_vis_enable_ = get_parameter("controller.fire.visualization.enable").as_bool();
   fire_prob_vis_ellipse_samples_ =
     get_parameter("controller.fire.visualization.ellipse_samples").as_int();
@@ -735,6 +767,17 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     sigma_cfg.kappa = get_parameter("controller.fire.probability.sigma_point.kappa").as_double();
 
     gimbal_controller::fire_advice::FireGateConfig gate_cfg;
+    if (fire_probability_gate_strategy == "burst_evidence") {
+      gate_cfg.strategy = gimbal_controller::fire_advice::FireGateConfig::Strategy::kBurstEvidence;
+    } else if (fire_probability_gate_strategy == "legacy") {
+      gate_cfg.strategy = gimbal_controller::fire_advice::FireGateConfig::Strategy::kLegacy;
+    } else {
+      RCLCPP_WARN(
+        get_logger(),
+        "Unknown controller.fire.probability.gate.strategy='%s', fallback to legacy.",
+        fire_probability_gate_strategy.c_str());
+      gate_cfg.strategy = gimbal_controller::fire_advice::FireGateConfig::Strategy::kLegacy;
+    }
     gate_cfg.integrator_mode =
       get_parameter("controller.fire.probability.gate.mode").as_string() == "integrator";
     gate_cfg.alpha = get_parameter("controller.fire.probability.gate.alpha").as_double();
@@ -746,6 +789,21 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       get_parameter("controller.fire.probability.gate.integrator_rise").as_double();
     gate_cfg.integrator_fall =
       get_parameter("controller.fire.probability.gate.integrator_fall").as_double();
+    gate_cfg.burst_bullet_count = std::max(fire_probability_burst_count, 1);
+    gate_cfg.min_hit_count = std::max(fire_probability_min_hit_count, 1);
+    gate_cfg.reference_probability_p0 = fire_probability_ref_p0;
+    gate_cfg.evidence_window_ms = std::max(fire_probability_evidence_window_ms, 0.0);
+    gate_cfg.log_evidence_clip = fire_probability_evidence_log_clip;
+    gate_cfg.evidence_epsilon = fire_probability_evidence_epsilon;
+    gate_cfg.temperature = fire_probability_temperature;
+    gate_cfg.theta_on_cold = fire_probability_theta_on_cold;
+    gate_cfg.theta_on_hot = fire_probability_theta_on_hot;
+    gate_cfg.theta_hold_cold = fire_probability_theta_hold_cold;
+    gate_cfg.theta_hold_hot = fire_probability_theta_hold_hot;
+    gate_cfg.theta_reset_cold = fire_probability_theta_reset_cold;
+    gate_cfg.theta_reset_hot = fire_probability_theta_reset_hot;
+    gate_cfg.min_fire_ms = std::max(fire_probability_min_fire_ms, 0.0);
+    gate_cfg.cooldown_ms = std::max(fire_probability_cooldown_ms, 0.0);
 
     fire_advice_engine_->setProbabilityConfig(prob_cfg, sigma_cfg, gate_cfg);
   }
@@ -1634,6 +1692,7 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.fire.probability.sigma_point.alpha", 0.7);
   declare_parameter("controller.fire.probability.sigma_point.beta", 2.0);
   declare_parameter("controller.fire.probability.sigma_point.kappa", 0.0);
+  declare_parameter("controller.fire.probability.gate.strategy", std::string("legacy"));
   declare_parameter("controller.fire.probability.gate.mode", std::string("lowpass"));
   declare_parameter("controller.fire.probability.gate.alpha", 0.85);
   declare_parameter("controller.fire.probability.gate.fire_on_th", 0.65);
@@ -1641,6 +1700,21 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.fire.probability.gate.integrator_base_probability", 0.45);
   declare_parameter("controller.fire.probability.gate.integrator_rise", 8.0);
   declare_parameter("controller.fire.probability.gate.integrator_fall", 6.0);
+  declare_parameter("controller.fire.probability.burst.burst_bullet_count", 5);
+  declare_parameter("controller.fire.probability.burst.min_hit_count", 1);
+  declare_parameter("controller.fire.probability.evidence.reference_probability_p0", 0.60);
+  declare_parameter("controller.fire.probability.evidence.window_ms", 50.0);
+  declare_parameter("controller.fire.probability.evidence.log_clip", 2.0);
+  declare_parameter("controller.fire.probability.evidence.epsilon", 1e-3);
+  declare_parameter("controller.fire.probability.temperature.value", 0.5);
+  declare_parameter("controller.fire.probability.temperature.theta_on_cold", 0.90);
+  declare_parameter("controller.fire.probability.temperature.theta_on_hot", 0.75);
+  declare_parameter("controller.fire.probability.temperature.theta_hold_cold", 0.70);
+  declare_parameter("controller.fire.probability.temperature.theta_hold_hot", 0.55);
+  declare_parameter("controller.fire.probability.temperature.theta_reset_cold", 0.45);
+  declare_parameter("controller.fire.probability.temperature.theta_reset_hot", 0.35);
+  declare_parameter("controller.fire.probability.commit.min_fire_ms", 20.0);
+  declare_parameter("controller.fire.probability.commit.cooldown_ms", 80.0);
   declare_parameter("controller.fire.visualization.enable", true);
   declare_parameter("controller.fire.visualization.ellipse_samples", 64);
   declare_parameter("controller.fire.visualization.max_impact_points", 120);
@@ -3744,6 +3818,22 @@ void GimbalPipelineNode::publishFireAdviceDebug(
   msg.candidate_count_total = snapshot.candidate_count_total;
   msg.candidate_count_facing_eligible = snapshot.candidate_count_facing_eligible;
   msg.candidate_count_facing_rejected = snapshot.candidate_count_facing_rejected;
+  msg.probability_enabled = snapshot.probability_enabled;
+  msg.p_hit_window = snapshot.p_hit_window;
+  msg.fire_score = snapshot.fire_score;
+  msg.best_tau_ms = snapshot.best_tau_ms;
+  msg.e_u = snapshot.e_u;
+  msg.e_v = snapshot.e_v;
+  msg.sigma_u = snapshot.sigma_u;
+  msg.sigma_v = snapshot.sigma_v;
+  msg.armor_width_m = snapshot.armor_width_m;
+  msg.armor_height_m = snapshot.armor_height_m;
+  msg.burst_probability = snapshot.burst_probability;
+  msg.log_evidence = snapshot.log_evidence;
+  msg.evidence_sum = snapshot.evidence_sum;
+  msg.evidence_strength = snapshot.evidence_strength;
+  msg.gate_strategy = snapshot.gate_strategy;
+  msg.gate_state = snapshot.gate_state;
 
   debug_fire_advice_pub_->publish(msg);
 
@@ -4652,8 +4742,13 @@ void GimbalPipelineNode::publishFireProbabilityMarkers(
   txt.pose.orientation.w = 1.0;
   std::ostringstream oss;
   oss << "Pwin=" << std::fixed << std::setprecision(2) << fire_snapshot.p_hit_window
-      << " Score=" << fire_snapshot.fire_score
-      << " tau=" << std::setprecision(1) << fire_snapshot.best_tau_ms << "ms"
+      << " Score=" << fire_snapshot.fire_score;
+  if (fire_snapshot.gate_strategy == 1) {
+    oss << " Pb=" << std::setprecision(2) << fire_snapshot.burst_probability
+        << " S=" << std::setprecision(2) << fire_snapshot.evidence_strength
+        << " G=" << fire_snapshot.gate_state;
+  }
+  oss << " tau=" << std::setprecision(1) << fire_snapshot.best_tau_ms << "ms"
       << " eu=" << std::setprecision(3) << fire_snapshot.e_u << "m"
       << " ev=" << fire_snapshot.e_v << "m"
       << " su=" << fire_snapshot.sigma_u << "m"

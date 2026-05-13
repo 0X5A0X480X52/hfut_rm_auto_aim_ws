@@ -100,6 +100,12 @@ struct FireAdviceEngineResult
   bool probability_enabled{false};
   double p_hit_window{0.0};
   double fire_score{0.0};
+  double burst_probability{0.0};
+  double log_evidence{0.0};
+  double evidence_sum{0.0};
+  double evidence_strength{0.0};
+  int gate_strategy{0};
+  int gate_state{0};
   double best_tau_s{0.0};
   double e_u{0.0};
   double e_v{0.0};

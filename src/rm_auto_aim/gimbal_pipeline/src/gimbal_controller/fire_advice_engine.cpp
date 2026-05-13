@@ -431,6 +431,12 @@ FireAdviceEngineResult FireAdviceEngine::evaluate(const FireAdviceEngineRequest 
       if (prob.valid) {
         result.p_hit_window = prob.p_window;
         result.fire_score = prob.fire_score;
+        result.burst_probability = prob.burst_probability;
+        result.log_evidence = prob.log_evidence;
+        result.evidence_sum = prob.evidence_sum;
+        result.evidence_strength = prob.evidence_strength;
+        result.gate_strategy = prob.gate_strategy;
+        result.gate_state = prob.gate_state;
         result.best_tau_s = prob.best_tau_s;
         result.e_u = prob.best_e_u;
         result.e_v = prob.best_e_v;
