@@ -154,7 +154,7 @@ void SerialDriverNode::listenLoop() {
       t.header.frame_id = target_frame_;
       t.child_frame_id = "gimbal_link";
       auto roll = receive_data.roll * M_PI / 180.0;
-      auto pitch = receive_data.pitch * M_PI / 180.0;
+      auto pitch = -receive_data.pitch * M_PI / 180.0;
       auto yaw = receive_data.yaw * M_PI / 180.0;
       tf2::Quaternion q;
       q.setRPY(roll, pitch, yaw);

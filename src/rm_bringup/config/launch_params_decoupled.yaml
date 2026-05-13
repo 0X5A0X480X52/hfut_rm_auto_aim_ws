@@ -4,7 +4,7 @@
 
 # --------- 通用参数 ---------
 # 机器人配置标签，用于选择 rm_bringup/config/<robot>/ 下的真实参数
-robot: 'infantry_4_1'  # 可选: 'video_test', 'wheel_6mm', 'leg_6mm', 'hero', 'sentinel'
+robot: 'hero'
 
 # 命名空间 所有节点、话题都会以这个命名空间开头
 namespace: ''
@@ -38,9 +38,9 @@ tracker_impl: 'cpp'
 
 # --------- 相机/URDF参数 ---------
 # 舵轮 6mm 相机相对于里程计的位姿 (相机安装位置)
-odom2camera:
-  xyz: "\"0.151 0.00  0.040\""
-  rpy: "\"0.0  0.0  0.000\""
+# odom2camera:
+#   xyz: "\"0.151 0.00  0.040\""
+#   rpy: "\"0.0  0.0  0.000\""
 
 # 腿 6mm 相机相对于里程计的位姿 (相机安装位置)
 # odom2camera:
@@ -48,9 +48,9 @@ odom2camera:
 #   rpy: "\"0.0  0.0  -0.00\""
 
 # # 英雄
-# odom2camera:
-#   xyz: "\"0.174275 0.000 0.086463 \""
-#   rpy: "\"0.0  0.1396  -0.00\""
+odom2camera:
+  xyz: "\"0.174275 0.000 0.086463 \""
+  rpy: "\"0.0  0.1396  -0.00\""
 
 # # 哨兵
 # odom2camera:
