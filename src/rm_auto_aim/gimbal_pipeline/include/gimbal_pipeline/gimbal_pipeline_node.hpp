@@ -44,6 +44,7 @@
 #include <rm_interfaces/msg/tracked_robot.hpp>
 #include <rm_interfaces/msg/tracked_robots.hpp>
 #include <rm_interfaces/srv/set_mode.hpp>
+#include <rm_interfaces/msg/serial_receive_data.hpp>
 
 // ─── max_entropy_tracker internals ────────────────────────────
 #include "max_entropy_tracker/core/config.hpp"
@@ -278,6 +279,7 @@ class GimbalPipelineNode : public rclcpp::Node {
   std::string current_gimbal_strategy_name_{"current"};
 
   bool enable_blind_{true};
+  std::atomic_bool auto_aim_is_on_{false};
 
   double current_yaw_{0.0};
   double current_pitch_{0.0};
@@ -319,6 +321,7 @@ class GimbalPipelineNode : public rclcpp::Node {
   std::shared_ptr<tf2_armor_filter> tf2_filter_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub_;
+  rclcpp::Subscription<rm_interfaces::msg::SerialReceiveData>::SharedPtr serial_receive_data_sub_;
 
   // Blind detector subscriptions — supports multi-camera (one sub per configured topic)
   std::vector<std::string> blind_topics_;

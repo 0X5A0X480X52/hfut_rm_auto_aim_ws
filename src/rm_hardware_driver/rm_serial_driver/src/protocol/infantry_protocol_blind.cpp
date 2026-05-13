@@ -43,6 +43,9 @@ bool ProtocolInfantryBlind::receive(rm_interfaces::msg::SerialReceiveData &data)
     packet.unloadData(data.roll, 2);
     packet.unloadData(data.pitch, 6);
     packet.unloadData(data.yaw, 10);
+    char auto_aim_is_on;
+    packet.unloadData(auto_aim_is_on, 14);
+    data.auto_aim_is_on = auto_aim_is_on == 1;
     return true;
   } else {
     return false;
@@ -65,12 +68,13 @@ std::vector<rclcpp::Client<rm_interfaces::srv::SetMode>::SharedPtr> ProtocolInfa
                                                                   rmw_qos_profile_services_default);
   auto client2 = node->create_client<rm_interfaces::srv::SetMode>("gimbal_pipeline/set_mode",
                                                                   rmw_qos_profile_services_default);
-  // auto client3 = node->create_client<rm_interfaces::srv::SetMode>("blind_camera_1/blind_detector/set_mode",
-  //                                                                 rmw_qos_profile_services_default);
-  // auto client4 = node->create_client<rm_interfaces::srv::SetMode>("blind_camera_2/blind_detector/set_mode",
-  //                                                                 rmw_qos_profile_services_default);
-  // return {client1, client2, client3, client4};
-  return {client1, client2};
+  auto client3 = node->create_client<rm_interfaces::srv::SetMode>("blind_camera_1/blind_detector/set_mode",
+                                                                  rmw_qos_profile_services_default);
+  auto client4 = node->create_client<rm_interfaces::srv::SetMode>("blind_camera_2/blind_detector/set_mode",
+                                                                  rmw_qos_profile_services_default);
+  auto client5 = node->create_client<rm_interfaces::srv::SetMode>("blind_camera_3/blind_detector/set_mode",
+                                                                  rmw_qos_profile_services_default);
+  return {client1, client2, client3, client4, client5};
 }
 
 }  // namespace fyt::serial_driver::protocol

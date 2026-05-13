@@ -57,6 +57,28 @@ def generate_launch_description():
     robot_name = str(launch_params.get('robot', 'default')).strip() or 'default'
     bringup_config_root = os.path.join(get_package_share_directory('rm_bringup'), 'config')
 
+    # ── 补盲相机在 gimbal_link 坐标系中的安装位姿 ──
+    blind_camera_xyz_default = '-0.175 0.0 0.086'
+    blind_camera_rpy_default = '0.0 0.14 3.14159'
+    blind_camera_2_xyz_default = '-0.175 0.05 0.086'
+    blind_camera_2_rpy_default = '0.0 0.14 1.5708'
+    blind_camera_3_xyz_default = '-0.175 -0.05 0.086'
+    blind_camera_3_rpy_default = '0.0 0.14 -1.5708'
+
+    # ── 补盲相机开关 (False 则不启动) ──
+    enable_blind_camera_1 = True
+    enable_blind_camera_2 = True
+    enable_blind_camera_3 = True
+
+    main_camera_xyz = launch_params.get('odom2camera', {}).get('xyz', '0.174275 0.000 0.086463')
+    main_camera_rpy = launch_params.get('odom2camera', {}).get('rpy', '0.0 0.1396 -0.00')
+    blind_camera_xyz = blind_camera_xyz_default
+    blind_camera_rpy = blind_camera_rpy_default
+    blind_camera_2_xyz = blind_camera_2_xyz_default
+    blind_camera_2_rpy = blind_camera_2_rpy_default
+    blind_camera_3_xyz = blind_camera_3_xyz_default
+    blind_camera_3_rpy = blind_camera_3_rpy_default
+
     # ── 声明启动参数 ──
     declare_image_source = DeclareLaunchArgument(
         'image_source',
@@ -88,19 +110,60 @@ def generate_launch_description():
         default_value=str(launch_params.get('use_camera_detector_container', True)).lower(),
         description='Put camera and detector in same container'
     )
-    # declare_enable_auto_buff = DeclareLaunchArgument(
-    #     'enable_auto_buff',
-    #     default_value=str(launch_params.get('enable_auto_buff', False)).lower(),
-    #     description='Enable auto_buff detector + pose_estimator pipeline'
-    # )
+    declare_enable_auto_buff = DeclareLaunchArgument(
+        'enable_auto_buff',
+        default_value=str(launch_params.get('enable_auto_buff', False)).lower(),
+        description='Enable auto_buff detector + pose_estimator pipeline'
+    )
+    declare_enable_blind = DeclareLaunchArgument(
+        'enable_blind',
+        default_value='true',
+        description='下位机补盲功能开关 (true=启用). gimbal_pipeline 据此填 cmd.distance 哨兵值.'
+    )
+    declare_blind_camera_xyz = DeclareLaunchArgument(
+        'blind_camera_xyz',
+        default_value=blind_camera_xyz_default,
+        description='补盲相机1在 gimbal_link 坐标系中的安装位置 (xyz, m)'
+    )
+    declare_blind_camera_rpy = DeclareLaunchArgument(
+        'blind_camera_rpy',
+        default_value=blind_camera_rpy_default,
+        description='补盲相机1在 gimbal_link 坐标系中的安装姿态 (rpy, rad)'
+    )
+    declare_blind_camera_2_xyz = DeclareLaunchArgument(
+        'blind_camera_2_xyz',
+        default_value=blind_camera_2_xyz_default,
+        description='补盲相机2在 gimbal_link 坐标系中的安装位置 (xyz, m)'
+    )
+    declare_blind_camera_2_rpy = DeclareLaunchArgument(
+        'blind_camera_2_rpy',
+        default_value=blind_camera_2_rpy_default,
+        description='补盲相机2在 gimbal_link 坐标系中的安装姿态 (rpy, rad)'
+    )
+    declare_blind_camera_3_xyz = DeclareLaunchArgument(
+        'blind_camera_3_xyz',
+        default_value=blind_camera_3_xyz_default,
+        description='补盲相机3在 gimbal_link 坐标系中的安装位置 (xyz, m)'
+    )
+    declare_blind_camera_3_rpy = DeclareLaunchArgument(
+        'blind_camera_3_rpy',
+        default_value=blind_camera_3_rpy_default,
+        description='补盲相机3在 gimbal_link 坐标系中的安装姿态 (rpy, rad)'
+    )
 
-    # ── URDF 机器人描述 ──
+    # ── URDF 机器人描述 (含补盲相机) ──
     robot_gimbal_description = Command(['xacro ', os.path.join(
-        get_package_share_directory('rm_robot_description'), 'urdf', 'rm_gimbal.urdf.xacro'),
-        ' xyz:=', launch_params['odom2camera']['xyz'],
-        ' rpy:=', launch_params['odom2camera']['rpy']])
+        get_package_share_directory('rm_robot_description'), 'urdf', 'rm_gimbal_with_blind_camera.urdf.xacro'),
+        ' main_camera_xyz:=', main_camera_xyz,
+        ' main_camera_rpy:=', main_camera_rpy,
+        ' blind_camera_1_xyz:="', blind_camera_xyz, '"',
+        ' blind_camera_1_rpy:="', blind_camera_rpy, '"',
+        ' blind_camera_2_xyz:="', blind_camera_2_xyz, '"',
+        ' blind_camera_2_rpy:="', blind_camera_2_rpy, '"',
+        ' blind_camera_3_xyz:="', blind_camera_3_xyz, '"',
+        ' blind_camera_3_rpy:="', blind_camera_3_rpy, '"'])
 
-    robot_gimbal_publisher = Node(
+    robot_state_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
         parameters=[{
@@ -130,6 +193,11 @@ def generate_launch_description():
             if os.path.isfile(override_path):
                 return [default_path, override_path]
         return [default_path]
+
+    def get_usb_camera_params(name):
+        return os.path.join(
+            get_package_share_directory('usb_camera_driver'),
+            'config', f'{name}_params.yaml')
 
     # ==================== 装甲板检测节点 (ComposableNode) ====================
     detector_type = str(launch_params.get('detector_type', 'armor_detector'))
@@ -173,8 +241,14 @@ def generate_launch_description():
         parameters=[
             *get_pkg_params_with_robot_override('gimbal_pipeline', 'gimbal_pipeline.yaml'),
             {
-                'debug_mode': LaunchConfiguration('debug')
-            }
+                'debug_mode': LaunchConfiguration('debug'),
+                'enable_blind': LaunchConfiguration('enable_blind'),
+                'blind.topics': [
+                    '/blind_camera_1/blinds',
+                    '/blind_camera_2/blinds',
+                    '/blind_camera_3/blinds',
+                ],
+            },
         ],
         remappings=[
             # 输出 cmd_gimbal 保持兼容原 serial_driver 订阅的话题名
@@ -342,7 +416,51 @@ def generate_launch_description():
         )
         return [camera_node, detector_node]
 
-    # ==================== 串口节点 ====================
+    # ==================== 补盲相机 + 补盲检测器 容器 ====================
+    def make_blind_camera_container_func(camera_prefix, container_name):
+        def _create(context):
+            debug_enabled = LaunchConfiguration('debug').perform(context).lower() == 'true'
+
+            blind_camera_node = ComposableNode(
+                package='usb_camera_driver',
+                plugin='blind_vision::USBCameraNode',
+                name='usb_camera_node',
+                namespace=camera_prefix,
+                parameters=[get_usb_camera_params(camera_prefix)],
+                extra_arguments=[{'use_intra_process_comms': True}],
+            )
+
+            blind_detector_node = ComposableNode(
+                package='blind_detector',
+                plugin='fyt::auto_aim::ArmorDetectorNode',
+                name='blind_detector',
+                namespace=camera_prefix,
+                parameters=[
+                    get_bringup_params('armor_detector'),
+                    {
+                        'camera_frame_id': f'{camera_prefix}_optical_frame',
+                        'debug': debug_enabled,
+                    },
+                ],
+                remappings=[
+                    ('tf', '/tf'),
+                    ('tf_static', '/tf_static'),
+                ],
+                extra_arguments=[{'use_intra_process_comms': True}],
+            )
+
+            container = ComposableNodeContainer(
+                name=container_name,
+                namespace='',
+                package='rclcpp_components',
+                executable='component_container_mt',
+                composable_node_descriptions=[blind_camera_node, blind_detector_node],
+                output='both',
+                emulate_tty=True,
+            )
+            return [container]
+        return _create
+
     def create_serial_node_action(context):
         virtual_serial = LaunchConfiguration('virtual_serial').perform(context).lower() == 'true'
         if virtual_serial:
@@ -388,8 +506,26 @@ def generate_launch_description():
         )
 
     # 统一 pipeline 节点 — 替代原来 2.5s / 3.0s / 3.5s 三个节点
-    delay_gimbal_pipeline = TimerAction(
+    # 补盲相机 + 检测器 容器 (3台)
+    delay_blind_camera_1 = TimerAction(
+        period=2.0,
+        actions=[OpaqueFunction(function=make_blind_camera_container_func(
+            'blind_camera_1', 'blind_camera_detector_container'))],
+    )
+    delay_blind_camera_2 = TimerAction(
         period=2.5,
+        actions=[OpaqueFunction(function=make_blind_camera_container_func(
+            'blind_camera_2', 'blind_camera_detector_container_2'))],
+    )
+    delay_blind_camera_3 = TimerAction(
+        period=3.0,
+        actions=[OpaqueFunction(function=make_blind_camera_container_func(
+            'blind_camera_3', 'blind_camera_detector_container_3'))],
+    )
+
+    # 统一 pipeline 节点 — 替代原来 2.5s / 3.0s / 3.5s 三个节点
+    delay_gimbal_pipeline = TimerAction(
+        period=3.5,
         actions=[gimbal_pipeline_node],
     )
 
@@ -404,9 +540,16 @@ def generate_launch_description():
         declare_namespace,
         declare_detector_type,
         declare_use_container,
-        # declare_enable_auto_buff,
+        declare_enable_auto_buff,
+        declare_enable_blind,
+        declare_blind_camera_xyz,
+        declare_blind_camera_rpy,
+        declare_blind_camera_2_xyz,
+        declare_blind_camera_2_rpy,
+        declare_blind_camera_3_xyz,
+        declare_blind_camera_3_rpy,
 
-        robot_gimbal_publisher,
+        robot_state_publisher,
         push_namespace,
 
         delay_serial_node,
@@ -417,6 +560,14 @@ def generate_launch_description():
         launch_actions.append(delay_camera_detector)
     else:
         launch_actions.append(delay_standalone)
+
+    # 按开关加入补盲相机
+    if enable_blind_camera_1:
+        launch_actions.append(delay_blind_camera_1)
+    if enable_blind_camera_2:
+        launch_actions.append(delay_blind_camera_2)
+    if enable_blind_camera_3:
+        launch_actions.append(delay_blind_camera_3)
 
     launch_actions.append(delay_gimbal_pipeline)
     # launch_actions.append(buff_detector_node)

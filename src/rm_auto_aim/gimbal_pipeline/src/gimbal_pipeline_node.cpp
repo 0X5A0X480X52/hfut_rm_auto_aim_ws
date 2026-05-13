@@ -18,6 +18,7 @@
 #include <iomanip>
 #include <unordered_set>
 
+#include <angles/angles.h>
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -928,6 +929,13 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       get_node_logging_interface(), get_node_clock_interface(),
       std::chrono::duration<int>(1));
   tf2_filter_->registerCallback(&GimbalPipelineNode::armorsCallback, this);
+
+  serial_receive_data_sub_ = create_subscription<rm_interfaces::msg::SerialReceiveData>(
+      "serial/receive", rclcpp::SensorDataQoS(),
+      [&](rm_interfaces::msg::SerialReceiveData::SharedPtr msg) {
+        auto_aim_is_on_.store(msg->auto_aim_is_on);
+      }
+  );
 
   // Subscribe: /joint_states (input from serial driver)
   joint_state_sub_ = create_subscription<sensor_msgs::msg::JointState>(
@@ -3904,8 +3912,22 @@ void GimbalPipelineNode::timerCallback() {
   switch (control_mode) {
     case SelectionResult::MODE_NO_TARGET:
       {
-        // 已锁定引导目标 → 跳过候选收集，直接用锁定值，避免覆盖 latest_blind_msg_
-        if (guidance_target_locked_) {
+        if (!auto_aim_is_on_.load()) {
+          // 操作手未开启自瞄 → 实时采集补盲目标信息，不锁定
+          auto best_blind = collectBlindCandidates();
+          if (best_blind) {
+            latest_blind_msg_ = best_blind;
+            blind_guidance_active_ = false;
+            guidance_target_locked_ = false;
+            cmd = buildBlindGuidanceCommand();
+          } else {
+            blind_guidance_active_ = false;
+            guidance_target_locked_ = false;
+            latest_blind_msg_.reset();
+            cmd = buildNoTargetCommand();
+          }
+        } else if (guidance_target_locked_) {
+          // 已锁定引导目标 → 跳过候选收集，直接用锁定值
           cmd = buildBlindGuidanceCommand();
         } else {
           auto best_blind = collectBlindCandidates();
@@ -3951,7 +3973,7 @@ void GimbalPipelineNode::timerCallback() {
     dbg.yaw = static_cast<float>(guidance_locked_yaw_deg_.load());
     dbg.pitch = static_cast<float>(guidance_locked_pitch_deg_.load());
     dbg.confi = -1.0f;  // 锁定态标识
-  } else if (blind_guidance_active_ && latest_blind_msg_) {
+  } else if (latest_blind_msg_) {
     dbg = *latest_blind_msg_;
   }
   // 无补盲目标时发布默认值 (number="", yaw=0, pitch=0, confi=0)
@@ -4111,6 +4133,37 @@ void GimbalPipelineNode::publishIdleCommand() {
 rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildBlindGuidanceCommand() {
   rm_interfaces::msg::GimbalCmd cmd;
 
+  // ── 实时跟踪模式（auto_aim 未开启）：直接透传最新补盲目标信息 ──
+  if (!auto_aim_is_on_.load()) {
+    if (!latest_blind_msg_ || latest_blind_msg_->number == "-1") {
+      return buildNoTargetCommand();
+    }
+
+    const double target_yaw_rad =
+      static_cast<double>(latest_blind_msg_->yaw) * (M_PI / 180.0);
+    const double target_pitch_rad =
+      static_cast<double>(latest_blind_msg_->pitch) * (M_PI / 180.0);
+
+    double yaw_diff_rad = angles::normalize_angle(target_yaw_rad - current_yaw_);
+    double pitch_diff_rad = angles::normalize_angle(target_pitch_rad - current_pitch_);
+
+    cmd.header.stamp = now();
+    cmd.yaw = static_cast<double>(latest_blind_msg_->yaw);
+    cmd.yaw_diff = yaw_diff_rad * 180.0 / M_PI;
+    cmd.pitch = static_cast<double>(latest_blind_msg_->pitch);
+    cmd.pitch_diff = pitch_diff_rad * 180.0 / M_PI;
+    cmd.yaw_v = 0.0;
+    cmd.pitch_v = 0.0;
+    cmd.yaw_a = 0.0;
+    cmd.pitch_a = 0.0;
+    cmd.target_id = latest_blind_msg_->number;
+    cmd.distance = enable_blind_ ? -2 : -1;
+    cmd.fire_advice = false;
+    cmd.is_guiding = false;
+    cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_BLIND_CAMERA_RESULT;
+    return cmd;
+  }
+
   // 检查引导是否完成（基于锁定 yaw 偏差 + 超时）
   if (guidance_target_locked_) {
     double elapsed = (this->now() - guidance_start_time_).seconds();
@@ -4199,13 +4252,8 @@ rm_interfaces::msg::GimbalCmd GimbalPipelineNode::buildBlindGuidanceCommand() {
   const double target_pitch_rad = guidance_locked_pitch_deg_ * M_PI / 180.0;
 
   // 计算相对于当前云台的 yaw/pitch 偏差（每帧实时更新）
-  double yaw_diff_rad = target_yaw_rad - current_yaw_;
-  while (yaw_diff_rad > M_PI) yaw_diff_rad -= 2.0 * M_PI;
-  while (yaw_diff_rad < -M_PI) yaw_diff_rad += 2.0 * M_PI;
-
-  double pitch_diff_rad = target_pitch_rad - current_pitch_;
-  while (pitch_diff_rad > M_PI) pitch_diff_rad -= 2.0 * M_PI;
-  while (pitch_diff_rad < -M_PI) pitch_diff_rad += 2.0 * M_PI;
+  double yaw_diff_rad = angles::normalize_angle(target_yaw_rad - current_yaw_);
+  double pitch_diff_rad = angles::normalize_angle(target_pitch_rad - current_pitch_);
 
   // Fill command fields
   cmd.header.stamp = now();
