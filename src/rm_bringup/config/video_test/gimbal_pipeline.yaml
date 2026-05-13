@@ -292,8 +292,64 @@ gimbal_pipeline:
           max_dza_jump: 0.03
       ukf_v2:
         enabled: true
+        force_rotation_ca: false
+        dual_raw_batch: true
+        sigma_pos_xy: 0.06
+        sigma_pos_z: 0.08
+        sigma_yaw: 0.12
+        dual_raw_R_scale: 1.5
+        gate:
+          single_total_nis: 25.0
+          single_pos_chi2: 16.0
+          single_yaw_chi2: 9.0
+          dual_total_nis: 45.0
+          dual_each_pos_chi2: 16.0
+          dual_each_yaw_chi2: 9.0
+        single_update:
+          structural_gain_r: 0.01
+          structural_gain_dza: 0.01
+        dual_update:
+          structural_gain_r: 0.05
+          structural_gain_dza: 0.02
+        posterior_sanity:
+          max_center_jump: 0.25
+          max_yaw_jump: 0.80
+          min_r: 0.05
+          max_r: 0.50
+          max_r_jump: 0.05
+          min_dza: 0.0
+          max_dza: 0.15
+          max_dza_jump: 0.03
       inekf:
         enabled: true
+        force_rotation_ca: false
+        dual_raw_batch: true
+        sigma_pos_xy: 0.06
+        sigma_pos_z: 0.08
+        sigma_yaw: 0.12
+        dual_raw_R_scale: 1.5
+        gate:
+          single_total_nis: 25.0
+          single_pos_chi2: 16.0
+          single_yaw_chi2: 9.0
+          dual_total_nis: 45.0
+          dual_each_pos_chi2: 16.0
+          dual_each_yaw_chi2: 9.0
+        single_update:
+          structural_gain_r: 0.01
+          structural_gain_dza: 0.01
+        dual_update:
+          structural_gain_r: 0.05
+          structural_gain_dza: 0.02
+        posterior_sanity:
+          max_center_jump: 0.25
+          max_yaw_jump: 0.80
+          min_r: 0.05
+          max_r: 0.50
+          max_r_jump: 0.05
+          min_dza: 0.0
+          max_dza: 0.15
+          max_dza_jump: 0.03
       slow_structure:
         enable: true                # 是否启用慢结构滤波（建议 true）
 
