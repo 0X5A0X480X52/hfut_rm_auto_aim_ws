@@ -11,12 +11,12 @@ gimbal_pipeline:
     source_frame: "camera_optical_frame" # 观测输入坐标系
     visualization_frame: "odom"          # 可视化 marker 坐标系
     predict_rate: 100.0                   # 预测/更新频率(Hz)
-    tracker_timeout: 0.50                # 观测超时(s)
+    tracker_timeout: 1.50                # 观测超时(s)
     debug_mode: true                     # 调试日志与可视化
     enable_oscillation_detection: false  # 跟踪抖动检测
     default_r1: 0.15                     # 初始半径1(m)
     default_r2: 0.20                     # 初始半径2(m)
-    default_dza: 0.0                     # 初始高低板差(m)
+    default_dza: 0.02                     # 初始高低板差(m)
     robot_description:
       strict_unknown_reject: true        # 严格拒绝未知 robot_id
       default_projection_mode: "yaw_plane" # yaw_plane | full_se3
@@ -103,7 +103,7 @@ gimbal_pipeline:
         jpeg_quality: 70     # JPEG质量(20~100), 越小带宽越低
       implementation: "norm4_v2" # 非 outpost 目标: "adaptive" | "norm4"
       tracking_thres: 2          # 连续命中多少帧进入TRACKING
-      lost_thres: 4              # 连续丢失多少帧进入LOST
+      lost_thres: 15              # 连续丢失多少帧进入LOST
       temp_lost_thres: 3         # 连续丢失多少帧进入TEMP_LOST
       max_match_distance: 2.0    # 关联距离门限(m)，过小漏绑，过大错绑
       max_match_yaw_diff: 1.0    # 关联yaw门限(rad)
@@ -229,25 +229,25 @@ gimbal_pipeline:
       enable_2d_tracker: true
       enable_proxy_manager: true
       backend_config:
-        backend_type: "inekf"  # ukf_v1 | ukf_v2 | inekf
+        backend_type: "inekf"
         motion_profile: "package://gimbal_pipeline/config/norm4_v3/profiles/motion/default.yaml"
-        noise_profile: "package://gimbal_pipeline/config/norm4_v3/profiles/noise/default.yaml"
+        noise_profile: "package://gimbal_pipeline/config/norm4_v3/profiles/noise/ypd_ba_low_weight.yaml"
         structure_profile: "slow"
         enable_shadow_mode: true
         shadow_convergence_frames: 30
       inekf_runtime:
         motion_profile: "ca"  # default|cv|ca|singer|yaw_ca|<motion_profile.yaml路径>
-        noise_profile: "package://gimbal_pipeline/config/norm4_v3/profiles/noise/ypd_ba_low_weight.yaml"
+        noise_profile: "package://gimbal_pipeline/config/norm4_v3/profiles/noise/default.yaml"
         structure_profile: "slow"  # slow|snapshot
-        translation_model: "CA"    # ""=继承全局 motion.translation_model
-        cv_process_noise_vel: 1.0
-        ca_process_noise_acc: 1.0
+        translation_model: ""    # ""=继承全局 motion.translation_model
+        cv_process_noise_vel: -1.0
+        ca_process_noise_acc: -1.0
         singer_alpha: -1.0
         singer_sigma: -1.0
-        process_noise_r: 1.0
-        process_noise_dz: 1.0
-        spin_process_noise_delta_rate: 1.0
-        spin_process_noise_delta_acc: 1.0
+        process_noise_r: -1.0
+        process_noise_dz: -1.0
+        spin_process_noise_delta_rate: -1.0
+        spin_process_noise_delta_acc: -1.0
       phase_memory:
         enable_phase_memory: true
         enable_kinematic_anti_pingpong: true
@@ -354,9 +354,9 @@ gimbal_pipeline:
         enable: true                # 是否启用慢结构滤波（建议 true）
 
         # 1) 过程噪声 Q_theta：越大=结构参数跟踪越快，但更抖；越小=更稳但收敛慢
-        q_theta_r1: 1.0e-2          # r1 随时间漂移强度；抖动大就减小，跟不上就增大
-        q_theta_r2: 1.0e-2          # r2 同上
-        q_theta_dza: 5.0e-1         # dza 建议比 r 更小（通常更稳定）
+        q_theta_r1: 1.00          # r1 随时间漂移强度；抖动大就减小，跟不上就增大
+        q_theta_r2: 1.00          # r2 同上
+        q_theta_dza: 5.0         # dza 建议比 r 更小（通常更稳定）
 
         # 2) 先验中心：结构参数先验均值（初始化和长期回拉目标）
         prior_r1: 0.15              # 小装甲半径先验
@@ -364,22 +364,22 @@ gimbal_pipeline:
         prior_dza: 0.0              # 高差先验
 
         # 3) 先验方差：越大=越不信先验；越小=更强地拉回先验
-        prior_sigma_r: 10.0         # 半径先验不确定度
-        prior_sigma_dza: 10.0       # dza 先验不确定度
+        prior_sigma_r: 0.5         # 半径先验不确定度
+        prior_sigma_dza: 0.5       # dza 先验不确定度
 
         # 4) 单板更新增益：通常保持 0（单板信息不足，避免误更新）
-        alpha_r1_single: 1.0
-        alpha_r2_single: 1.0
-        alpha_dza_single: 1.0
+        alpha_r1_single: 0.01
+        alpha_r2_single: 0.01
+        alpha_dza_single: 0.01
 
         # 5) 双板更新增益：主调参旋钮
         #    越大=收敛更快但更敏感；越小=更稳但更慢
-        alpha_r1_dual: 0.05         # 常用范围 0.02~0.10
-        alpha_r2_dual: 0.05         # 常用范围 0.02~0.10
-        alpha_dza_dual: 0.05        # dza 建议小于 r（常用 0.01~0.05）
+        alpha_r1_dual: 0.01         # 常用范围 0.02~0.10
+        alpha_r2_dual: 0.01         # 常用范围 0.02~0.10
+        alpha_dza_dual: 0.01        # dza 建议小于 r（常用 0.01~0.05）
 
         # 6) 先验回拉强度：长期防漂移，过大会“拉死”真实变化
-        prior_pull_gain: 0.0001      # 常用范围 0.0005~0.005
+        prior_pull_gain: 0.002      # 常用范围 0.0005~0.005
 
         # 7) 物理约束：硬边界，避免数值跑飞
         min_r: 0.05
@@ -390,7 +390,7 @@ gimbal_pipeline:
       hypothesis_selector:
         topk: 4
         commit_top1_only: true
-        min_top1_confidence: 0.55
+        min_top1_confidence: 0.45
         min_top1_top2_margin: 0.0
         ambiguous_margin: 1.0
         include_rejected_in_debug: true
@@ -436,7 +436,7 @@ gimbal_pipeline:
       enable_position_smooth: false
       enable_yaw_smooth: false
       enable_velocity_smooth: true
-      enable_structural_convergence: false
+      enable_structural_convergence: true
       # One-Euro 族参数：min_cutoff 控静态平滑，beta 控速度自适应，d_cutoff 控导数平滑
       pos_min_cutoff: 1.0
       pos_beta: 0.01
@@ -444,9 +444,9 @@ gimbal_pipeline:
       yaw_min_cutoff: 1.0
       yaw_beta: 0.005
       yaw_d_cutoff: 1.0
-      vel_min_cutoff: 0.0010
-      vel_beta: 0.1
-      vel_d_cutoff: 0.001
+      vel_min_cutoff: 0.10
+      vel_beta: 0.01
+      vel_d_cutoff: 1.0
       # RM 参数：initial_step大=收敛快但波动大，gamma大=后期更新更慢
       rm_initial_step: 0.5
       rm_gamma: 0.75
@@ -564,6 +564,7 @@ gimbal_pipeline:
       ambiguous_publish_single_armor_semantics: true
       ambiguous_single_armor_zero_offset: true
       ambiguous_backend_use_imm_adapter: false
+
 
     # =========================
     # 目标选择器
