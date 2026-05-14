@@ -109,12 +109,13 @@ void MpcControlStrategy::initReferenceGenerator()
 }
 
 void MpcControlStrategy::setDelayCompensation(
-  bool enable, double prediction_delay_s, double trigger_to_muzzle_s, int flight_time_iters,
-  double max_processing_delay_s)
+  bool enable, double prediction_delay_s, double trigger_to_muzzle_s,
+  bool allow_muzzle_compensation, int flight_time_iters, double max_processing_delay_s)
 {
   enable_delay_compensation_ = enable;
   prediction_delay_s_ = prediction_delay_s;
   trigger_to_muzzle_s_ = trigger_to_muzzle_s;
+  allow_muzzle_compensation_ = allow_muzzle_compensation;
   flight_time_iters_ = flight_time_iters;
   max_processing_delay_s_ = max_processing_delay_s;
 }
@@ -641,7 +642,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     enable_delay_compensation_ || (yaw_feedforward_s > 1e-6);
 
   const bool allow_muzzle_compensation =
-    enable_delay_compensation_ && trigger_to_muzzle_s_ > 1e-6;
+    enable_delay_compensation_ && allow_muzzle_compensation_ && trigger_to_muzzle_s_ > 1e-6;
   delay_management::DelayRawInputs delay_raw;
   delay_raw.current_time = context.current_time;
   delay_raw.observation_stamp = context.target_stamp;

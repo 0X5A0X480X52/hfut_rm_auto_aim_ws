@@ -57,8 +57,7 @@ private:
   enum class BurstGateState
   {
     kIdle = 0,
-    kFireCommit = 1,
-    kCooldown = 2
+    kFireCommit = 1
   };
   bool extractTrackerCovariance(
     const rm_interfaces::msg::TrackedRobot & robot,

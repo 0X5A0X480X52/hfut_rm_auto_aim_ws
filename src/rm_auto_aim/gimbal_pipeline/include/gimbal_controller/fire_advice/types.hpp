@@ -43,6 +43,10 @@ struct FireGateConfig
   double evidence_window_ms{50.0};
   double log_evidence_clip{2.0};
   double evidence_epsilon{1e-3};
+  bool neutralize_unshootable_samples{true};
+  double negative_evidence_scale{0.35};
+  double negative_clip_scale{0.35};
+  double evidence_deadband{0.10};
 
   double temperature{0.5};
   double theta_on_cold{0.90};

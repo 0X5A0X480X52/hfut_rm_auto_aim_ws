@@ -716,6 +716,7 @@ gimbal_pipeline:
         s_yaw: 0.01
         s_pitch: 0.01
         enable_delay_compensation: true
+        allow_muzzle_compensation: true
         prediction_delay_s: 0.10
         flight_time_iters: 2
         max_processing_delay_s: 0.5

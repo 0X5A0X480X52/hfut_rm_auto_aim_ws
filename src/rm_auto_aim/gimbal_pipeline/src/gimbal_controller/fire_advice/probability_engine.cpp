@@ -12,7 +12,6 @@ namespace
 
 constexpr double kGravity = 9.81;
 constexpr double kMinNorm = 1e-9;
-
 Eigen::Vector3d rotateAroundWorldZ(const Eigen::Vector3d & v, double yaw_delta)
 {
   const double c = std::cos(yaw_delta);
@@ -288,14 +287,27 @@ void ProbabilityEngine::updateGateBurstEvidence(const std::vector<double> & p_hi
   const int burst_count = std::max(1, gate_cfg_.burst_bullet_count);
   const int min_hit = std::max(1, gate_cfg_.min_hit_count);
 
-  burst_probability_ = burstProbability(p_hits, burst_count, min_hit);
-
-  const double eps = std::max(gate_cfg_.evidence_epsilon, 1e-6);
-  const double p0 = clamp(gate_cfg_.reference_probability_p0, eps, 1.0 - eps);
-  const double pb = clamp(burst_probability_, eps, 1.0 - eps);
-  log_evidence_ = std::log((pb * (1.0 - p0)) / (p0 * (1.0 - pb)));
   const double clip = std::max(gate_cfg_.log_evidence_clip, 1e-6);
-  log_evidence_ = clamp(log_evidence_, -clip, clip);
+  if (p_hits.empty()) {
+    // "Unshootable" samples are treated as neutral evidence so they do not bury later positive windows.
+    burst_probability_ = 0.0;
+    log_evidence_ = 0.0;
+  } else {
+    burst_probability_ = burstProbability(p_hits, burst_count, min_hit);
+
+    const double eps = std::max(gate_cfg_.evidence_epsilon, 1e-6);
+    const double p0 = clamp(gate_cfg_.reference_probability_p0, eps, 1.0 - eps);
+    const double pb = clamp(burst_probability_, eps, 1.0 - eps);
+    const double raw_log_evidence =
+      std::log((pb * (1.0 - p0)) / (p0 * (1.0 - pb)));
+    const double neg_clip = std::max(clip * std::max(gate_cfg_.negative_clip_scale, 0.0), 1e-6);
+    log_evidence_ = raw_log_evidence >= 0.0 ?
+      clamp(raw_log_evidence, 0.0, clip) :
+      clamp(raw_log_evidence, -neg_clip, 0.0) * std::max(gate_cfg_.negative_evidence_scale, 0.0);
+    if (std::abs(log_evidence_) < std::max(gate_cfg_.evidence_deadband, 0.0)) {
+      log_evidence_ = 0.0;
+    }
+  }
 
   const double window_s = std::max(gate_cfg_.evidence_window_ms, 0.0) * 1e-3;
   const int max_size = std::max(1, static_cast<int>(std::round(window_s / dt)));
@@ -322,12 +334,7 @@ void ProbabilityEngine::updateGateBurstEvidence(const std::vector<double> & p_hi
     gate_cfg_.theta_hold_cold - (gate_cfg_.theta_hold_cold - gate_cfg_.theta_hold_hot) * T,
     0.0,
     1.0);
-  const double theta_reset = clamp(
-    gate_cfg_.theta_reset_cold - (gate_cfg_.theta_reset_cold - gate_cfg_.theta_reset_hot) * T,
-    0.0,
-    1.0);
   const double min_fire_s = std::max(gate_cfg_.min_fire_ms, 0.0) * 1e-3;
-  const double cooldown_s = std::max(gate_cfg_.cooldown_ms, 0.0) * 1e-3;
 
   switch (burst_state_) {
     case BurstGateState::kIdle:
@@ -345,21 +352,9 @@ void ProbabilityEngine::updateGateBurstEvidence(const std::vector<double> & p_hi
       burst_state_time_s_ += dt;
       if (burst_state_time_s_ >= min_fire_s) {
         if (evidence_strength_ < theta_hold) {
-          burst_state_ = BurstGateState::kCooldown;
-          burst_state_time_s_ = 0.0;
-          fire_state_ = false;
-        }
-      }
-      break;
-    case BurstGateState::kCooldown:
-      fire_state_ = false;
-      burst_state_time_s_ += dt;
-      if (burst_state_time_s_ >= cooldown_s) {
-        if (evidence_strength_ <= theta_reset) {
           burst_state_ = BurstGateState::kIdle;
           burst_state_time_s_ = 0.0;
-        } else {
-          burst_state_time_s_ = cooldown_s;
+          fire_state_ = false;
         }
       }
       break;
@@ -546,16 +541,15 @@ ProbabilityDebugResult ProbabilityEngine::evaluate(
         normal_gate_pass = false;
       }
     }
-    if (!normal_gate_pass) {
-      p_hit = 0.0;
-    }
-
     double normal_weight = 1.0;
     if (normal_gate_pass && cfg_.enable_normal_velocity_weight) {
       const double v_ref = std::max(cfg_.normal_v_ref, 1e-3);
       const double w_min = clamp(cfg_.normal_w_min, 0.0, 1.0);
       normal_weight = clamp(normal_velocity / v_ref, w_min, 1.0);
       p_hit *= normal_weight;
+    }
+    if (!normal_gate_pass) {
+      p_hit = 0.0;
     }
 
     TauDebugSample s;
@@ -574,7 +568,9 @@ ProbabilityDebugResult ProbabilityEngine::evaluate(
     s.impact_y = p3.y();
     s.impact_z = p3.z();
     out.tau_samples.push_back(s);
-    p_hits.push_back(p_hit);
+    if (normal_gate_pass || !gate_cfg_.neutralize_unshootable_samples) {
+      p_hits.push_back(p_hit);
+    }
 
     if (p_hit > best_p) {
       best_p = p_hit;

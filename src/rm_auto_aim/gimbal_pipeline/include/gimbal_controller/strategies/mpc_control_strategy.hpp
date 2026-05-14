@@ -74,12 +74,13 @@ public:
    * @param enable 是否启用延时补偿版本的参考轨迹生成
    * @param prediction_delay_s 额外预测延迟 (秒)
    * @param trigger_to_muzzle_s 从触发开火到子弹出膛的延迟 (秒)
+   * @param allow_muzzle_compensation 是否将 trigger_to_muzzle_s 纳入 MPC 参考前瞻
    * @param flight_time_iters 飞行时间迭代次数
    * @param max_processing_delay_s 最大允许的 processing_delay 上限 (秒)，超出则被截断
    */
   void setDelayCompensation(
-    bool enable, double prediction_delay_s, double trigger_to_muzzle_s, int flight_time_iters,
-    double max_processing_delay_s);
+    bool enable, double prediction_delay_s, double trigger_to_muzzle_s,
+    bool allow_muzzle_compensation, int flight_time_iters, double max_processing_delay_s);
 
   /**
    * @brief 设置 yaw 速度前馈参数
@@ -342,6 +343,7 @@ private:
   bool enable_delay_compensation_{false};
   double prediction_delay_s_{0.0};
   double trigger_to_muzzle_s_{0.0};
+  bool allow_muzzle_compensation_{true};
   int flight_time_iters_{2};
   double max_processing_delay_s_{0.5};  // processing_delay 上限 (秒)
   double yaw_feedforward_k_s_{0.0};     // yaw 速度前馈等效前瞻时间 (秒)

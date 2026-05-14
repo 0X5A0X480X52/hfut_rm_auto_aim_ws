@@ -567,6 +567,14 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     get_parameter("controller.fire.probability.evidence.log_clip").as_double();
   const double fire_probability_evidence_epsilon =
     get_parameter("controller.fire.probability.evidence.epsilon").as_double();
+  const bool fire_probability_neutralize_unshootable_samples =
+    get_parameter("controller.fire.probability.evidence.neutralize_unshootable_samples").as_bool();
+  const double fire_probability_negative_evidence_scale =
+    get_parameter("controller.fire.probability.evidence.negative_evidence_scale").as_double();
+  const double fire_probability_negative_clip_scale =
+    get_parameter("controller.fire.probability.evidence.negative_clip_scale").as_double();
+  const double fire_probability_evidence_deadband =
+    get_parameter("controller.fire.probability.evidence.deadband").as_double();
   const double fire_probability_temperature =
     get_parameter("controller.fire.probability.temperature.value").as_double();
   const double fire_probability_theta_on_cold =
@@ -795,6 +803,10 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     gate_cfg.evidence_window_ms = std::max(fire_probability_evidence_window_ms, 0.0);
     gate_cfg.log_evidence_clip = fire_probability_evidence_log_clip;
     gate_cfg.evidence_epsilon = fire_probability_evidence_epsilon;
+    gate_cfg.neutralize_unshootable_samples = fire_probability_neutralize_unshootable_samples;
+    gate_cfg.negative_evidence_scale = fire_probability_negative_evidence_scale;
+    gate_cfg.negative_clip_scale = fire_probability_negative_clip_scale;
+    gate_cfg.evidence_deadband = fire_probability_evidence_deadband;
     gate_cfg.temperature = fire_probability_temperature;
     gate_cfg.theta_on_cold = fire_probability_theta_on_cold;
     gate_cfg.theta_on_hot = fire_probability_theta_on_hot;
@@ -1706,6 +1718,10 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.fire.probability.evidence.window_ms", 50.0);
   declare_parameter("controller.fire.probability.evidence.log_clip", 2.0);
   declare_parameter("controller.fire.probability.evidence.epsilon", 1e-3);
+  declare_parameter("controller.fire.probability.evidence.neutralize_unshootable_samples", true);
+  declare_parameter("controller.fire.probability.evidence.negative_evidence_scale", 0.35);
+  declare_parameter("controller.fire.probability.evidence.negative_clip_scale", 0.35);
+  declare_parameter("controller.fire.probability.evidence.deadband", 0.10);
   declare_parameter("controller.fire.probability.temperature.value", 0.5);
   declare_parameter("controller.fire.probability.temperature.theta_on_cold", 0.90);
   declare_parameter("controller.fire.probability.temperature.theta_on_hot", 0.75);
@@ -1773,6 +1789,7 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
 
   // MPC delay compensation
   declare_parameter("controller.mpc.enable_delay_compensation", false);
+  declare_parameter("controller.mpc.allow_muzzle_compensation", true);
   declare_parameter("controller.mpc.prediction_delay_s", 0.0);
   declare_parameter("controller.mpc.flight_time_iters", 2);
   declare_parameter("controller.mpc.max_processing_delay_s", 0.5);
@@ -3515,6 +3532,8 @@ void GimbalPipelineNode::initGimbalStrategies() {
     });
   const bool mpc_enable_delay_compensation = readCompatBoolParameter(
     *this, "controller.mpc.enable_delay_compensation", "mpc.enable_delay_compensation");
+  const bool mpc_allow_muzzle_compensation =
+    get_parameter("controller.mpc.allow_muzzle_compensation").as_bool();
   const double mpc_prediction_delay_s = readUnifiedDoubleParameter(
     *this,
     "controller.delay.prediction_extra_s",
@@ -3565,6 +3584,7 @@ void GimbalPipelineNode::initGimbalStrategies() {
     mpc_enable_delay_compensation,
     mpc_prediction_delay_s,
     mpc_trigger_to_muzzle_s,
+    mpc_allow_muzzle_compensation,
     mpc_flight_time_iters,
     mpc_max_processing_delay_s);
   mpc_s->setYawFeedforward(

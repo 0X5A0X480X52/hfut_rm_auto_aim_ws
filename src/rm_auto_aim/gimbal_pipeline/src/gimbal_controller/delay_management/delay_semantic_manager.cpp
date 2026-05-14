@@ -92,7 +92,6 @@ MpcDelayResult DelaySemanticManager::computeMpcDelay(
   const double control_latency = timeline.control_latency_s;
 
   result.processing_delay_s = timeline.processing_delay_s;
-  result.base_reference_delay_s = timeline.processing_delay_s + timeline.prediction_delay_s;
   result.control_latency_s = control_latency;
   result.uses_delayed_b = use_delayed_b;
 
@@ -104,6 +103,9 @@ MpcDelayResult DelaySemanticManager::computeMpcDelay(
 
   result.fire_control_compensation_s =
     allow_muzzle_compensation ? timeline.muzzle_delay_s : 0.0;
+  result.base_reference_delay_s =
+    timeline.processing_delay_s + timeline.prediction_delay_s +
+    result.fire_control_compensation_s;
 
   return result;
 }

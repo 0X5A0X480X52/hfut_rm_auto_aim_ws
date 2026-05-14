@@ -676,19 +676,19 @@ gimbal_pipeline:
           # 参数组建议：
           # - 先调窗口(future_window/step)，再调融合(softmax/window_fusion)，最后调门控(gate.*)
           enable: true
-          future_window_ms: 1.0 # 预测窗口长度(ms)
-          future_step_ms: 0.10   # 采样步长(ms)
-          window_fusion: "max"
-          softmax_beta: 20.0     # 结果尖锐度，越大越“赢家通吃”
-          use_tracker_covariance: false # 是否使用跟踪器协方差，启用后会考虑不确定性做更保守的概率估计
-          strict_covariance: false # true时协方差缺失会更保守
+          future_window_ms: 50.0          # 未来窗口长度(ms)，越大越容易抓住短暂可打时刻
+          future_step_ms: 1.0            # tau 采样步长(ms)，当前代码最小按 1ms 生效
+          window_fusion: "max"           # "max" | "softmax"，max 更激进，softmax 更平滑
+          softmax_beta: 20.0             # softmax 融合尖锐度，越大越接近 max
+          use_tracker_covariance: false  # 是否引入跟踪器协方差，打开后通常更保守
+          strict_covariance: false       # 打开后协方差缺失会直接走保守路径
           fallback_sigma_x: 0.02
           fallback_sigma_y: 0.02
           fallback_sigma_z: 0.03
-          ballistic_sigma_x0: 0.010
+          ballistic_sigma_x0: 0.010      # 弹道基准散布 sigma_x (m)
           ballistic_sigma_y0: 0.015
           ballistic_sigma_z0: 0.015
-          ballistic_growth_x: 0.003
+          ballistic_growth_x: 0.003      # 散布随飞行时间增长系数
           ballistic_growth_y: 0.006
           ballistic_growth_z: 0.008
 
@@ -718,14 +718,46 @@ gimbal_pipeline:
             kappa: 0.0
 
           gate:
-            # 输出门控：lowpass更平滑，integrator更“记忆化”
-            mode: "lowpass"
-            alpha: 0.85
-            fire_on_th: 0.65
-            fire_off_th: 0.35
-            integrator_base_probability: 0.45
-            integrator_rise: 8.0
-            integrator_fall: 6.0
+            # 输出门控主模式：legacy 更接近传统平滑阈值；burst_evidence 更适合短窗口确认
+            strategy: "burst_evidence"           # "legacy" | "burst_evidence"
+            mode: "lowpass"              # legacy 下可选 "lowpass" | "integrator"
+            alpha: 0.85                  # legacy/lowpass 平滑系数，越大越稳但更慢
+            fire_on_th: 0.65             # legacy 开火阈值
+            fire_off_th: 0.35            # legacy 关火阈值，需与 fire_on_th 保持回差
+            integrator_base_probability: 0.45 # legacy/integrator 的平衡点
+            integrator_rise: 8.0         # legacy/integrator 上升速度
+            integrator_fall: 6.0         # legacy/integrator 下降速度
+
+          burst:
+            # burst_evidence 下的“连发命中”聚合设置
+            burst_bullet_count: 3        # 参与 burst 概率聚合的弹丸数量
+            min_hit_count: 1             # 至少命中几发才算 burst 成立
+
+          evidence:
+            # burst_evidence 下的证据生成与弱化参数
+            reference_probability_p0: 0.90   # 参考命中概率，pb > p0 才更容易形成正证据
+            window_ms: 50.0                  # 证据滑窗长度(ms)，越长越稳但更容易拖慢响应
+            log_clip: 2.0                    # 正证据最大对数强度
+            epsilon: 0.001                   # log-odds 数值保护项
+            neutralize_unshootable_samples: true # 不可打面记中性样本，不累计负证据
+            negative_evidence_scale: 0.30    # 负证据缩放，越小越不容易被负证据压死
+            negative_clip_scale: 0.30        # 负证据 clip 相对正证据的比例
+            deadband: 0.10                   # 小证据死区，低于该值直接按 0 处理
+
+          temperature:
+            # burst_evidence 两态门控阈值插值参数
+            value: 0.7                       # 0=更冷更严格，1=更热更容易触发
+            theta_on_cold: 0.90              # 冷态 Idle->FireCommit 阈值
+            theta_on_hot: 0.75               # 热态 Idle->FireCommit 阈值
+            theta_hold_cold: 0.70            # 冷态 FireCommit 保持阈值
+            theta_hold_hot: 0.55             # 热态 FireCommit 保持阈值
+            theta_reset_cold: 0.45           # 兼容旧 cooldown 逻辑，当前两态 gate 不使用
+            theta_reset_hot: 0.35            # 兼容旧 cooldown 逻辑，当前两态 gate 不使用
+
+          commit:
+            # burst_evidence 两态门控最短保持时间
+            min_fire_ms: 100.0                # 触发后最短开火保持时长(ms)
+            cooldown_ms: 0.0                # 兼容旧 cooldown 逻辑，当前两态 gate 不使用
 
         visualization:
           enable: true
