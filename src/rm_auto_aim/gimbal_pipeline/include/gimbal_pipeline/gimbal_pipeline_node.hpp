@@ -334,6 +334,7 @@ class GimbalPipelineNode : public rclcpp::Node {
   // Blind candidate selection strategy (configurable, keyed by name)
   std::unordered_map<std::string, BlindSelectionFunc> blind_selection_strategies_;
   std::string blind_selection_strategy_name_{"min_yaw"};
+  std::vector<std::string> blind_ignore_ids_;
 
   // Publishers
   rclcpp::Publisher<rm_interfaces::msg::GimbalCmd>::SharedPtr gimbal_cmd_pub_;

@@ -957,6 +957,8 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       std::vector<std::string>{"/blind_camera_1/blinds"});
   blind_sync_timeout_ = declare_parameter("blind.sync_timeout", 0.05);
   blind_selection_strategy_name_ = declare_parameter("blind.selector.strategy", "min_yaw");
+  blind_ignore_ids_ = declare_parameter("blind.ignore_ids",
+      std::vector<std::string>{"outpost", "base"});
 
   for (const auto &topic : blind_topics_) {
     if (topic.empty()) continue;
@@ -4096,6 +4098,17 @@ rm_interfaces::msg::Blind::SharedPtr GimbalPipelineNode::collectBlindCandidates(
     for (const auto &b : msg->blinds) {
       fresh_blinds.push_back(std::make_shared<rm_interfaces::msg::Blind>(b));
     }
+  }
+
+  // 过滤掉 blind.ignore_ids 中指定的目标 ID（如前哨站/基地，不参与补盲）
+  if (!blind_ignore_ids_.empty()) {
+    fresh_blinds.erase(
+        std::remove_if(fresh_blinds.begin(), fresh_blinds.end(),
+            [&](const rm_interfaces::msg::Blind::SharedPtr &b) {
+              return std::find(blind_ignore_ids_.begin(), blind_ignore_ids_.end(),
+                               b->number) != blind_ignore_ids_.end();
+            }),
+        fresh_blinds.end());
   }
 
   if (fresh_blinds.empty()) return nullptr;

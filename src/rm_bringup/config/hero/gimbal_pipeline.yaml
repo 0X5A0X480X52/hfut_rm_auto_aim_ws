@@ -556,6 +556,23 @@ gimbal_pipeline:
       sticky_lock_frames: 3
       sticky_lost_frames: 3
 
+      # 补盲相机配置
+      main_camera_frame: "camera_optical_frame"
+      guidance_end_yaw_threshold: 5.0  # 引导结束的 yaw deviation 阈值（度）
+      enable_guidance_timeout: false   # 是否启用引导超时检测
+      blind_target_timeout: 1.3        # 补盲目标消失超时（秒）
+
+    # 补盲相机话题由 launch 文件统一配置
+    blind:
+      sync_timeout: 0.05
+      # 补盲忽略的目标 ID 列表：不参与补盲引导
+      # 默认忽略前哨站和基地（它们要么是静止防御目标，由主相机处理）
+      ignore_ids: ["outpost", "base"]
+      # 补盲目标选择策略: "min_yaw" — 选择 yaw 偏差绝对值最小的目标
+      #                  "closest" - 选择最近的目标
+      selector:
+        strategy: "min_yaw"
+
     # =========================
     # 控制器
     # 调试建议：
