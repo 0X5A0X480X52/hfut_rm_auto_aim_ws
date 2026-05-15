@@ -180,6 +180,10 @@ protected:
    * @return Normalized angle (rad)
    */
   double normalizeAngle(double angle) const;
+
+  const TrackedRobot* findRobotById(
+      const std::vector<const TrackedRobot*>& candidates,
+      const std::string& robot_id) const;
 };
 
 // Smart pointer type for strategies

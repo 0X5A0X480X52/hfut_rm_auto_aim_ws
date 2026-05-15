@@ -16,3 +16,4 @@ float32 chassis_wz
 uint16 friend_average_blood
 OperatorCommand operator_command
 bool auto_aim_is_on
+bool attack_outpost_first

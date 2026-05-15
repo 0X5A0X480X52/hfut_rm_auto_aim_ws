@@ -934,6 +934,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
       "serial/receive", rclcpp::SensorDataQoS(),
       [&](rm_interfaces::msg::SerialReceiveData::SharedPtr msg) {
         auto_aim_is_on_.store(msg->auto_aim_is_on);
+        attack_outpost_first_.store(msg->attack_outpost_first);
       }
   );
 
@@ -3408,17 +3409,8 @@ rm_interfaces::msg::TrackedRobot GimbalPipelineNode::buildTrackedRobotMessage(
 /* ================================================================ */
 
 void GimbalPipelineNode::initSelectionStrategy() {
-  if (selector_strategy_name_ == "min_yaw_deviation") {
-    selection_strategy_ = std::make_unique<MinYawDeviationStrategy>();
-  } else if (selector_strategy_name_ == "priority_list") {
-    selection_strategy_ = std::make_unique<PriorityListStrategy>();
-  } else if (selector_strategy_name_ == "sticky_min_yaw_deviation") {
-    selection_strategy_ = std::make_unique<StickyMinYawDeviationStrategy>();
-  } else {
-    RCLCPP_WARN(get_logger(), "Unknown selector strategy '%s', using min_yaw_deviation",
-                selector_strategy_name_.c_str());
-    selection_strategy_ = std::make_unique<MinYawDeviationStrategy>();
-  }
+  selection_strategy_ = SelectionStrategyFactory::create(
+      selector_strategy_name_, &attack_outpost_first_);
   RCLCPP_INFO(get_logger(), "Selection strategy: %s",
               selection_strategy_->getName().c_str());
 }

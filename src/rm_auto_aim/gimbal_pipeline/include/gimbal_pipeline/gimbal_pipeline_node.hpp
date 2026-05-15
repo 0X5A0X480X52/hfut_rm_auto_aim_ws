@@ -54,9 +54,7 @@
 
 // ─── target_selector internals ────────────────────────────────
 #include "target_selector/selection_strategy.hpp"
-#include "target_selector/strategies/min_yaw_deviation_strategy.hpp"
-#include "target_selector/strategies/priority_list_strategy.hpp"
-#include "target_selector/strategies/sticky_min_yaw_deviation_strategy.hpp"
+#include "target_selector/selection_strategy_factory.hpp"
 
 // ─── prediction logger ────────────────────────────────────────
 #include "gimbal_pipeline/prediction_logger.hpp"
@@ -280,6 +278,7 @@ class GimbalPipelineNode : public rclcpp::Node {
 
   bool enable_blind_{true};
   std::atomic_bool auto_aim_is_on_{false};
+  std::atomic_bool attack_outpost_first_{false};
 
   double current_yaw_{0.0};
   double current_pitch_{0.0};

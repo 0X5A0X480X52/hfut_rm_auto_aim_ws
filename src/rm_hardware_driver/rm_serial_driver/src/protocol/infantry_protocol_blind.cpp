@@ -46,6 +46,7 @@ bool ProtocolInfantryBlind::receive(rm_interfaces::msg::SerialReceiveData &data)
     char auto_aim_is_on;
     packet.unloadData(auto_aim_is_on, 14);
     data.auto_aim_is_on = auto_aim_is_on == 1;
+    packet.unloadData(data.attack_outpost_first, 15);
     return true;
   } else {
     return false;

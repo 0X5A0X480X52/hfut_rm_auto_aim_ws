@@ -40,10 +40,6 @@ class StickyMinYawDeviationStrategy : public SelectionStrategy {
   }
 
  private:
-  const TrackedRobot* findRobotById(
-      const std::vector<const TrackedRobot*>& candidates,
-      const std::string& robot_id) const;
-
   MinYawDeviationStrategy base_strategy_;
   std::string preferred_target_id_;
   std::string lock_candidate_id_;

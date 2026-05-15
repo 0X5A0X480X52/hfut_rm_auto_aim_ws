@@ -72,16 +72,6 @@ private:
     const std::vector<const TrackedRobot*>& candidates,
     double reference_yaw) const;
 
-  /**
-   * @brief Check if current target should be kept (hysteresis)
-   * 
-   * @param candidates Filtered candidates
-   * @param current_target_id Currently locked target ID
-   * @param best_candidate Best new candidate
-   * @param reference_yaw Reference yaw
-   * @param hysteresis_threshold Threshold for switching
-   * @return true if should keep current target
-   */
   bool shouldKeepCurrentTarget(
     const std::vector<const TrackedRobot*>& candidates,
     const std::string& current_target_id,
@@ -89,12 +79,6 @@ private:
     double reference_yaw,
     double hysteresis_threshold) const;
 
-  /**
-   * @brief Find robot by ID in candidates list
-   */
-  const TrackedRobot* findRobotById(
-    const std::vector<const TrackedRobot*>& candidates,
-    const std::string& robot_id) const;
 };
 
 }  // namespace fyt::auto_aim

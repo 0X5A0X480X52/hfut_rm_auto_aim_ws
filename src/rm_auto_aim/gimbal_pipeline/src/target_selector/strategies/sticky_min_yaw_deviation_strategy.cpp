@@ -76,15 +76,4 @@ std::optional<SelectionResult> StickyMinYawDeviationStrategy::selectTarget(
   return base_result;
 }
 
-const StickyMinYawDeviationStrategy::TrackedRobot* StickyMinYawDeviationStrategy::findRobotById(
-    const std::vector<const TrackedRobot*>& candidates,
-    const std::string& robot_id) const {
-  for (const auto* robot : candidates) {
-    if (robot->robot_id == robot_id) {
-      return robot;
-    }
-  }
-  return nullptr;
-}
-
 }  // namespace fyt::auto_aim

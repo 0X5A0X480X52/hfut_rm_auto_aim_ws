@@ -96,4 +96,15 @@ double SelectionStrategy::normalizeAngle(double angle) const {
   return angle;
 }
 
+const SelectionStrategy::TrackedRobot* SelectionStrategy::findRobotById(
+    const std::vector<const TrackedRobot*>& candidates,
+    const std::string& robot_id) const {
+  for (const auto* robot : candidates) {
+    if (robot->robot_id == robot_id) {
+      return robot;
+    }
+  }
+  return nullptr;
+}
+
 }  // namespace fyt::auto_aim

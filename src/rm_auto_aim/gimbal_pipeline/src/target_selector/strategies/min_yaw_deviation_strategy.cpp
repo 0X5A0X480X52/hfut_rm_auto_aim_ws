@@ -133,18 +133,4 @@ bool MinYawDeviationStrategy::shouldKeepCurrentTarget(
   
   return best_deviation > threshold;
 }
-
-const MinYawDeviationStrategy::TrackedRobot* 
-MinYawDeviationStrategy::findRobotById(
-    const std::vector<const TrackedRobot*>& candidates,
-    const std::string& robot_id) const {
-  
-  for (const auto* robot : candidates) {
-    if (robot->robot_id == robot_id) {
-      return robot;
-    }
-  }
-  return nullptr;
-}
-
 }  // namespace fyt::auto_aim

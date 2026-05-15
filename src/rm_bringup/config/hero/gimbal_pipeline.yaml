@@ -636,7 +636,7 @@ gimbal_pipeline:
       # 开火决策与命中概率
       # 调试建议：先在 probability.enable=false 下稳定跟踪，再逐步打开概率模块
       fire:
-        trigger_to_muzzle_s: 0.0
+        trigger_to_muzzle_s: 0.0  # 优先级高于delay.trigger_to_muzzle_s ？
         decision_policy: "axis_threshold"
         flight_time_iters: 2
         facing_filter_opening_angle_deg: 30.0
