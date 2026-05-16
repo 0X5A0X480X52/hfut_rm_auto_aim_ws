@@ -4,7 +4,7 @@ motion:
     translation_model: ca
     rotation_model: ca
     translation:
-      cv_process_noise_vel: 0.5
+      cv_process_noise_vel: 2.5
       ca_process_noise_acc: 1.0
       singer_alpha: 10.0
       singer_sigma: 1.0
