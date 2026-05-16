@@ -23,10 +23,12 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <deque>
 #include <queue>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <array>
 // project
 #include "rm_serial_driver/fixed_packet.hpp"
 #include "rm_serial_driver/transporter_interface.hpp"
@@ -60,16 +62,15 @@ public:
   std::string getErrorMessage() { return transporter_->errorMessage(); }
 
 private:
-  bool checkPacket(uint8_t *tmp_buffer, int recv_len);
-  uint8_t crc8_ccitt(uint8_t *data);
+  bool checkPacket(std::deque<uint8_t> &rx_buffer, FixedPacket<capacity> &packet);
+  uint8_t crc8_ccitt(const uint8_t *data);
   bool simpleSendPacket(const FixedPacket<capacity> &packet);
 
 private:
   std::shared_ptr<TransporterInterface> transporter_;
   // data
-  uint8_t tmp_buffer_[capacity];       // NOLINT
-  uint8_t recv_buffer_[capacity * 2];  // NOLINT
-  int recv_buf_len_;
+  uint8_t tmp_buffer_[capacity];  // NOLINT
+  std::deque<uint8_t> rx_buffer_;
   // for realtime sending
   bool use_realtime_send_{false};
   bool use_data_print_{false};
@@ -80,7 +81,7 @@ private:
 
 //CRC校验计算
 template <int capacity>
-uint8_t FixedPacketTool<capacity>::crc8_ccitt(uint8_t *data) {
+uint8_t FixedPacketTool<capacity>::crc8_ccitt(const uint8_t *data) {
   static uint8_t sht75_crc_table[] =
     {
         0, 49, 98, 83, 196, 245, 166, 151, 185, 136, 219, 234, 125, 76, 31, 46,
@@ -113,23 +114,44 @@ uint8_t FixedPacketTool<capacity>::crc8_ccitt(uint8_t *data) {
 }
 
 template <int capacity>
-bool FixedPacketTool<capacity>::checkPacket(uint8_t *buffer, int recv_len) {
-  // 检查长度
-  if (recv_len != capacity) {
-    FYT_WARN("serial_driver", "checkPacket Failed: recv_len != capacity");
-    return false;
+bool FixedPacketTool<capacity>::checkPacket(
+  std::deque<uint8_t> &rx_buffer, FixedPacket<capacity> &packet) {
+  constexpr uint8_t HEAD = 0xFF;
+  constexpr uint8_t TAIL = 0x0D;
+
+  while (rx_buffer.size() >= capacity) {
+    // 丢弃帧头前的无效字节，便于从错位状态恢复
+    while (!rx_buffer.empty() && rx_buffer.front() != HEAD) {
+      rx_buffer.pop_front();
+    }
+
+    if (rx_buffer.size() < capacity) {
+      return false;
+    }
+
+    std::array<uint8_t, capacity> candidate{};
+    for (int i = 0; i < capacity; ++i) {
+      candidate[i] = rx_buffer[static_cast<size_t>(i)];
+    }
+
+    if (candidate[capacity - 1] != TAIL) {
+      rx_buffer.pop_front();
+      continue;
+    }
+
+    if (crc8_ccitt(candidate.data()) != candidate[capacity - 2]) {
+      rx_buffer.pop_front();
+      continue;
+    }
+
+    packet.copyFrom(candidate.data());
+    for (int i = 0; i < capacity; ++i) {
+      rx_buffer.pop_front();
+    }
+    return true;
   }
-  // 检查帧头，帧尾,
-  if ((buffer[0] != 0xff) || (buffer[capacity - 1] != 0x0d)) {
-    FYT_WARN("serial_driver", "checkPacket Failed: error head or tail");
-    return false;
-  }
-  // TODO(gezp): 检查check_byte(buffer[capacity-2]),可采用异或校验(BCC)
-  if (crc8_ccitt(buffer) != buffer[capacity-2]) {
-    FYT_WARN("serial_driver", "checkPacket Failed: CRC failed");
-    return false;
-  }
-  return true;
+
+  return false;
 }
 
 template <int capacity>
@@ -206,40 +228,18 @@ bool FixedPacketTool<capacity>::recvPacket(FixedPacket<capacity> &packet) {
       std::cout << "\n";
     }
 
-    // check packet
-    if (checkPacket(tmp_buffer_, recv_len)) {
-      packet.copyFrom(tmp_buffer_);
-      return true;
-    } else {
-      // 如果是断帧，拼接缓存，并遍历校验，获得合法数据
-      FYT_INFO("serial_driver", "checkPacket() failed, check if it is a broken frame");
-      if (recv_buf_len_ + recv_len > capacity * 2) {
-        recv_buf_len_ = 0;
-      }
-      // 拼接缓存
-      memcpy(recv_buffer_ + recv_buf_len_, tmp_buffer_, recv_len);
-      recv_buf_len_ = recv_buf_len_ + recv_len;
-      // 遍历校验
-      for (int i = 0; (i + capacity) <= recv_buf_len_; i++) {
-        if (checkPacket(recv_buffer_ + i, capacity)) {
-          packet.copyFrom(recv_buffer_ + i);
-          // 读取一帧后，更新接收缓存
-          int k = 0;
-          for (int j = i + capacity; j < recv_buf_len_; j++, k++) {
-            recv_buffer_[k] = recv_buffer_[j];
-          }
-          recv_buf_len_ = k;
-          return true;
-        }
-      }
-      // 表明断帧，或错误帧。
-      FYT_WARN("serial_driver",
-               "checkPacket() failed with recv_len:{}, frame head:{}, frame end:{}",
-               recv_len,
-               tmp_buffer_[0],
-               tmp_buffer_[recv_len - 1]);
+    for (int i = 0; i < recv_len; ++i) {
+      rx_buffer_.push_back(tmp_buffer_[i]);
+    }
+
+    constexpr size_t MAX_RX_BUFFER_SIZE = capacity * 16;
+    if (rx_buffer_.size() > MAX_RX_BUFFER_SIZE) {
+      FYT_WARN("serial_driver", "rx_buffer_ overflow, clear buffer");
+      rx_buffer_.clear();
       return false;
     }
+
+    return checkPacket(rx_buffer_, packet);
   } else if (recv_len == 0) {
     // timeout / no data，不是串口错误，不要重连
     return false;
@@ -248,6 +248,7 @@ bool FixedPacketTool<capacity>::recvPacket(FixedPacket<capacity> &packet) {
     // reconnect
     transporter_->close();
     transporter_->open();
+    rx_buffer_.clear();
     // 串口错误
     return false;
   }
