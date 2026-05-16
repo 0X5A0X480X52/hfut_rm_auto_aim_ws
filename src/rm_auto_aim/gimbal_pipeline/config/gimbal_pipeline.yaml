@@ -349,8 +349,8 @@ gimbal_pipeline:
         force_rotation_ca: false
         dual_raw_batch: true
         sigma_pos_xy: 0.06
-        sigma_pos_z: 0.08
-        sigma_yaw: 0.12
+        sigma_pos_z: 0.12
+        sigma_yaw: 0.25
         dual_raw_R_scale: 1.5
         gate:
           single_total_nis: 25.0
@@ -729,7 +729,7 @@ gimbal_pipeline:
             # sigma点传播：对速度/延时不确定性做概率传播
             enable: true
             method: "unscented"
-            sigma_v0: 0.3
+            sigma_v0: 0.045
             sigma_delay: 0.005
             rho: 0.0
             alpha: 0.7
@@ -739,7 +739,7 @@ gimbal_pipeline:
           gate:
             # 输出门控：lowpass更平滑，integrator更“记忆化”
             mode: "lowpass"
-            alpha: 0.85
+            alpha: 0.75
             fire_on_th: 0.65
             fire_off_th: 0.35
             integrator_base_probability: 0.45

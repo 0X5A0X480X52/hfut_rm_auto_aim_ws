@@ -9,8 +9,8 @@ motion:
       singer_alpha: 10.0
       singer_sigma: 1.0
     rotation:
-      cv_process_noise_rate: 10.0
-      ca_process_noise_acc: 10.0
+      cv_process_noise_rate: 15.0
+      ca_process_noise_acc: 15.0
     structural:
       process_noise_r: 0.008
       process_noise_dz: 0.003
