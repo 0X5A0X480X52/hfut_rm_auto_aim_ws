@@ -36,8 +36,10 @@
 #include <tf2/time.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/create_timer_ros.h>
+#include <tf2_ros/message_filter.h>
 
 #include <image_transport/image_transport.hpp>
+#include <message_filters/subscriber.h>
 #include <rclcpp/qos.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 // third party
@@ -128,11 +130,6 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
         cam_info_sub_.reset();
       });
 
-  img_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
-      "image_raw", rclcpp::SensorDataQoS(),
-      std::bind(&ArmorDetectorNode::imageCallback, this,
-                std::placeholders::_1));
-
   // target_sub_ = this->create_subscription<rm_interfaces::msg::Target>(
   //   "armor_solver/target",
   //   rclcpp::SensorDataQoS(),
@@ -144,6 +141,10 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
       this->get_node_base_interface(), this->get_node_timers_interface());
   tf2_buffer_->setCreateTimerInterface(timer_interface);
   tf2_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
+  processing_timer_ = this->create_wall_timer(
+      std::chrono::milliseconds(1),
+      std::bind(&ArmorDetectorNode::processLatestFrame, this));
+  createImageSub();
 
   set_mode_srv_ = this->create_service<rm_interfaces::srv::SetMode>(
       "armor_detector/set_mode",
@@ -156,6 +157,28 @@ ArmorDetectorNode::ArmorDetectorNode(const rclcpp::NodeOptions &options)
 
 void ArmorDetectorNode::imageCallback(
     const sensor_msgs::msg::Image::ConstSharedPtr img_msg) {
+  std::lock_guard<std::mutex> lock(latest_img_mutex_);
+  latest_img_msg_ = img_msg;
+}
+
+void ArmorDetectorNode::processLatestFrame() {
+  if (processing_.exchange(true)) {
+    return;
+  }
+  sensor_msgs::msg::Image::ConstSharedPtr img_msg;
+  {
+    std::lock_guard<std::mutex> lock(latest_img_mutex_);
+    img_msg = latest_img_msg_;
+    latest_img_msg_.reset();
+  }
+  if (img_msg != nullptr) {
+    processImage(img_msg);
+  }
+  processing_.store(false);
+}
+
+void ArmorDetectorNode::processImage(
+    const sensor_msgs::msg::Image::ConstSharedPtr &img_msg) {
   FYT_DEBUG("armor_detector", "Image frame_id: {}, odom_frame: {}", img_msg->header.frame_id, odom_frame_);
 
   auto extract_rotation = [&](const geometry_msgs::msg::TransformStamped &t) {
@@ -446,15 +469,6 @@ void ArmorDetectorNode::setModeCallback(
     return;
   }
 
-  auto createImageSub = [this]() {
-    if (img_sub_ == nullptr) {
-      img_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
-          "image_raw", rclcpp::SensorDataQoS(),
-          std::bind(&ArmorDetectorNode::imageCallback, this,
-                    std::placeholders::_1));
-    }
-  };
-
   switch (mode) {
   case VisionMode::AUTO_AIM_RED: {
     detector_->detect_color = EnemyColor::RED;
@@ -467,11 +481,33 @@ void ArmorDetectorNode::setModeCallback(
     break;
   }
   default: {
-    img_sub_.reset();
+    destroyImageSub();
   }
   }
 
   FYT_WARN("armor_detector", "Set mode to {}", mode_name);
+}
+
+void ArmorDetectorNode::createImageSub() {
+  if (img_sub_ != nullptr) {
+    return;
+  }
+
+  auto img_qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
+  img_sub_ = std::make_shared<message_filters::Subscriber<sensor_msgs::msg::Image>>(
+      this, "image_raw", img_qos.get_rmw_qos_profile());
+  tf2_img_filter_ =
+      std::make_shared<tf2_ros::MessageFilter<sensor_msgs::msg::Image>>(
+          *img_sub_, *tf2_buffer_, odom_frame_, 1, this->get_node_logging_interface(),
+          this->get_node_clock_interface(), tf2::durationFromSec(0.03));
+  tf2_img_filter_->registerCallback(&ArmorDetectorNode::imageCallback, this);
+}
+
+void ArmorDetectorNode::destroyImageSub() {
+  tf2_img_filter_.reset();
+  img_sub_.reset();
+  std::lock_guard<std::mutex> lock(latest_img_mutex_);
+  latest_img_msg_.reset();
 }
 
 } // namespace fyt::auto_aim

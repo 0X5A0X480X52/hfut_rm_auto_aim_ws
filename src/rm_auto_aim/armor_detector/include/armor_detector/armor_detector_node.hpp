@@ -23,6 +23,7 @@
 // ros2
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/buffer_interface.h>
+#include <tf2_ros/message_filter.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/transform_listener.h>
 
@@ -30,6 +31,7 @@
 #include <image_transport/image_transport.hpp>
 #include <image_transport/publisher.hpp>
 #include <image_transport/subscriber_filter.hpp>
+#include <message_filters/subscriber.h>
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <rclcpp/publisher.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -37,7 +39,9 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 // std
+#include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 // project
@@ -61,6 +65,8 @@ public:
 
 private:
   void imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr img_msg);
+  void processLatestFrame();
+  void processImage(const sensor_msgs::msg::Image::ConstSharedPtr &img_msg);
   // void targetCallback(const rm_interfaces::msg::Target::SharedPtr
   // target_msg);
 
@@ -73,6 +79,8 @@ private:
   void destroyDebugPublishers() noexcept;
 
   void publishMarkers() noexcept;
+  void createImageSub();
+  void destroyImageSub();
 
   void setModeCallback(
       const std::shared_ptr<rm_interfaces::srv::SetMode::Request> request,
@@ -113,7 +121,12 @@ private:
   std::shared_ptr<sensor_msgs::msg::CameraInfo> cam_info_;
 
   // Image subscription
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr img_sub_;
+  std::shared_ptr<message_filters::Subscriber<sensor_msgs::msg::Image>> img_sub_;
+  std::shared_ptr<tf2_ros::MessageFilter<sensor_msgs::msg::Image>> tf2_img_filter_;
+  rclcpp::TimerBase::SharedPtr processing_timer_;
+  sensor_msgs::msg::Image::ConstSharedPtr latest_img_msg_;
+  std::mutex latest_img_mutex_;
+  std::atomic<bool> processing_{false};
 
   // Target subscription
   // rclcpp::Subscription<rm_interfaces::msg::Target>::SharedPtr target_sub_;
