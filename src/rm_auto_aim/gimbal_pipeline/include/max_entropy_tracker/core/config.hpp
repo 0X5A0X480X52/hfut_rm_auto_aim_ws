@@ -135,6 +135,9 @@ struct OutpostParameters {
   // false: legacy OutpostArmorTracker
   // true : OutpostTrackerV2 (mode-aware pipeline)
   bool use_tracker_v2 = false;
+  // If true, use OutpostTrackerV3 (hypothesis + InEKF pipeline).
+  // Priority: use_tracker_v3 > use_tracker_v2 > legacy.
+  bool use_tracker_v3 = false;
 
   // Outpost-specific tracker state machine thresholds
   int tracking_thres = 2;
@@ -226,6 +229,53 @@ struct OutpostParameters {
   bool ambiguous_publish_single_armor_semantics = true;
   bool ambiguous_single_armor_zero_offset = true;
   bool ambiguous_backend_use_imm_adapter = false;
+
+  // ── Outpost V3 config ──
+  int v3_topk = 3;
+  double v3_min_top1_confidence = 0.5;
+  double v3_min_top1_top2_margin = 1.0;
+  double v3_max_reconstruction_pos_error = 0.3;
+
+  double v3_gate_single_total_nis = 11.34;
+  double v3_gate_single_pos_chi2 = 9.0;
+
+  double v3_posterior_max_center_jump = 0.5;
+  double v3_posterior_max_yaw_jump = 0.5;
+  double v3_posterior_max_yaw_rate = 15.0;
+  double v3_posterior_max_yaw_acc = 30.0;
+
+  double v3_mode_p_enter_structured = 0.7;
+  double v3_mode_m_enter_structured = 1.5;
+  int v3_mode_stable_frames = 5;
+  double v3_mode_p_exit_structured = 0.4;
+  double v3_mode_m_exit_structured = 0.5;
+  int v3_mode_degraded_frames = 10;
+
+  double v3_prior_panel_switch_penalty = 0.5;
+
+  double v3_initial_p_pos = 0.01;
+  double v3_initial_p_vel = 1.0;
+  double v3_initial_p_acc = 10.0;
+  double v3_initial_p_yaw = 0.1;
+  double v3_initial_p_yaw_rate = 1.0;
+  double v3_initial_p_yaw_acc = 5.0;
+
+  double v3_process_noise_acc = 2.0;
+  double v3_process_noise_yaw_acc = 3.0;
+
+  double v3_observation_sigma_pos_xy = 0.02;
+  double v3_observation_sigma_pos_z = 0.03;
+
+  bool v3_warmup_enable = true;
+  int v3_warmup_frames = 8;
+  int v3_warmup_min_settle_frames = 3;
+  double v3_warmup_min_margin_to_commit = 1.2;
+  double v3_warmup_min_confidence_to_commit = 0.65;
+
+  bool v3_phase_audit_enable = true;
+  double v3_phase_audit_min_jump = 0.015;
+  double v3_phase_audit_dz_gate = 0.035;
+  int v3_phase_audit_confirm_frames = 2;
 
   // ModeFSM (OutpostTrackerV2)
   int mode_enter_confirm_frames = 3;

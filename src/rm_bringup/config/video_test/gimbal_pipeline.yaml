@@ -480,7 +480,8 @@ gimbal_pipeline:
     outpost:
       translation_model: "CA"   # Outpost平移模型
       rotation_model: "CA"      # Outpost旋转模型
-      use_tracker_v2: false
+      use_tracker_v2: true
+      use_tracker_v3: false
       tracking_thres: 2
       lost_thres: 50
       temp_lost_thres: 5
@@ -488,8 +489,8 @@ gimbal_pipeline:
       max_match_yaw_diff: 3.0
       singer_alpha: 0.0
       singer_sigma: 0.0
-      spin_process_noise_theta_rate: 0.0
-      spin_process_noise_theta_acc: 0.0
+      spin_process_noise_theta_rate: 1.0
+      spin_process_noise_theta_acc: 0.10
       radius: 0.275
 
       # z 语义: id0=高, id1=中, id2=低
@@ -565,6 +566,44 @@ gimbal_pipeline:
       ambiguous_single_armor_zero_offset: true
       ambiguous_backend_use_imm_adapter: false
 
+      # OutpostTrackerV3（假设检验 + InEKF）
+      v3:
+        topk: 3
+        min_top1_confidence: 0.50
+        min_top1_top2_margin: 1.00
+        max_reconstruction_pos_error: 0.30
+        gate_single_total_nis: 11.34
+        gate_single_pos_chi2: 9.0
+        posterior_max_center_jump: 0.50
+        posterior_max_yaw_jump: 0.50
+        posterior_max_yaw_rate: 15.0
+        posterior_max_yaw_acc: 30.0
+        mode_p_enter_structured: 0.70
+        mode_m_enter_structured: 1.50
+        mode_stable_frames: 5
+        mode_p_exit_structured: 0.40
+        mode_m_exit_structured: 0.50
+        mode_degraded_frames: 10
+        prior_panel_switch_penalty: 0.50
+        initial_p_pos: 0.01
+        initial_p_vel: 1.0
+        initial_p_acc: 10.0
+        initial_p_yaw: 0.10
+        initial_p_yaw_rate: 1.0
+        initial_p_yaw_acc: 5.0
+        process_noise_acc: 2.0
+        process_noise_yaw_acc: 3.0
+        observation_sigma_pos_xy: 0.02
+        observation_sigma_pos_z: 0.03
+        warmup_enable: true
+        warmup_frames: 8
+        warmup_min_settle_frames: 3
+        warmup_min_margin_to_commit: 1.2
+        warmup_min_confidence_to_commit: 0.65
+        phase_audit_enable: true
+        phase_audit_min_jump: 0.015
+        phase_audit_dz_gate: 0.035
+        phase_audit_confirm_frames: 2
 
     # =========================
     # 目标选择器

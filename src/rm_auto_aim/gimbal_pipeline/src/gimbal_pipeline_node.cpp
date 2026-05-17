@@ -1195,6 +1195,7 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("outpost.translation_model", "CV");
   declare_parameter("outpost.rotation_model", "CV");
   declare_parameter("outpost.use_tracker_v2", false);
+  declare_parameter("outpost.use_tracker_v3", false);
   declare_parameter("outpost.tracking_thres", 2);
   declare_parameter("outpost.lost_thres", 40);
   declare_parameter("outpost.temp_lost_thres", 30);
@@ -1267,6 +1268,42 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("outpost.ambiguous_publish_single_armor_semantics", true);
   declare_parameter("outpost.ambiguous_single_armor_zero_offset", true);
   declare_parameter("outpost.ambiguous_backend_use_imm_adapter", false);
+  declare_parameter("outpost.v3.topk", 3);
+  declare_parameter("outpost.v3.min_top1_confidence", 0.5);
+  declare_parameter("outpost.v3.min_top1_top2_margin", 1.0);
+  declare_parameter("outpost.v3.max_reconstruction_pos_error", 0.3);
+  declare_parameter("outpost.v3.gate_single_total_nis", 11.34);
+  declare_parameter("outpost.v3.gate_single_pos_chi2", 9.0);
+  declare_parameter("outpost.v3.posterior_max_center_jump", 0.5);
+  declare_parameter("outpost.v3.posterior_max_yaw_jump", 0.5);
+  declare_parameter("outpost.v3.posterior_max_yaw_rate", 15.0);
+  declare_parameter("outpost.v3.posterior_max_yaw_acc", 30.0);
+  declare_parameter("outpost.v3.mode_p_enter_structured", 0.7);
+  declare_parameter("outpost.v3.mode_m_enter_structured", 1.5);
+  declare_parameter("outpost.v3.mode_stable_frames", 5);
+  declare_parameter("outpost.v3.mode_p_exit_structured", 0.4);
+  declare_parameter("outpost.v3.mode_m_exit_structured", 0.5);
+  declare_parameter("outpost.v3.mode_degraded_frames", 10);
+  declare_parameter("outpost.v3.prior_panel_switch_penalty", 0.5);
+  declare_parameter("outpost.v3.initial_p_pos", 0.01);
+  declare_parameter("outpost.v3.initial_p_vel", 1.0);
+  declare_parameter("outpost.v3.initial_p_acc", 10.0);
+  declare_parameter("outpost.v3.initial_p_yaw", 0.1);
+  declare_parameter("outpost.v3.initial_p_yaw_rate", 1.0);
+  declare_parameter("outpost.v3.initial_p_yaw_acc", 5.0);
+  declare_parameter("outpost.v3.process_noise_acc", 2.0);
+  declare_parameter("outpost.v3.process_noise_yaw_acc", 3.0);
+  declare_parameter("outpost.v3.observation_sigma_pos_xy", 0.02);
+  declare_parameter("outpost.v3.observation_sigma_pos_z", 0.03);
+  declare_parameter("outpost.v3.warmup_enable", true);
+  declare_parameter("outpost.v3.warmup_frames", 8);
+  declare_parameter("outpost.v3.warmup_min_settle_frames", 3);
+  declare_parameter("outpost.v3.warmup_min_margin_to_commit", 1.2);
+  declare_parameter("outpost.v3.warmup_min_confidence_to_commit", 0.65);
+  declare_parameter("outpost.v3.phase_audit_enable", true);
+  declare_parameter("outpost.v3.phase_audit_min_jump", 0.015);
+  declare_parameter("outpost.v3.phase_audit_dz_gate", 0.035);
+  declare_parameter("outpost.v3.phase_audit_confirm_frames", 2);
 
   // Maneuver detection
   declare_parameter("maneuver.enable", true);
@@ -2671,6 +2708,8 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("outpost.rotation_model").as_string());
     c.outpost.use_tracker_v2 =
       get_parameter("outpost.use_tracker_v2").as_bool();
+    c.outpost.use_tracker_v3 =
+      get_parameter("outpost.use_tracker_v3").as_bool();
     c.outpost.tracking_thres = get_parameter("outpost.tracking_thres").as_int();
     c.outpost.lost_thres = get_parameter("outpost.lost_thres").as_int();
     c.outpost.temp_lost_thres =
@@ -2799,6 +2838,77 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("outpost.ambiguous_single_armor_zero_offset").as_bool();
     c.outpost.ambiguous_backend_use_imm_adapter =
       get_parameter("outpost.ambiguous_backend_use_imm_adapter").as_bool();
+    c.outpost.v3_topk = get_parameter("outpost.v3.topk").as_int();
+    c.outpost.v3_min_top1_confidence =
+      get_parameter("outpost.v3.min_top1_confidence").as_double();
+    c.outpost.v3_min_top1_top2_margin =
+      get_parameter("outpost.v3.min_top1_top2_margin").as_double();
+    c.outpost.v3_max_reconstruction_pos_error =
+      get_parameter("outpost.v3.max_reconstruction_pos_error").as_double();
+    c.outpost.v3_gate_single_total_nis =
+      get_parameter("outpost.v3.gate_single_total_nis").as_double();
+    c.outpost.v3_gate_single_pos_chi2 =
+      get_parameter("outpost.v3.gate_single_pos_chi2").as_double();
+    c.outpost.v3_posterior_max_center_jump =
+      get_parameter("outpost.v3.posterior_max_center_jump").as_double();
+    c.outpost.v3_posterior_max_yaw_jump =
+      get_parameter("outpost.v3.posterior_max_yaw_jump").as_double();
+    c.outpost.v3_posterior_max_yaw_rate =
+      get_parameter("outpost.v3.posterior_max_yaw_rate").as_double();
+    c.outpost.v3_posterior_max_yaw_acc =
+      get_parameter("outpost.v3.posterior_max_yaw_acc").as_double();
+    c.outpost.v3_mode_p_enter_structured =
+      get_parameter("outpost.v3.mode_p_enter_structured").as_double();
+    c.outpost.v3_mode_m_enter_structured =
+      get_parameter("outpost.v3.mode_m_enter_structured").as_double();
+    c.outpost.v3_mode_stable_frames =
+      get_parameter("outpost.v3.mode_stable_frames").as_int();
+    c.outpost.v3_mode_p_exit_structured =
+      get_parameter("outpost.v3.mode_p_exit_structured").as_double();
+    c.outpost.v3_mode_m_exit_structured =
+      get_parameter("outpost.v3.mode_m_exit_structured").as_double();
+    c.outpost.v3_mode_degraded_frames =
+      get_parameter("outpost.v3.mode_degraded_frames").as_int();
+    c.outpost.v3_prior_panel_switch_penalty =
+      get_parameter("outpost.v3.prior_panel_switch_penalty").as_double();
+    c.outpost.v3_initial_p_pos =
+      get_parameter("outpost.v3.initial_p_pos").as_double();
+    c.outpost.v3_initial_p_vel =
+      get_parameter("outpost.v3.initial_p_vel").as_double();
+    c.outpost.v3_initial_p_acc =
+      get_parameter("outpost.v3.initial_p_acc").as_double();
+    c.outpost.v3_initial_p_yaw =
+      get_parameter("outpost.v3.initial_p_yaw").as_double();
+    c.outpost.v3_initial_p_yaw_rate =
+      get_parameter("outpost.v3.initial_p_yaw_rate").as_double();
+    c.outpost.v3_initial_p_yaw_acc =
+      get_parameter("outpost.v3.initial_p_yaw_acc").as_double();
+    c.outpost.v3_process_noise_acc =
+      get_parameter("outpost.v3.process_noise_acc").as_double();
+    c.outpost.v3_process_noise_yaw_acc =
+      get_parameter("outpost.v3.process_noise_yaw_acc").as_double();
+    c.outpost.v3_observation_sigma_pos_xy =
+      get_parameter("outpost.v3.observation_sigma_pos_xy").as_double();
+    c.outpost.v3_observation_sigma_pos_z =
+      get_parameter("outpost.v3.observation_sigma_pos_z").as_double();
+    c.outpost.v3_warmup_enable =
+      get_parameter("outpost.v3.warmup_enable").as_bool();
+    c.outpost.v3_warmup_frames =
+      get_parameter("outpost.v3.warmup_frames").as_int();
+    c.outpost.v3_warmup_min_settle_frames =
+      get_parameter("outpost.v3.warmup_min_settle_frames").as_int();
+    c.outpost.v3_warmup_min_margin_to_commit =
+      get_parameter("outpost.v3.warmup_min_margin_to_commit").as_double();
+    c.outpost.v3_warmup_min_confidence_to_commit =
+      get_parameter("outpost.v3.warmup_min_confidence_to_commit").as_double();
+    c.outpost.v3_phase_audit_enable =
+      get_parameter("outpost.v3.phase_audit_enable").as_bool();
+    c.outpost.v3_phase_audit_min_jump =
+      get_parameter("outpost.v3.phase_audit_min_jump").as_double();
+    c.outpost.v3_phase_audit_dz_gate =
+      get_parameter("outpost.v3.phase_audit_dz_gate").as_double();
+    c.outpost.v3_phase_audit_confirm_frames =
+      get_parameter("outpost.v3.phase_audit_confirm_frames").as_int();
 
     c.outpost.tracking_thres = std::max(1, c.outpost.tracking_thres);
     c.outpost.lost_thres = std::max(1, c.outpost.lost_thres);
@@ -2858,6 +2968,14 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
     c.outpost.mode_weight_margin = std::max(0.0, c.outpost.mode_weight_margin);
     c.outpost.mode_weight_health = std::max(0.0, c.outpost.mode_weight_health);
     c.outpost.mode_weight_entropy = std::max(0.0, c.outpost.mode_weight_entropy);
+    c.outpost.v3_topk = std::max(1, c.outpost.v3_topk);
+    c.outpost.v3_mode_stable_frames = std::max(1, c.outpost.v3_mode_stable_frames);
+    c.outpost.v3_mode_degraded_frames = std::max(1, c.outpost.v3_mode_degraded_frames);
+    c.outpost.v3_warmup_frames = std::max(1, c.outpost.v3_warmup_frames);
+    c.outpost.v3_warmup_min_settle_frames =
+      std::max(1, c.outpost.v3_warmup_min_settle_frames);
+    c.outpost.v3_phase_audit_confirm_frames =
+      std::max(1, c.outpost.v3_phase_audit_confirm_frames);
 
   const bool z_descending =
       (c.outpost.z_offset_0 > c.outpost.z_offset_1) &&

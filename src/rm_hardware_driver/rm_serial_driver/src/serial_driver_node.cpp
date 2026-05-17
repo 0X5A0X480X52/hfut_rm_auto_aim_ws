@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <geometry_msgs/msg/detail/twist__struct.hpp>
 #include <geometry_msgs/msg/detail/twist_stamped__struct.hpp>
+#include <limits>
 #include <memory>
 #include <thread>
 // ros2
@@ -101,6 +102,15 @@ void SerialDriverNode::listenLoop() {
   }
 
   rm_interfaces::msg::SerialReceiveData receive_data;
+  auto last_tf_pub_time = std::chrono::steady_clock::time_point{};
+  bool has_last_tf_pub_time = false;
+  int tf_interval_count = 0;
+  double tf_interval_sum_ms = 0.0;
+  double tf_interval_min_ms = std::numeric_limits<double>::max();
+  double tf_interval_max_ms = 0.0;
+  constexpr double kTfIntervalWarnMs = 30.0;
+  constexpr int kTfIntervalReportEvery = 200;
+
   while (rclcpp::ok()) {
     if (protocol_->receive(receive_data)) {
       auto time = this->now() + rclcpp::Duration::from_seconds(timestamp_offset_);
@@ -160,6 +170,34 @@ void SerialDriverNode::listenLoop() {
       q.setRPY(roll, pitch, yaw);
       t.transform.rotation = tf2::toMsg(q);
       tf_broadcaster_->sendTransform(t);
+
+      const auto now_tp = std::chrono::steady_clock::now();
+      if (has_last_tf_pub_time) {
+        const double interval_ms = std::chrono::duration<double, std::milli>(
+          now_tp - last_tf_pub_time).count();
+        tf_interval_count++;
+        tf_interval_sum_ms += interval_ms;
+        tf_interval_min_ms = std::min(tf_interval_min_ms, interval_ms);
+        tf_interval_max_ms = std::max(tf_interval_max_ms, interval_ms);
+
+        if (interval_ms > kTfIntervalWarnMs) {
+          FYT_WARN(
+            "serial_driver",
+            "TF publish interval spike: {:.3f} ms (> {:.1f} ms), mode:{}, yaw:{:.2f}",
+            interval_ms, kTfIntervalWarnMs, static_cast<int>(receive_data.mode), receive_data.yaw);
+        }
+
+        if (tf_interval_count % kTfIntervalReportEvery == 0) {
+          const double avg_ms = tf_interval_sum_ms / static_cast<double>(tf_interval_count);
+          FYT_INFO(
+            "serial_driver",
+            "TF publish interval stats: count:{}, avg:{:.3f} ms, min:{:.3f} ms, max:{:.3f} ms",
+            tf_interval_count, avg_ms, tf_interval_min_ms, tf_interval_max_ms);
+        }
+      } else {
+        has_last_tf_pub_time = true;
+      }
+      last_tf_pub_time = now_tp;
 
       // odom_rectify: 转了roll角后的坐标系
       Eigen::Quaterniond q_eigen(q.w(), q.x(), q.y(), q.z());

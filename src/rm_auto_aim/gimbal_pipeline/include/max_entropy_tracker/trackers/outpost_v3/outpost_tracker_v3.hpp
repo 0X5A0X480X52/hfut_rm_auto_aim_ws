@@ -6,6 +6,7 @@
 #include <optional>
 #include <vector>
 
+#include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/core/observation.hpp"
 #include "max_entropy_tracker/trackers/base_tracker.hpp"
 #include "max_entropy_tracker/utils/maneuver_detector.hpp"
@@ -39,6 +40,8 @@ class OutpostTrackerV3 : public BaseTracker {
 
   explicit OutpostTrackerV3(const outpost_v3::OutpostV3Config &cfg,
                             double dt = 0.05);
+  explicit OutpostTrackerV3(const UnifiedConfig &config, double dt = 0.05,
+                            bool enable_oscillation = false);
 
   void initialize(const std::vector<ObservationData> &obs, double r1 = 0.15,
                   double r2 = 0.20, double dza = 0.0) override;
@@ -70,6 +73,11 @@ class OutpostTrackerV3 : public BaseTracker {
       double *confidence_out, double *margin_out) const;
 
   void update_mode_routing(double confidence, double margin, bool committed);
+  bool run_warmup(const ObservationData &obs,
+                  const norm4_v3::PredictContext &ctx,
+                  double *confidence_out, double *margin_out);
+  bool phase_audit_pass(const ObservationData &obs, int panel_id,
+                        std::string *reason) const;
   void populate_debug_snapshot(
       bool committed, const std::vector<norm4_v3::TopKEntry> &topk,
       double top1_confidence, double top1_top2_margin,
@@ -84,6 +92,14 @@ class OutpostTrackerV3 : public BaseTracker {
   int current_panel_id_ = -1;
   int consecutive_degraded_ = 0;
   int consecutive_stable_ = 0;
+  bool warmup_active_ = false;
+  int warmup_total_frames_ = 0;
+  int warmup_settle_frames_ = 0;
+  int warmup_winner_panel_ = -1;
+  double warmup_best_margin_ = 0.0;
+  double warmup_best_confidence_ = 0.0;
+  std::optional<ObservationData> last_obs_;
+  int phase_audit_pass_streak_ = 0;
 
   DebugSnapshot debug_snapshot_{};
 };

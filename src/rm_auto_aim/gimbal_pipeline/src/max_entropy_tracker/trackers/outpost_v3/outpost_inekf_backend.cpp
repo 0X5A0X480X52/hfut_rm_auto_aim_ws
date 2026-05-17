@@ -65,7 +65,7 @@ double OutpostInEKFBackend::right_jacobian_SO2(double dpsi) {
 
 OutpostInEKFBackend::OutpostInEKFBackend(const OutpostV3Config &cfg,
                                          double dt)
-    : cfg_(cfg), dt_(dt), state_idx_(s_layout_) {
+    : cfg_(cfg), dt_(dt), geom_(cfg.geometry), state_idx_(s_layout_) {
   if (!s_layout_initialized_) {
     s_layout_ = OutpostStateIndex::build_layout();
     s_layout_initialized_ = true;

@@ -76,7 +76,23 @@ struct OutpostObservationNoiseConfig {
   double sigma_pos_z = 0.03;
 };
 
+struct OutpostWarmupConfig {
+  bool enable = true;
+  int warmup_frames = 8;
+  int min_settle_frames = 3;
+  double min_margin_to_commit = 1.2;
+  double min_confidence_to_commit = 0.65;
+};
+
+struct OutpostPhaseAuditConfig {
+  bool enable = true;
+  double min_jump = 0.015;
+  double dz_gate = 0.035;
+  int confirm_frames = 2;
+};
+
 struct OutpostV3Config {
+  OutpostPanelGeometry geometry;
   OutpostGateConfig gate;
   OutpostHypothesisSelectorConfig hypothesis_selector;
   OutpostPosteriorSanityConfig posterior_sanity;
@@ -85,6 +101,8 @@ struct OutpostV3Config {
   OutpostInitialPConfig initial_P;
   OutpostProcessNoiseConfig process_noise;
   OutpostObservationNoiseConfig observation_noise;
+  OutpostWarmupConfig warmup;
+  OutpostPhaseAuditConfig phase_audit;
 };
 
 enum class OutpostV3Mode { AMBIGUOUS = 0, STRUCTURED = 1 };

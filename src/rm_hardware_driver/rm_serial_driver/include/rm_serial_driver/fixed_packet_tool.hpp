@@ -29,6 +29,7 @@
 #include <string>
 #include <thread>
 #include <array>
+#include <chrono>
 // project
 #include "rm_serial_driver/fixed_packet.hpp"
 #include "rm_serial_driver/transporter_interface.hpp"
@@ -218,7 +219,20 @@ bool FixedPacketTool<capacity>::sendPacket(const FixedPacket<capacity> &packet) 
 
 template <int capacity>
 bool FixedPacketTool<capacity>::recvPacket(FixedPacket<capacity> &packet) {
+  constexpr int64_t kSlowPathWarnUs = 5000;  // 5ms
+  const auto t_read_begin = std::chrono::steady_clock::now();
   int recv_len = transporter_->read(tmp_buffer_, capacity);
+  const auto t_read_end = std::chrono::steady_clock::now();
+
+  const auto read_cost_us =
+    std::chrono::duration_cast<std::chrono::microseconds>(t_read_end - t_read_begin).count();
+  if (read_cost_us > kSlowPathWarnUs) {
+    FYT_WARN(
+      "serial_driver",
+      "recvPacket slow read: {} us, recv_len:{}, cap:{}, rx_buf_size:{}",
+      read_cost_us, recv_len, capacity, rx_buffer_.size());
+  }
+
   if (recv_len > 0) {
     // print data
     if (use_data_print_) {
@@ -228,9 +242,11 @@ bool FixedPacketTool<capacity>::recvPacket(FixedPacket<capacity> &packet) {
       std::cout << "\n";
     }
 
+    const auto t_push_begin = std::chrono::steady_clock::now();
     for (int i = 0; i < recv_len; ++i) {
       rx_buffer_.push_back(tmp_buffer_[i]);
     }
+    const auto t_push_end = std::chrono::steady_clock::now();
 
     constexpr size_t MAX_RX_BUFFER_SIZE = capacity * 16;
     if (rx_buffer_.size() > MAX_RX_BUFFER_SIZE) {
@@ -239,7 +255,27 @@ bool FixedPacketTool<capacity>::recvPacket(FixedPacket<capacity> &packet) {
       return false;
     }
 
-    return checkPacket(rx_buffer_, packet);
+    const auto t_check_begin = std::chrono::steady_clock::now();
+    const bool ok = checkPacket(rx_buffer_, packet);
+    const auto t_check_end = std::chrono::steady_clock::now();
+
+    const auto push_cost_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(t_push_end - t_push_begin).count();
+    const auto check_cost_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(t_check_end - t_check_begin).count();
+    const auto total_cost_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(t_check_end - t_read_begin).count();
+    if (push_cost_us > kSlowPathWarnUs || check_cost_us > kSlowPathWarnUs ||
+      total_cost_us > kSlowPathWarnUs)
+    {
+      FYT_WARN(
+        "serial_driver",
+        "recvPacket slow path: total:{} us, read:{} us, push:{} us, check:{} us, recv_len:{}, "
+        "rx_buf_size:{}, ok:{}",
+        total_cost_us, read_cost_us, push_cost_us, check_cost_us, recv_len, rx_buffer_.size(), ok);
+    }
+
+    return ok;
   } else if (recv_len == 0) {
     // timeout / no data，不是串口错误，不要重连
     return false;
