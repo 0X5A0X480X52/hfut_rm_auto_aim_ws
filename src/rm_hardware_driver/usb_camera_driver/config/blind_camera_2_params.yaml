@@ -13,6 +13,9 @@
     # Frame id for published Image (发布图像的frame_id)
     frame_id: "blind_camera_2_optical_frame"
 
+    # Image flip (图像翻转)
+    flip_image: true        # true=180度翻转图像, false=不翻转
+
     # Exposure settings (曝光设置)
     auto_exposure: false      # true=自动曝光, false=手动曝光
     exposure: 20             # 曝光值 (手动模式有效，范围10-2500，单位100µs)

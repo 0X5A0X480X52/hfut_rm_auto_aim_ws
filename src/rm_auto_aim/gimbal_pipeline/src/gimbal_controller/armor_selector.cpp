@@ -14,6 +14,7 @@
 
 #include "gimbal_controller/armor_selector.hpp"
 #include <angles/angles.h>
+#include <rclcpp/rclcpp.hpp>
 #include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 
 #include <limits>
@@ -40,20 +41,34 @@ ArmorSelectionResult ArmorSelector::selectBest(
   const bool selection_has_virtual_fallback =
     selection_method_ == SelectionMethod::FACING_OR_VIRTUAL_POSE ||
     selection_method_ == SelectionMethod::FACING_OR_VIRTUAL_FIXED_ID;
+  RCLCPP_INFO(rclcpp::get_logger("armor_selector"),
+    "selectBest: target_v_yaw=%.6f, enable=%d, fallback=%d",
+    target_v_yaw, virtual_auto_switch_enable_, selection_has_virtual_fallback);
   if (virtual_auto_switch_enable_ && !selection_has_virtual_fallback) {
     const double abs_v_yaw = std::abs(target_v_yaw);
     if (virtual_mode_active_) {
       if (abs_v_yaw < virtual_auto_switch_exit_vyaw_) {
         virtual_mode_active_ = false;
+        RCLCPP_INFO(rclcpp::get_logger("armor_selector"),
+          "Exit virtual mode: |v_yaw|=%.4f < exit_vyaw=%.4f",
+          abs_v_yaw, virtual_auto_switch_exit_vyaw_);
       }
     } else if (abs_v_yaw > virtual_auto_switch_enter_vyaw_) {
       virtual_mode_active_ = true;
+      RCLCPP_INFO(rclcpp::get_logger("armor_selector"),
+        "Enter virtual mode: |v_yaw|=%.4f > enter_vyaw=%.4f",
+        abs_v_yaw, virtual_auto_switch_enter_vyaw_);
     }
     auto_switch_active = virtual_mode_active_;
   }
 
   if (auto_switch_active) {
     effective_method = virtual_auto_switch_method_;
+  }
+
+  // 前哨站（3面板）始终使用虚拟固定ID选板
+  if (num_armors == 3) {
+    effective_method = SelectionMethod::VIRTUAL_FIXED_ID;
   }
 
   switch (effective_method) {

@@ -26,7 +26,6 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch.substitutions import Command
 from launch_ros.parameter_descriptions import ParameterValue
-from launch.conditions import IfCondition
 
 sys.path.append(os.path.join(get_package_share_directory('rm_bringup'), 'launch'))
 

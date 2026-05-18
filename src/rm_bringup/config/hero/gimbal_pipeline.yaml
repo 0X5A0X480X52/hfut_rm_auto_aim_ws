@@ -49,7 +49,7 @@ gimbal_pipeline:
       beta: 2.0                       # 高斯分布推荐值
       kappa: 0.0                      # 次要调节项，通常保持默认
       obs_noise_pos: 0.03             # 位置观测噪声，增大更稳/更钝，减小更灵敏
-      obs_noise_yaw: 0.03             # yaw观测噪声，过小易引发抖动
+      obs_noise_yaw: 0.003             # yaw观测噪声，过小易引发抖动
       enable_ypd_observation_noise: true
       ypd_sigma_azi: 0.01             # YPD方位角噪声(仅启用YPD时生效)
       ypd_sigma_ele: 0.01             # YPD俯仰噪声
@@ -452,16 +452,16 @@ gimbal_pipeline:
     outpost:
       translation_model: "CA"   # Outpost平移模型
       rotation_model: "CA"      # Outpost旋转模型
-      use_tracker_v2: false
+      use_tracker_v2: true
       tracking_thres: 2
-      lost_thres: 50
+      lost_thres: 90
       temp_lost_thres: 5
       max_match_distance: 5.0
       max_match_yaw_diff: 3.0
       singer_alpha: 0.0
       singer_sigma: 0.0
-      spin_process_noise_theta_rate: 0.0
-      spin_process_noise_theta_acc: 0.0
+      spin_process_noise_theta_rate: 5 # 10.0
+      spin_process_noise_theta_acc: 0.10  # 0.10
       radius: 0.275
 
       # z 语义: id0=高, id1=中, id2=低
@@ -546,7 +546,7 @@ gimbal_pipeline:
     # - 离轴目标误入选：减小 max_yaw_deviation。
     # =========================
     selector:
-      strategy: "priority_list" # "min_yaw_deviation" | "priority_list" | "sticky_min_yaw_deviation"
+      strategy: "attack_outpost_first" # "min_yaw_deviation" | "priority_list" | "sticky_min_yaw_deviation"
       reference_yaw: 0.0
       max_yaw_deviation: 3.14159
       max_distance: 10.0
@@ -624,8 +624,8 @@ gimbal_pipeline:
           # 虚拟板策略：高速旋转下可降低目标角速度突变
           auto_switch:
             enable: true
-            enter_vyaw: 3.0
-            exit_vyaw: 1.0
+            enter_vyaw: 0.008
+            exit_vyaw: 0.005
             selection_method: "virtual_fixed_id" # "virtual_pose" | "virtual_fixed_id"
             fixed_id: 0
           fixed_id: 0
@@ -684,7 +684,7 @@ gimbal_pipeline:
           normal_velocity_weight:
             # 法向速度权重：目标面朝向“正对”时会抬升开火概率
             enable: true
-            v_ref: 10.0
+            v_ref: 8.0
             w_min: 0.5
 
           normal_velocity_gate:
@@ -699,7 +699,7 @@ gimbal_pipeline:
             # sigma点传播：对速度/延时不确定性做概率传播
             enable: true
             method: "unscented"
-            sigma_v0: 0.3
+            sigma_v0: 0.03
             sigma_delay: 0.005
             rho: 0.0
             alpha: 0.7

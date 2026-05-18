@@ -38,6 +38,9 @@ public:
     fps_         = this->declare_parameter<double>("fps", 30.0);
     frame_id_    = this->declare_parameter<std::string>("frame_id", camera_name_ + "_optical_frame");
 
+    // 图像翻转
+    flip_image_ = this->declare_parameter<bool>("flip_image", false);
+
     // 曝光参数
     auto_exposure_             = this->declare_parameter<bool>("auto_exposure", true);
     exposure_                  = this->declare_parameter<int>("exposure", 100);
@@ -87,6 +90,7 @@ private:
   int height_;
   double fps_;
   std::string frame_id_;
+  bool flip_image_;
   bool auto_exposure_;
   int exposure_;
   bool exposure_dynamic_framerate_;
@@ -177,6 +181,10 @@ private:
     if (!cap_.read(bgr_frame)) {
       RCLCPP_ERROR(this->get_logger(), "Failed to read frame from %s camera", camera_name_.c_str());
       return;
+    }
+
+    if (flip_image_) {
+      cv::flip(bgr_frame, bgr_frame, -1);
     }
 
     try {
