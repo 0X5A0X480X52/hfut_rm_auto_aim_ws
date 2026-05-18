@@ -240,9 +240,6 @@ bool FixedPacketTool<capacity>::recvPacket(FixedPacket<capacity> &packet) {
                tmp_buffer_[recv_len - 1]);
       return false;
     }
-  } else if (recv_len == 0) {
-    // timeout / no data，不是串口错误，不要重连
-    return false;
   } else {
     FYT_ERROR("serial_driver", "transporter_->read() failed");
     // reconnect

@@ -327,9 +327,15 @@ Eigen::Vector3d TrackedRobotUsage::calculateArmorWorldNormal(
     isValidQuaternion(predicted_robot.center_pose.orientation) &&
     armor_index < static_cast<int>(predicted_robot.armors_offset.size()) &&
     isValidQuaternion(predicted_robot.armors_offset[static_cast<size_t>(armor_index)].orientation);
+  const bool has_offset_orientation =
+    armor_index < static_cast<int>(predicted_robot.armors_offset.size()) &&
+    isValidQuaternion(predicted_robot.armors_offset[static_cast<size_t>(armor_index)].orientation);
 
-  if (use_full_se3) {
-    const auto q_center = normalizedEigenQuat(predicted_robot.center_pose.orientation);
+  if (has_offset_orientation) {
+    const Eigen::Quaterniond q_center =
+      use_full_se3 ?
+      normalizedEigenQuat(predicted_robot.center_pose.orientation) :
+      normalizedEigenQuat(buildQuaternionFromYaw(yaw(predicted_robot)));
     const auto q_offset = normalizedEigenQuat(
       predicted_robot.armors_offset[static_cast<size_t>(armor_index)].orientation);
     const Eigen::Vector3d n = (q_center * q_offset) * Eigen::Vector3d::UnitX();
