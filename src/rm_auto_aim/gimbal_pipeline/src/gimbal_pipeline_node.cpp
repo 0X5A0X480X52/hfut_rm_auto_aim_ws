@@ -1825,7 +1825,7 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.mpc.s_pitch", 5.0);
 
   // MPC delay compensation
-  declare_parameter("controller.mpc.enable_delay_compensation", false);
+  declare_parameter("controller.mpc.enable_delay_compensation", true);
   declare_parameter("controller.mpc.allow_muzzle_compensation", true);
   declare_parameter("controller.mpc.prediction_delay_s", 0.0);
   declare_parameter("controller.mpc.flight_time_iters", 2);
@@ -1834,7 +1834,7 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
 
   // Deprecated aliases (for migration from old unscoped mpc delay keys)
   declare_parameter("mpc.control_delay_s", 0.0);
-  declare_parameter("mpc.enable_delay_compensation", false);
+  declare_parameter("mpc.enable_delay_compensation", true);
   declare_parameter("mpc.prediction_delay_s", 0.0);
   declare_parameter("mpc.flight_time_iters", 2);
   declare_parameter("mpc.max_processing_delay_s", 0.5);

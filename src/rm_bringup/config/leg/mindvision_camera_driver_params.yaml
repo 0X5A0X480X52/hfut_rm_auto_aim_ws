@@ -8,7 +8,7 @@
     image_height: 0  # 图像高度，0表示使用相机默认值
 
     exposure_time: 2500
-    gain: 13.0
+    analog_gain: 128
     flip_image: false
     # Frame id for published Image and CameraInfo
     frame_id: camera_optical_frame
