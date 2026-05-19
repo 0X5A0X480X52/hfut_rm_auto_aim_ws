@@ -57,12 +57,12 @@ def generate_launch_description():
     bringup_config_root = os.path.join(get_package_share_directory('rm_bringup'), 'config')
 
     # ── 补盲相机在 gimbal_link 坐标系中的安装位姿 ──
-    blind_camera_xyz_default = '-0.175 0.0 0.086'
-    blind_camera_rpy_default = '0.0 0.14 3.14159'
-    blind_camera_2_xyz_default = '-0.175 0.05 0.086'
-    blind_camera_2_rpy_default = '0.0 0.14 1.5708'
-    blind_camera_3_xyz_default = '-0.175 -0.05 0.086'
-    blind_camera_3_rpy_default = '0.0 0.14 -1.5708'
+    blind_camera_xyz_default = '-0.1775 0.0 0.1065' # 0.0965
+    blind_camera_rpy_default = '0.0 -0.10 3.14159'
+    blind_camera_2_xyz_default = '0.088 0.088 0.1065'
+    blind_camera_2_rpy_default = '0.0 0.00 1.5708'
+    blind_camera_3_xyz_default = '0.088 -0.088 0.1065'
+    blind_camera_3_rpy_default = '0.0 0.00 -1.5708'
 
     # ── 补盲相机开关 (False 则不启动) ──
     enable_blind_camera_1 = True
@@ -416,7 +416,7 @@ def generate_launch_description():
         return [camera_node, detector_node]
 
     # ==================== 补盲相机 + 补盲检测器 容器 ====================
-    def make_blind_camera_container_func(camera_prefix, container_name):
+    def make_blind_camera_container_func(camera_prefix, container_name, binary_thres):
         def _create(context):
             debug_enabled = LaunchConfiguration('debug').perform(context).lower() == 'true'
 
@@ -439,6 +439,7 @@ def generate_launch_description():
                     {
                         'camera_frame_id': f'{camera_prefix}_optical_frame',
                         'debug': debug_enabled,
+                        'binary_thres': binary_thres
                     },
                 ],
                 remappings=[
@@ -509,17 +510,17 @@ def generate_launch_description():
     delay_blind_camera_1 = TimerAction(
         period=2.0,
         actions=[OpaqueFunction(function=make_blind_camera_container_func(
-            'blind_camera_1', 'blind_camera_detector_container'))],
+            'blind_camera_1', 'blind_camera_detector_container', 160))],
     )
     delay_blind_camera_2 = TimerAction(
         period=2.5,
         actions=[OpaqueFunction(function=make_blind_camera_container_func(
-            'blind_camera_2', 'blind_camera_detector_container_2'))],
+            'blind_camera_2', 'blind_camera_detector_container_2', 80))],
     )
     delay_blind_camera_3 = TimerAction(
         period=3.0,
         actions=[OpaqueFunction(function=make_blind_camera_container_func(
-            'blind_camera_3', 'blind_camera_detector_container_3'))],
+            'blind_camera_3', 'blind_camera_detector_container_3', 80))],
     )
 
     # 统一 pipeline 节点 — 替代原来 2.5s / 3.0s / 3.5s 三个节点

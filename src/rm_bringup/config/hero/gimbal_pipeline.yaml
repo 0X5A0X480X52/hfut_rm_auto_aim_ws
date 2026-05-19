@@ -340,9 +340,9 @@ gimbal_pipeline:
         prior_sigma_dza: 0.9       # dza 先验不确定度
 
         # 4) 单板更新增益：通常保持 0（单板信息不足，避免误更新）
-        alpha_r1_single: 0.10
-        alpha_r2_single: 0.10
-        alpha_dza_single: 0.10
+        alpha_r1_single: 0.010
+        alpha_r2_single: 0.010
+        alpha_dza_single: 0.010
 
         # 5) 双板更新增益：主调参旋钮
         #    越大=收敛更快但更敏感；越小=更稳但更慢
@@ -460,7 +460,7 @@ gimbal_pipeline:
       max_match_yaw_diff: 3.0
       singer_alpha: 0.0
       singer_sigma: 0.0
-      spin_process_noise_theta_rate: 5 # 10.0
+      spin_process_noise_theta_rate: 5.0 # 10.0
       spin_process_noise_theta_acc: 0.10  # 0.10
       radius: 0.275
 
@@ -605,8 +605,8 @@ gimbal_pipeline:
         iteration_times: 20
         pitch_offset: 0.0
         yaw_offset: 0.0
-        facing_enter_angle: 5.0
-        facing_exit_angle: 10.0
+        facing_enter_angle: 65.0
+        facing_exit_angle: 75.0
         controller_delay: 0.01     # 旧链路兼容延时(s)
         trigger_to_muzzle_s: 0.0   # 旧链路枪口延时(s)
         selection_method: "facing_or_virtual_pose"
@@ -624,10 +624,10 @@ gimbal_pipeline:
           # 虚拟板策略：高速旋转下可降低目标角速度突变
           auto_switch:
             enable: true
-            enter_vyaw: 0.008
-            exit_vyaw: 0.005
+            enter_vyaw: 0.15
+            exit_vyaw: 0.1
             selection_method: "virtual_fixed_id" # "virtual_pose" | "virtual_fixed_id"
-            fixed_id: 0
+            fixed_id: 1
           fixed_id: 0
 
         adaptive_delay:
@@ -646,7 +646,7 @@ gimbal_pipeline:
       delay:
         prediction_extra_s: 0.0      # 预测补偿额外项(s)
         control_latency_s: 0.0       # 控制链路延时(s)
-        trigger_to_muzzle_s: 0.13     # 触发到出膛延时(s)
+        trigger_to_muzzle_s: 0.18     # 触发到出膛延时(s)
         max_processing_delay_s: 0.5  # 处理延时上限保护(s)
         flight_time_iters: 2         # 飞行时间迭代次数
 
@@ -693,7 +693,7 @@ gimbal_pipeline:
             require_front_face: true
             v_activate_min: 8.0
             front_epsilon: 1e-4
-            max_complement_angle_deg: 35.0
+            max_complement_angle_deg: 25.0
 
           sigma_point:
             # sigma点传播：对速度/延时不确定性做概率传播
@@ -751,7 +751,7 @@ gimbal_pipeline:
         N: 5
         dt: 0.05
         control_delay_s: 0.00
-        max_accel: 30.0
+        max_accel: 10.0
         q_yaw: 1000.0
         q_pitch: 100.0
         q_yaw_vel: 1.0
