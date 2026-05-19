@@ -59,6 +59,8 @@ function bringup() {
     source /opt/intel/oneapi/setvars.sh
     source /opt/MVS/bin/set_env_path.sh
 
+    export ROS_DOMAIN_ID=7
+
     cleanup_shm   # 启动前再清一次 SHM（保险）
 
     # USB 相机权限设置
