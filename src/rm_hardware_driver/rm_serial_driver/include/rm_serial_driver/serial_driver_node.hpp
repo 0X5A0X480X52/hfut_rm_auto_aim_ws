@@ -61,6 +61,7 @@ public:
     std::atomic<bool> mode_timer_active = false;
     std::atomic<int> mode = -1;
     rclcpp::Client<rm_interfaces::srv::SetMode>::SharedPtr ptr;
+    rclcpp::TimerBase::SharedPtr timer;
   };
   std::unordered_map<std::string, SetModeClient> set_mode_clients_;
   void setMode(SetModeClient &client, const uint8_t mode);
@@ -89,7 +90,6 @@ private:
   // Broadcast tf from odom to gimbal_link
   double timestamp_offset_ = 0;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
-  std::vector<rclcpp::TimerBase::SharedPtr> timers_;
 };
 
 }  // namespace fyt::serial_driver

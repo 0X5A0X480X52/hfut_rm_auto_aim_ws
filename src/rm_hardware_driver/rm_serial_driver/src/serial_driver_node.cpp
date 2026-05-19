@@ -206,12 +206,14 @@ void SerialDriverNode::setMode(SetModeClient &client, const uint8_t mode) {
 
   client.on_waiting.store(true);
 
-  auto timer = this->create_wall_timer(
+  if (client.timer) {
+    client.timer->cancel();
+  }
+
+  client.timer = this->create_wall_timer(
     std::chrono::milliseconds(500), [this, &client, mode]() {
       setModeTimerTick(&client, mode);
     });
-
-  timers_.push_back(timer);
 }
 
 void SerialDriverNode::setModeTimerTick(SetModeClient *client, uint8_t mode) {
@@ -223,6 +225,7 @@ void SerialDriverNode::setModeTimerTick(SetModeClient *client, uint8_t mode) {
   }
 
   if (client->mode.load() == mode) {
+    client->on_waiting.store(false);
     client->mode_timer_active.store(false);
     return;
   }
