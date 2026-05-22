@@ -543,6 +543,12 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     get_parameter("controller.fire.facing_filter_opening_angle_deg").as_double();
   bool fire_use_gimbal_kinematics =
     get_parameter("controller.fire.use_gimbal_kinematics").as_bool();
+  const bool fire_velocity_low_pass_enable =
+    get_parameter("controller.fire.velocity_low_pass.enable").as_bool();
+  const double fire_velocity_low_pass_alpha =
+    get_parameter("controller.fire.velocity_low_pass.alpha").as_double();
+  const double fire_velocity_low_pass_reset_timeout_s =
+    get_parameter("controller.fire.velocity_low_pass.reset_timeout_s").as_double();
   const bool fire_probability_enable =
     get_parameter("controller.fire.probability.enable").as_bool();
   const double fire_probability_window_ms =
@@ -696,10 +702,13 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     fire_flight_time_iters);
   RCLCPP_INFO(
     get_logger(),
-    "[FireVisibility] policy=%s opening=%.2fdeg use_kinematics=%s",
+    "[FireVisibility] policy=%s opening=%.2fdeg use_kinematics=%s vel_lpf=%s alpha=%.2f reset=%.3fs",
     fire_target_visibility_policy.c_str(),
     fire_facing_filter_opening_angle_deg,
-    fire_use_gimbal_kinematics ? "true" : "false");
+    fire_use_gimbal_kinematics ? "true" : "false",
+    fire_velocity_low_pass_enable ? "true" : "false",
+    std::clamp(fire_velocity_low_pass_alpha, 0.0, 1.0),
+    std::max(fire_velocity_low_pass_reset_timeout_s, 0.0));
 
   fire_advisor_->setParameters(shooting_range_w, shooting_range_h);
   if (fire_policy == "ellipse") {
@@ -713,6 +722,11 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
     fire_advice_engine_->setFlightTimeIterations(fire_flight_time_iters);
     fire_advice_engine_->setFacingFilterOpeningAngleDeg(fire_facing_filter_opening_angle_deg);
     fire_advice_engine_->setUseGimbalKinematics(fire_use_gimbal_kinematics);
+    gimbal_controller::FireAdviceVelocityLowPassConfig velocity_filter_cfg;
+    velocity_filter_cfg.enable = fire_velocity_low_pass_enable;
+    velocity_filter_cfg.alpha = fire_velocity_low_pass_alpha;
+    velocity_filter_cfg.reset_timeout_s = fire_velocity_low_pass_reset_timeout_s;
+    fire_advice_engine_->setVelocityLowPassConfig(velocity_filter_cfg);
     gimbal_controller::fire_advice::ProbabilityConfig prob_cfg;
     prob_cfg.enable = fire_probability_enable;
     prob_cfg.future_window_ms = std::max(fire_probability_window_ms, 0.0);
@@ -1236,7 +1250,9 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("outpost.binding_switch_strong_score", 0.60);
   declare_parameter("outpost.binding_period_window", 12);
   declare_parameter("outpost.binding_period_weight", 0.60);
+  declare_parameter("outpost.binding_topology_prior_weight", 4.0);
   declare_parameter("outpost.binding_period_min_spin_rate", 0.8);
+  declare_parameter("outpost.spin_direction_confirm_frames", 3);
   declare_parameter("outpost.binding_period_update_min_confidence", 0.55);
   declare_parameter("outpost.binding_period_update_min_jump", 0.015);
   declare_parameter("outpost.binding_dz_ema_alpha", 0.20);
@@ -1255,6 +1271,7 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("outpost.yaw_rate_damping", 0.98);
   declare_parameter("outpost.max_center_speed", 1.00);
   declare_parameter("outpost.max_yaw_rate", 12.0);
+  declare_parameter("outpost.max_yaw_rate_step", 3.0);
   declare_parameter("outpost.mode_enter_confirm_frames", 3);
   declare_parameter("outpost.mode_exit_confirm_frames", 4);
   declare_parameter("outpost.mode_min_dwell_frames", 6);
@@ -1268,6 +1285,16 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("outpost.ambiguous_publish_single_armor_semantics", true);
   declare_parameter("outpost.ambiguous_single_armor_zero_offset", true);
   declare_parameter("outpost.ambiguous_backend_use_imm_adapter", false);
+  declare_parameter("outpost.v2_warmup_enable", true);
+  declare_parameter("outpost.v2_warmup_min_groups", 3);
+  declare_parameter("outpost.v2_warmup_min_samples_per_group", 2);
+  declare_parameter("outpost.v2_warmup_max_frames", 60);
+  declare_parameter("outpost.v2_warmup_z_jump_gate", 0.025);
+  declare_parameter("outpost.v2_warmup_yaw_jump_gate", 0.75);
+  declare_parameter("outpost.v2_warmup_xyz_jump_gate", 0.18);
+  declare_parameter("outpost.v2_warmup_ratio_min", 1.55);
+  declare_parameter("outpost.v2_warmup_ratio_max", 2.45);
+  declare_parameter("outpost.v2_warmup_min_large_diff", 0.06);
   declare_parameter("outpost.v3.topk", 3);
   declare_parameter("outpost.v3.min_top1_confidence", 0.5);
   declare_parameter("outpost.v3.min_top1_top2_margin", 1.0);
@@ -1709,6 +1736,9 @@ void GimbalPipelineNode::declareGimbalControllerParameters() {
   declare_parameter("controller.fire.facing_filter_opening_angle_deg", 180.0);
   declare_parameter("controller.fire.use_gimbal_kinematics", false);
   declare_parameter("controller.fire.target_visibility_policy", std::string("facing_only"));
+  declare_parameter("controller.fire.velocity_low_pass.enable", true);
+  declare_parameter("controller.fire.velocity_low_pass.alpha", 0.35);
+  declare_parameter("controller.fire.velocity_low_pass.reset_timeout_s", 0.25);
   declare_parameter("controller.fire.probability.enable", false);
   declare_parameter("controller.fire.probability.future_window_ms", 50.0);
   declare_parameter("controller.fire.probability.future_step_ms", 10.0);
@@ -2777,8 +2807,12 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("outpost.binding_period_window").as_int();
     c.outpost.binding_period_weight =
       get_parameter("outpost.binding_period_weight").as_double();
+    c.outpost.binding_topology_prior_weight =
+      get_parameter("outpost.binding_topology_prior_weight").as_double();
     c.outpost.binding_period_min_spin_rate =
       get_parameter("outpost.binding_period_min_spin_rate").as_double();
+    c.outpost.spin_direction_confirm_frames =
+      get_parameter("outpost.spin_direction_confirm_frames").as_int();
     c.outpost.binding_period_update_min_confidence =
       get_parameter("outpost.binding_period_update_min_confidence").as_double();
     c.outpost.binding_period_update_min_jump =
@@ -2812,6 +2846,8 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("outpost.max_center_speed").as_double();
     c.outpost.max_yaw_rate =
       get_parameter("outpost.max_yaw_rate").as_double();
+    c.outpost.max_yaw_rate_step =
+      get_parameter("outpost.max_yaw_rate_step").as_double();
     c.outpost.mode_enter_confirm_frames =
       get_parameter("outpost.mode_enter_confirm_frames").as_int();
     c.outpost.mode_exit_confirm_frames =
@@ -2838,6 +2874,26 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       get_parameter("outpost.ambiguous_single_armor_zero_offset").as_bool();
     c.outpost.ambiguous_backend_use_imm_adapter =
       get_parameter("outpost.ambiguous_backend_use_imm_adapter").as_bool();
+    c.outpost.v2_warmup_enable =
+      get_parameter("outpost.v2_warmup_enable").as_bool();
+    c.outpost.v2_warmup_min_groups =
+      get_parameter("outpost.v2_warmup_min_groups").as_int();
+    c.outpost.v2_warmup_min_samples_per_group =
+      get_parameter("outpost.v2_warmup_min_samples_per_group").as_int();
+    c.outpost.v2_warmup_max_frames =
+      get_parameter("outpost.v2_warmup_max_frames").as_int();
+    c.outpost.v2_warmup_z_jump_gate =
+      get_parameter("outpost.v2_warmup_z_jump_gate").as_double();
+    c.outpost.v2_warmup_yaw_jump_gate =
+      get_parameter("outpost.v2_warmup_yaw_jump_gate").as_double();
+    c.outpost.v2_warmup_xyz_jump_gate =
+      get_parameter("outpost.v2_warmup_xyz_jump_gate").as_double();
+    c.outpost.v2_warmup_ratio_min =
+      get_parameter("outpost.v2_warmup_ratio_min").as_double();
+    c.outpost.v2_warmup_ratio_max =
+      get_parameter("outpost.v2_warmup_ratio_max").as_double();
+    c.outpost.v2_warmup_min_large_diff =
+      get_parameter("outpost.v2_warmup_min_large_diff").as_double();
     c.outpost.v3_topk = get_parameter("outpost.v3.topk").as_int();
     c.outpost.v3_min_top1_confidence =
       get_parameter("outpost.v3.min_top1_confidence").as_double();
@@ -2933,12 +2989,18 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
     c.outpost.binding_period_window = std::max(3, c.outpost.binding_period_window);
     c.outpost.binding_period_weight =
       std::max(0.0, c.outpost.binding_period_weight);
+    c.outpost.binding_topology_prior_weight =
+      std::max(0.0, c.outpost.binding_topology_prior_weight);
     c.outpost.binding_period_min_spin_rate =
       std::max(0.0, c.outpost.binding_period_min_spin_rate);
+    c.outpost.spin_direction_confirm_frames =
+      std::max(1, c.outpost.spin_direction_confirm_frames);
     c.outpost.binding_period_update_min_confidence =
       std::clamp(c.outpost.binding_period_update_min_confidence, 0.0, 1.0);
     c.outpost.binding_period_update_min_jump =
       std::max(0.0, c.outpost.binding_period_update_min_jump);
+    c.outpost.max_yaw_rate_step =
+      std::max(0.0, c.outpost.max_yaw_rate_step);
     c.outpost.binding_dz_ema_alpha =
       std::clamp(c.outpost.binding_dz_ema_alpha, 0.01, 1.0);
     c.outpost.binding_confidence_floor =
@@ -2949,6 +3011,25 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
       std::clamp(c.outpost.z_audit_rebind_min_confidence, 0.0, 1.0);
     c.outpost.z_audit_rebind_min_jump =
       std::max(0.0, c.outpost.z_audit_rebind_min_jump);
+    c.outpost.v2_warmup_min_groups =
+      std::clamp(c.outpost.v2_warmup_min_groups, 2, 6);
+    c.outpost.v2_warmup_min_samples_per_group =
+      std::max(1, c.outpost.v2_warmup_min_samples_per_group);
+    c.outpost.v2_warmup_max_frames =
+      std::max(1, c.outpost.v2_warmup_max_frames);
+    c.outpost.v2_warmup_z_jump_gate =
+      std::max(0.0, c.outpost.v2_warmup_z_jump_gate);
+    c.outpost.v2_warmup_yaw_jump_gate =
+      std::max(0.0, c.outpost.v2_warmup_yaw_jump_gate);
+    c.outpost.v2_warmup_xyz_jump_gate =
+      std::max(0.0, c.outpost.v2_warmup_xyz_jump_gate);
+    c.outpost.v2_warmup_ratio_min =
+      std::max(1.0, c.outpost.v2_warmup_ratio_min);
+    c.outpost.v2_warmup_ratio_max =
+      std::max(c.outpost.v2_warmup_ratio_min,
+               c.outpost.v2_warmup_ratio_max);
+    c.outpost.v2_warmup_min_large_diff =
+      std::max(0.0, c.outpost.v2_warmup_min_large_diff);
     c.outpost.binding_conflict_position_scale =
       std::clamp(c.outpost.binding_conflict_position_scale, 0.0, 1.0);
     c.outpost.weight_xy_residual = std::max(0.0, c.outpost.weight_xy_residual);
@@ -4618,8 +4699,7 @@ void GimbalPipelineNode::publishGimbalMarkers(
 
   // Trajectory
   if (has_valid_measurement) {
-    trajectory_marker_.header.frame_id = "gimbal_link";
-    trajectory_marker_.header.stamp = target_robot.header.stamp;
+    trajectory_marker_.header = target_robot.header;
     trajectory_marker_.id = 0;
     trajectory_marker_.action = visualization_msgs::msg::Marker::ADD;
     trajectory_marker_.points.clear();

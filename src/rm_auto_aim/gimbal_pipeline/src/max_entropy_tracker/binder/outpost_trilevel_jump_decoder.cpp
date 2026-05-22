@@ -239,7 +239,23 @@ void OutpostTriLevelJumpDecoder::update_periodic_evidence(
   const double spin_gate =
       std::max(0.0, config_.periodic_min_spin_rate);
   if (std::abs(yaw_rate_est) >= spin_gate) {
-    ctx.spin_direction = (yaw_rate_est >= 0.0) ? 1 : -1;
+    const int observed_direction = (yaw_rate_est >= 0.0) ? 1 : -1;
+    if (observed_direction == ctx.spin_direction) {
+      ctx.pending_spin_direction = 0;
+      ctx.pending_spin_direction_count = 0;
+    } else if (observed_direction == ctx.pending_spin_direction) {
+      ++ctx.pending_spin_direction_count;
+    } else {
+      ctx.pending_spin_direction = observed_direction;
+      ctx.pending_spin_direction_count = 1;
+    }
+
+    constexpr int kConfirmFrames = 3;
+    if (ctx.pending_spin_direction_count >= kConfirmFrames) {
+      ctx.spin_direction = ctx.pending_spin_direction;
+      ctx.pending_spin_direction = 0;
+      ctx.pending_spin_direction_count = 0;
+    }
   }
 
   if (!std::isfinite(z_jump)) {

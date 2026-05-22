@@ -37,16 +37,21 @@ ArmorSelectionResult ArmorSelector::selectBest(
 {
   bool auto_switch_active = false;
   SelectionMethod effective_method = selection_method_;
-  const bool selection_has_virtual_fallback =
-    selection_method_ == SelectionMethod::FACING_OR_VIRTUAL_POSE ||
-    selection_method_ == SelectionMethod::FACING_OR_VIRTUAL_FIXED_ID;
-  if (virtual_auto_switch_enable_ && !selection_has_virtual_fallback) {
+  if (virtual_auto_switch_enable_) {
     const double abs_v_yaw = std::abs(target_v_yaw);
+    if (!abs_v_yaw_filter_initialized_) {
+      filtered_abs_v_yaw_ = abs_v_yaw;
+      abs_v_yaw_filter_initialized_ = true;
+    } else {
+      filtered_abs_v_yaw_ =
+        abs_v_yaw_lpf_alpha_ * abs_v_yaw + (1.0 - abs_v_yaw_lpf_alpha_) * filtered_abs_v_yaw_;
+    }
+
     if (virtual_mode_active_) {
-      if (abs_v_yaw < virtual_auto_switch_exit_vyaw_) {
+      if (filtered_abs_v_yaw_ < virtual_auto_switch_exit_vyaw_) {
         virtual_mode_active_ = false;
       }
-    } else if (abs_v_yaw > virtual_auto_switch_enter_vyaw_) {
+    } else if (filtered_abs_v_yaw_ > virtual_auto_switch_enter_vyaw_) {
       virtual_mode_active_ = true;
     }
     auto_switch_active = virtual_mode_active_;
@@ -210,6 +215,8 @@ void ArmorSelector::resetState()
 {
   last_selected_index_ = -1;
   virtual_mode_active_ = false;
+  filtered_abs_v_yaw_ = 0.0;
+  abs_v_yaw_filter_initialized_ = false;
 }
 
 ArmorSelectionResult ArmorSelector::selectByMinMovement(

@@ -252,6 +252,51 @@ TEST(OutpostBinding, StructuredYawAndOffsetsMatchObservedArmorPosition) {
   EXPECT_NEAR(reconstructed.z(), obs_same.z, 0.05);
 }
 
+TEST(OutpostBinding, BuilderPublishesAmbiguousOutpostAsSingleZeroOffsetArmor) {
+  auto cfg = makeTestConfig();
+
+  OutpostArmorTracker tracker(cfg, 0.05, false);
+
+  const auto init_obs = makeOutpostObservation(cfg, 0.2, -0.1, 0.3, 0.1, 0, 0.00);
+  tracker.initialize({init_obs});
+  ASSERT_TRUE(tracker.is_ambiguous_single_mode());
+
+  const auto tracker_offsets = tracker.build_armors_offset_for_message();
+  ASSERT_EQ(tracker_offsets.size(), 1u);
+  ASSERT_NEAR(tracker_offsets[0].position.z, cfg.outpost.z_offset_0, 1e-6);
+
+  RobotDescriptionFacade facade;
+  std_msgs::msg::Header header;
+  header.frame_id = "odom";
+  const std::string target_frame = "odom";
+  const std::string robot_id = "outpost";
+
+  TrackedRobotBuildInput input{
+    header,
+    target_frame,
+    robot_id,
+    tracker,
+    nullptr,
+    1};
+
+  const auto result = facade.tryBuildTrackedRobot(input);
+  ASSERT_TRUE(result.ok());
+  const auto &robot = result.robot;
+
+  EXPECT_EQ(robot.robot_type, rm_interfaces::msg::TrackedRobot::OUTPOST_3);
+  EXPECT_EQ(robot.representation_mode,
+            rm_interfaces::msg::TrackedRobot::REP_AMBIGUOUS_SINGLE_ARMOR);
+  EXPECT_EQ(robot.num_armors, 1);
+  EXPECT_NEAR(robot.radius, 0.0, 1e-12);
+  EXPECT_NEAR(robot.radius_2, 0.0, 1e-12);
+  EXPECT_NEAR(robot.d_za, 0.0, 1e-12);
+  EXPECT_NEAR(robot.d_zc, 0.0, 1e-12);
+  ASSERT_EQ(robot.armors_offset.size(), 1u);
+  EXPECT_NEAR(robot.armors_offset[0].position.x, 0.0, 1e-12);
+  EXPECT_NEAR(robot.armors_offset[0].position.y, 0.0, 1e-12);
+  EXPECT_NEAR(robot.armors_offset[0].position.z, 0.0, 1e-12);
+}
+
 TEST(OutpostBinding, BuilderEncodesOutpostOffsetsAndFallbackSummary) {
   auto cfg = makeTestConfig();
   cfg.outpost.stable_frames = 1;

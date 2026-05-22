@@ -98,9 +98,27 @@ class OutpostTrackerV2 : public BaseTracker {
   const DebugSnapshot &debug_snapshot() const { return debug_snapshot_; }
 
  private:
+  struct WarmupGroup {
+    int sample_count = 0;
+    double mean_z = 0.0;
+    Eigen::Vector3d last_pos = Eigen::Vector3d::Zero();
+    double last_yaw = 0.0;
+  };
+
+  struct WarmupCommit {
+    bool ready = false;
+    int current_panel = -1;
+    double dz_small = std::numeric_limits<double>::quiet_NaN();
+    double dz_large = std::numeric_limits<double>::quiet_NaN();
+  };
+
   int infer_init_panel(const ObservationData &obs) const;
   int semantic_from_panel(int panel_id) const;
   void sync_runtime_from_backend(const outpost_v2::BackendStateSnapshot &snap);
+  void reset_warmup();
+  void update_warmup_evidence(const ObservationData &obs);
+  WarmupCommit try_commit_warmup() const;
+  bool run_warmup_update(const ObservationData &obs);
   void refresh_debug(const ObservationData *obs,
                      const outpost_v2::BindingCandidate &candidate,
                      const binder::BinderOutput &binder_out,
@@ -122,6 +140,11 @@ class OutpostTrackerV2 : public BaseTracker {
 
   outpost_v2::OutpostRuntimeContext ctx_;
   DebugSnapshot debug_snapshot_{};
+
+  bool warmup_active_ = false;
+  int warmup_frames_ = 0;
+  int warmup_current_group_ = -1;
+  std::vector<WarmupGroup> warmup_groups_;
 };
 
 }  // namespace fyt::auto_aim

@@ -30,6 +30,8 @@ void OutpostPeriodicDzEvidence::reset() {
   period_confidence_ = 0.0;
   period_phase_index_ = -1;
   spin_direction_ = 0;
+  pending_spin_direction_ = 0;
+  pending_spin_direction_count_ = 0;
 }
 
 void OutpostPeriodicDzEvidence::update(
@@ -37,7 +39,24 @@ void OutpostPeriodicDzEvidence::update(
   const double spin_gate =
       std::max(0.0, config_.outpost.binding_period_min_spin_rate);
   if (std::abs(yaw_rate_est) >= spin_gate) {
-    spin_direction_ = (yaw_rate_est >= 0.0) ? 1 : -1;
+    const int observed_direction = (yaw_rate_est >= 0.0) ? 1 : -1;
+    if (observed_direction == spin_direction_) {
+      pending_spin_direction_ = 0;
+      pending_spin_direction_count_ = 0;
+    } else if (observed_direction == pending_spin_direction_) {
+      ++pending_spin_direction_count_;
+    } else {
+      pending_spin_direction_ = observed_direction;
+      pending_spin_direction_count_ = 1;
+    }
+
+    const int confirm_frames =
+        std::max(1, config_.outpost.spin_direction_confirm_frames);
+    if (pending_spin_direction_count_ >= confirm_frames) {
+      spin_direction_ = pending_spin_direction_;
+      pending_spin_direction_ = 0;
+      pending_spin_direction_count_ = 0;
+    }
   }
 
   if (!std::isfinite(z_jump)) {

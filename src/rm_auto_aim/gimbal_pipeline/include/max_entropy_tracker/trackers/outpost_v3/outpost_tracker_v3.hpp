@@ -2,6 +2,7 @@
 #ifndef MAX_ENTROPY_TRACKER_TRACKERS_OUTPOST_V3_OUTPOST_TRACKER_V3_HPP_
 #define MAX_ENTROPY_TRACKER_TRACKERS_OUTPOST_V3_OUTPOST_TRACKER_V3_HPP_
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -98,6 +99,9 @@ class OutpostTrackerV3 : public BaseTracker {
   int warmup_winner_panel_ = -1;
   double warmup_best_margin_ = 0.0;
   double warmup_best_confidence_ = 0.0;
+  std::array<std::unique_ptr<outpost_v3::OutpostInEKFBackend>,
+             outpost_v3::kNumPanels> warmup_backends_{};
+  std::array<double, outpost_v3::kNumPanels> warmup_score_sum_{{0.0, 0.0, 0.0}};
   std::optional<ObservationData> last_obs_;
   int phase_audit_pass_streak_ = 0;
 

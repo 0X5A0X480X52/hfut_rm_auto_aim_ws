@@ -88,8 +88,6 @@ void OutpostTrackerV3::initialize(const std::vector<ObservationData> &obs,
   if (obs.empty())
     throw std::invalid_argument("At least one observation required");
 
-  // Start with panel 0 as initial guess — the hypothesis enumeration
-  // in update() will naturally correct this if wrong.
   int init_panel = obs[0].panel_id.value_or(0);
   // r1/r2/dza ignored — outpost InEKF uses known structure constants
   backend_->reset(obs[0], init_panel, 0.15, 0.20, 0.0);
@@ -103,6 +101,12 @@ void OutpostTrackerV3::initialize(const std::vector<ObservationData> &obs,
   warmup_winner_panel_ = -1;
   warmup_best_margin_ = 0.0;
   warmup_best_confidence_ = 0.0;
+  warmup_score_sum_.fill(0.0);
+  for (int pid = 0; pid < outpost_v3::kNumPanels; ++pid) {
+    warmup_backends_[pid] =
+        std::make_unique<outpost_v3::OutpostInEKFBackend>(cfg_, dt_);
+    warmup_backends_[pid]->reset(obs[0], pid, 0.15, 0.20, 0.0);
+  }
   last_obs_ = obs[0];
   phase_audit_pass_streak_ = 0;
 
@@ -116,6 +120,13 @@ void OutpostTrackerV3::predict(std::optional<double> target_time) {
   double dt = compute_dt(target_time);
   if (dt <= 0.0) return;
   backend_->predict(dt);
+  if (warmup_active_) {
+    for (auto &candidate_backend : warmup_backends_) {
+      if (candidate_backend && candidate_backend->initialized()) {
+        candidate_backend->predict(dt);
+      }
+    }
+  }
   if (target_time.has_value()) update_time(target_time.value());
 }
 
@@ -129,7 +140,15 @@ bool OutpostTrackerV3::update(const std::vector<ObservationData> &obs) {
 
   // Predict to observation time
   if (current_time_.has_value() && obs_ts > current_time_.value()) {
-    backend_->predict(obs_ts - current_time_.value());
+    const double dt_obs = obs_ts - current_time_.value();
+    backend_->predict(dt_obs);
+    if (warmup_active_) {
+      for (auto &candidate_backend : warmup_backends_) {
+        if (candidate_backend && candidate_backend->initialized()) {
+          candidate_backend->predict(dt_obs);
+        }
+      }
+    }
   }
 
   // Build prior snapshot — all hypotheses evaluated from same prior
@@ -468,12 +487,35 @@ bool OutpostTrackerV3::run_warmup(const ObservationData &obs,
                                   const norm4_v3::PredictContext &ctx,
                                   double *confidence_out,
                                   double *margin_out) {
+  (void)ctx;
   warmup_total_frames_++;
-  std::vector<double> scores(outpost_v3::kNumPanels, -1e9);
+
   for (int pid = 0; pid < outpost_v3::kNumPanels; ++pid) {
-    auto eval = backend_->evaluateSingle(ctx, obs, pid);
-    if (eval.valid) scores[pid] = eval.log_likelihood;
+    if (!warmup_backends_[pid]) {
+      warmup_backends_[pid] =
+          std::make_unique<outpost_v3::OutpostInEKFBackend>(cfg_, dt_);
+      warmup_backends_[pid]->reset(obs, pid, 0.15, 0.20, 0.0);
+    }
+
+    const auto candidate_ctx = warmup_backends_[pid]->buildPredictContext();
+    const auto eval = warmup_backends_[pid]->evaluateSingle(
+        candidate_ctx, obs, pid);
+    const double frame_score =
+        (eval.valid && std::isfinite(eval.log_likelihood))
+            ? eval.log_likelihood
+            : -50.0;
+    warmup_score_sum_[pid] += frame_score;
+
+    if (eval.valid && eval.gate_pass) {
+      auto trial = warmup_backends_[pid]->tryUpdateSingle(
+          candidate_ctx, obs, pid);
+      if (trial.success) {
+        warmup_backends_[pid]->commit(trial);
+      }
+    }
   }
+
+  std::array<double, outpost_v3::kNumPanels> scores = warmup_score_sum_;
   int top1 = 0, top2 = 1;
   if (scores[top2] > scores[top1]) std::swap(top1, top2);
   for (int i = 2; i < outpost_v3::kNumPanels; ++i) {
@@ -502,13 +544,21 @@ bool OutpostTrackerV3::run_warmup(const ObservationData &obs,
     warmup_settle_frames_ = 0;
   }
   if (warmup_settle_frames_ >= cfg_.warmup.min_settle_frames) {
-    backend_->reset(obs, warmup_winner_panel_, 0.15, 0.20, 0.0);
+    if (warmup_backends_[warmup_winner_panel_]) {
+      *backend_ = *warmup_backends_[warmup_winner_panel_];
+    } else {
+      backend_->reset(obs, warmup_winner_panel_, 0.15, 0.20, 0.0);
+    }
     current_panel_id_ = warmup_winner_panel_;
     mode_ = outpost_v3::OutpostV3Mode::STRUCTURED;
     warmup_active_ = false;
     return true;
   }
   if (warmup_total_frames_ > cfg_.warmup.warmup_frames * 3) {
+    if (warmup_backends_[top1]) {
+      *backend_ = *warmup_backends_[top1];
+      current_panel_id_ = top1;
+    }
     warmup_active_ = false;
   }
   return false;

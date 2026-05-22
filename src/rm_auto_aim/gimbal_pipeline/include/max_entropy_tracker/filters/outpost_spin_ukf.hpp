@@ -69,6 +69,7 @@ class OutpostSpinUKF : public BaseUKF, public SpinFilterInterface {
 
   int sanitize_panel_id(int panel_id) const;
   void apply_angle_constraints();
+  void apply_motion_constraints(double previous_yaw_rate);
 
   std::shared_ptr<CompositeProcessModel> motion_model_;
   DynamicStateIndex state_idx_;

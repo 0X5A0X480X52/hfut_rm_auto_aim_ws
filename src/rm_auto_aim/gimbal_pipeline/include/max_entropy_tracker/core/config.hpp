@@ -201,7 +201,9 @@ struct OutpostParameters {
   double binding_switch_strong_score = 0.60;
   int binding_period_window = 12;
   double binding_period_weight = 0.60;
+  double binding_topology_prior_weight = 4.0;
   double binding_period_min_spin_rate = 0.8;
+  int spin_direction_confirm_frames = 3;
   double binding_period_update_min_confidence = 0.55;
   double binding_period_update_min_jump = 0.015;
   double binding_dz_ema_alpha = 0.20;
@@ -224,11 +226,25 @@ struct OutpostParameters {
   double yaw_rate_damping = 0.98;
   double max_center_speed = 1.00;
   double max_yaw_rate = 12.0;
+  double max_yaw_rate_step = 3.0;
 
   // ── Ambiguous semantics & backend control ──
   bool ambiguous_publish_single_armor_semantics = true;
   bool ambiguous_single_armor_zero_offset = true;
   bool ambiguous_backend_use_imm_adapter = false;
+
+  // OutpostTrackerV2 ID warmup: publish ambiguous single-armor output while
+  // collecting relative z-level evidence, then bind 0/1/2 after dz/2dz is observed.
+  bool v2_warmup_enable = true;
+  int v2_warmup_min_groups = 3;
+  int v2_warmup_min_samples_per_group = 2;
+  int v2_warmup_max_frames = 60;
+  double v2_warmup_z_jump_gate = 0.025;
+  double v2_warmup_yaw_jump_gate = 0.75;
+  double v2_warmup_xyz_jump_gate = 0.18;
+  double v2_warmup_ratio_min = 1.55;
+  double v2_warmup_ratio_max = 2.45;
+  double v2_warmup_min_large_diff = 0.06;
 
   // ── Outpost V3 config ──
   int v3_topk = 3;

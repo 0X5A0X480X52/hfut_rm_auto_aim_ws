@@ -38,6 +38,13 @@ constexpr double kMinDistance = 1e-3;
 constexpr double kMinBulletSpeed = 1e-3;
 constexpr double kDeg2Rad = M_PI / 180.0;
 
+void assignVector3(geometry_msgs::msg::Vector3 & dst, const Eigen::Vector3d & src)
+{
+  dst.x = src.x();
+  dst.y = src.y();
+  dst.z = src.z();
+}
+
 Eigen::Vector3d fallbackArmorNormal(
   const Eigen::Vector3d & armor_position,
   const Eigen::Vector3d & center_position)
@@ -314,12 +321,84 @@ void FireAdviceEngine::setComponents(
   fire_advisor_ = fire_advisor;
 }
 
+void FireAdviceEngine::setVelocityLowPassConfig(
+  const FireAdviceVelocityLowPassConfig & config)
+{
+  velocity_filter_cfg_ = config;
+  velocity_filter_cfg_.alpha = std::clamp(velocity_filter_cfg_.alpha, 0.0, 1.0);
+  velocity_filter_cfg_.reset_timeout_s = std::max(velocity_filter_cfg_.reset_timeout_s, 0.0);
+  resetVelocityLowPass();
+}
+
+void FireAdviceEngine::resetVelocityLowPass() const
+{
+  velocity_filter_initialized_ = false;
+  velocity_filter_robot_id_.clear();
+  velocity_filter_last_stamp_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+  velocity_filter_linear_.setZero();
+  velocity_filter_yaw_rate_ = 0.0;
+}
+
+FireAdviceEngineRequest FireAdviceEngine::applyVelocityLowPass(
+  const FireAdviceEngineRequest & request) const
+{
+  if (!velocity_filter_cfg_.enable || velocity_filter_cfg_.alpha >= 1.0) {
+    resetVelocityLowPass();
+    return request;
+  }
+
+  FireAdviceEngineRequest filtered_request = request;
+  auto filtered_robot =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(request.target_robot);
+
+  const Eigen::Vector3d raw_linear =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::linearVelocity(filtered_robot);
+  const double raw_yaw_rate =
+    fyt::auto_aim::robot_description::TrackedRobotUsage::yawVelocity(filtered_robot);
+
+  bool should_reset = !velocity_filter_initialized_ ||
+    filtered_robot.robot_id != velocity_filter_robot_id_;
+
+  const bool has_last_stamp = velocity_filter_last_stamp_.nanoseconds() > 0;
+  const bool has_current_stamp = request.observation_stamp.nanoseconds() > 0;
+  if (!should_reset && has_last_stamp && has_current_stamp) {
+    const double dt = (request.observation_stamp - velocity_filter_last_stamp_).seconds();
+    should_reset = dt < 0.0 || dt > velocity_filter_cfg_.reset_timeout_s;
+  }
+
+  const double alpha = std::clamp(velocity_filter_cfg_.alpha, 0.0, 1.0);
+  if (should_reset) {
+    velocity_filter_linear_ = raw_linear;
+    velocity_filter_yaw_rate_ = raw_yaw_rate;
+  } else {
+    velocity_filter_linear_ =
+      alpha * raw_linear + (1.0 - alpha) * velocity_filter_linear_;
+    velocity_filter_yaw_rate_ =
+      alpha * raw_yaw_rate + (1.0 - alpha) * velocity_filter_yaw_rate_;
+  }
+
+  velocity_filter_initialized_ = true;
+  velocity_filter_robot_id_ = filtered_robot.robot_id;
+  velocity_filter_last_stamp_ = request.observation_stamp;
+
+  assignVector3(filtered_robot.center_velocity, velocity_filter_linear_);
+  assignVector3(filtered_robot.center_twist.linear, velocity_filter_linear_);
+  filtered_robot.yaw_velocity = velocity_filter_yaw_rate_;
+  filtered_robot.center_twist.angular.z = velocity_filter_yaw_rate_;
+  filtered_robot.full_state_valid = true;
+
+  filtered_request.target_robot = filtered_robot;
+  return filtered_request;
+}
+
 FireAdviceEngineResult FireAdviceEngine::evaluate(const FireAdviceEngineRequest & request) const
 {
-  FireAdviceEngineResult result;
-  result.timeline = timing_resolver_.resolve(request);
+  const auto filtered_request = applyVelocityLowPass(request);
 
-  auto impacts = candidate_solver_.solve(request, result.timeline, flight_time_iters_);
+  FireAdviceEngineResult result;
+  result.timeline = timing_resolver_.resolve(filtered_request);
+
+  auto impacts = candidate_solver_.solve(filtered_request, result.timeline, flight_time_iters_);
   if (impacts.empty()) {
     return result;
   }
@@ -328,9 +407,13 @@ FireAdviceEngineResult FireAdviceEngine::evaluate(const FireAdviceEngineRequest 
   FireAdvisor * advisor = fire_advisor_ ? fire_advisor_.get() : &default_advisor;
 
   const auto [muzzle_yaw, muzzle_pitch] =
-    gimbal_pose_predictor_.predictMuzzlePose(request, result.timeline, use_gimbal_kinematics_);
+    gimbal_pose_predictor_.predictMuzzlePose(
+      filtered_request,
+      result.timeline,
+      use_gimbal_kinematics_);
   const auto normalized_robot =
-    fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(request.target_robot);
+    fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(
+      filtered_request.target_robot);
 
   bool has_best = false;
   for (const auto & impact : impacts) {
@@ -410,24 +493,24 @@ FireAdviceEngineResult FireAdviceEngine::evaluate(const FireAdviceEngineRequest 
       [&](const FireAdviceCandidateResult & c) {return c.candidate_index == result.best_candidate_index;});
     if (best_it != result.candidates.end()) {
       const auto prob = probability_engine_.evaluate(
-        request.target_robot,
+        filtered_request.target_robot,
         std::max(best_it->distance, kMinDistance),
         best_it->yaw_error,
         best_it->pitch_error,
         std::max(best_it->flight_time_s, 0.0),
-        std::max(request.bullet_speed, kMinBulletSpeed),
+        std::max(filtered_request.bullet_speed, kMinBulletSpeed),
         muzzle_yaw,
         muzzle_pitch,
-        request.current_yaw_rate,
-        request.current_pitch_rate,
-        request.current_yaw_accel,
-        request.current_pitch_accel,
+        filtered_request.current_yaw_rate,
+        filtered_request.current_pitch_rate,
+        filtered_request.current_yaw_accel,
+        filtered_request.current_pitch_accel,
         best_it->armor_position,
         best_it->armor_normal,
         best_it->center_velocity,
         best_it->armor_yaw_rate,
         1.0 / 120.0,
-        request.target_robot.robot_id);
+        filtered_request.target_robot.robot_id);
       if (prob.valid) {
         result.p_hit_window = prob.p_window;
         result.fire_score = prob.fire_score;

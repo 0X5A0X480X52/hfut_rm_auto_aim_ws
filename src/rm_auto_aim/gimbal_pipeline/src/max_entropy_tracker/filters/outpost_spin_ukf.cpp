@@ -1,6 +1,7 @@
 // Copyright (C) Max Entropy Tracker. Licensed under the MIT License.
 #include "max_entropy_tracker/filters/outpost_spin_ukf.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -120,6 +121,47 @@ void OutpostSpinUKF::apply_angle_constraints() {
   x_(state_idx_.DELTA()) = normalize_angle(x_(state_idx_.DELTA()));
 }
 
+void OutpostSpinUKF::apply_motion_constraints(double previous_yaw_rate) {
+  if (!initialized_) return;
+  const auto idx = state_idx_;
+
+  if (config_.outpost.assume_static_center) {
+    const double lin_damping =
+        std::clamp(config_.outpost.linear_velocity_damping, 0.0, 1.0);
+    x_(idx.VX()) *= lin_damping;
+    x_(idx.VY()) *= lin_damping;
+    x_(idx.VZ()) *= lin_damping;
+  }
+
+  const double yaw_damping =
+      std::clamp(config_.outpost.yaw_rate_damping, 0.0, 1.0);
+  x_(idx.DELTA_RATE()) *= yaw_damping;
+
+  const Eigen::Vector3d vel(x_(idx.VX()), x_(idx.VY()), x_(idx.VZ()));
+  const double max_center_speed =
+      std::max(0.01, config_.outpost.max_center_speed);
+  const double speed_norm = vel.norm();
+  if (speed_norm > max_center_speed) {
+    const double ratio = max_center_speed / speed_norm;
+    x_(idx.VX()) *= ratio;
+    x_(idx.VY()) *= ratio;
+    x_(idx.VZ()) *= ratio;
+  }
+
+  const double max_yaw_rate = std::max(0.01, config_.outpost.max_yaw_rate);
+  x_(idx.DELTA_RATE()) =
+      std::clamp(x_(idx.DELTA_RATE()), -max_yaw_rate, max_yaw_rate);
+
+  const double max_yaw_rate_step =
+      std::max(0.0, config_.outpost.max_yaw_rate_step);
+  if (max_yaw_rate_step > 0.0 && std::isfinite(previous_yaw_rate)) {
+    x_(idx.DELTA_RATE()) =
+        std::clamp(x_(idx.DELTA_RATE()),
+                   previous_yaw_rate - max_yaw_rate_step,
+                   previous_yaw_rate + max_yaw_rate_step);
+  }
+}
+
 void OutpostSpinUKF::predict(std::optional<double> dt_opt) {
   if (!initialized_) return;
 
@@ -128,6 +170,7 @@ void OutpostSpinUKF::predict(std::optional<double> dt_opt) {
 
   const double dt = dt_opt.value_or(dt_);
   Q_ = motion_model_->build_Q(dt);
+  const double previous_yaw_rate = x_(state_idx_.DELTA_RATE());
 
   Eigen::MatrixXd sigma_pts = generate_sigma_points(x_, P_);
   const int n_sigma = sigma_pts.rows();
@@ -155,6 +198,7 @@ void OutpostSpinUKF::predict(std::optional<double> dt_opt) {
   }
   P_ = P_pred + Q_;
 
+  apply_motion_constraints(previous_yaw_rate);
   ensure_covariance_valid();
 }
 
@@ -181,6 +225,7 @@ Eigen::VectorXd OutpostSpinUKF::observation_model(const Eigen::VectorXd &x,
 bool OutpostSpinUKF::update_with_panel(const ObservationData &obs, int panel_id,
                                        double position_confidence) {
   if (!initialized_) return false;
+  const double previous_yaw_rate = x_(state_idx_.DELTA_RATE());
 
   const int pid = sanitize_panel_id(panel_id);
   selected_panel_id_ = pid;
@@ -240,6 +285,7 @@ bool OutpostSpinUKF::update_with_panel(const ObservationData &obs, int panel_id,
 
   apply_kalman_update(K_opt.value(), innov, Pzz);
   apply_angle_constraints();
+  apply_motion_constraints(previous_yaw_rate);
 
   last_innov_xyz_ = innov.head<3>();
   last_innov_yaw_ = innov(3);

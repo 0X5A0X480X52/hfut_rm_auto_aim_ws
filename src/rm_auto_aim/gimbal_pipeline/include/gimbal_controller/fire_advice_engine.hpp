@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -44,6 +45,13 @@ struct FireAdviceEngineTimingRequest
   double max_processing_delay_s{0.5};
   bool include_processing_delay{true};
   bool include_control_latency_in_target_prediction{false};
+};
+
+struct FireAdviceVelocityLowPassConfig
+{
+  bool enable{true};
+  double alpha{0.35};
+  double reset_timeout_s{0.25};
 };
 
 struct FireAdviceEngineRequest
@@ -240,6 +248,8 @@ public:
     candidate_solver_.setFacingFilterOpeningAngleDeg(opening_angle_deg);
   }
 
+  void setVelocityLowPassConfig(const FireAdviceVelocityLowPassConfig & config);
+
   void setProbabilityConfig(
     const fire_advice::ProbabilityConfig & probability_cfg,
     const fire_advice::SigmaPointConfig & sigma_cfg,
@@ -254,6 +264,9 @@ public:
   FireAdviceEngineResult evaluate(const FireAdviceEngineRequest & request) const;
 
 private:
+  FireAdviceEngineRequest applyVelocityLowPass(const FireAdviceEngineRequest & request) const;
+  void resetVelocityLowPass() const;
+
   std::shared_ptr<FireAdvisor> fire_advisor_;
   FireTimingResolver timing_resolver_;
   CandidateImpactSolver candidate_solver_;
@@ -265,6 +278,12 @@ private:
 
   int flight_time_iters_{2};
   bool use_gimbal_kinematics_{false};
+  FireAdviceVelocityLowPassConfig velocity_filter_cfg_;
+  mutable bool velocity_filter_initialized_{false};
+  mutable std::string velocity_filter_robot_id_;
+  mutable rclcpp::Time velocity_filter_last_stamp_{0, 0, RCL_ROS_TIME};
+  mutable Eigen::Vector3d velocity_filter_linear_{Eigen::Vector3d::Zero()};
+  mutable double velocity_filter_yaw_rate_{0.0};
 };
 
 }  // namespace gimbal_controller

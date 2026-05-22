@@ -1355,6 +1355,15 @@ void OutpostArmorTracker::apply_motion_constraints_from_config() {
   const double max_yaw_rate = std::max(0.01, config_.outpost.max_yaw_rate);
   x(idx.DELTA_RATE()) =
       std::clamp(x(idx.DELTA_RATE()), -max_yaw_rate, max_yaw_rate);
+
+  const double max_yaw_rate_step =
+      std::max(0.0, config_.outpost.max_yaw_rate_step);
+  if (max_yaw_rate_step > 0.0 && std::isfinite(yaw_rate_est_)) {
+    x(idx.DELTA_RATE()) =
+        std::clamp(x(idx.DELTA_RATE()),
+                   yaw_rate_est_ - max_yaw_rate_step,
+                   yaw_rate_est_ + max_yaw_rate_step);
+  }
 }
 
 void OutpostArmorTracker::sync_internal_state_from_filter() {

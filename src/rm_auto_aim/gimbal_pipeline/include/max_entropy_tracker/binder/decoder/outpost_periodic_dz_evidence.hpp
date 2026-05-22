@@ -40,6 +40,8 @@ class OutpostPeriodicDzEvidence {
   double period_confidence_ = 0.0;
   int period_phase_index_ = -1;
   int spin_direction_ = 0;
+  int pending_spin_direction_ = 0;
+  int pending_spin_direction_count_ = 0;
 };
 
 }  // namespace fyt::auto_aim::binder

@@ -668,7 +668,9 @@ Eigen::VectorXd OutpostInEKFBackend::initialize_state(
   const int pid = ((panel_id % kNumPanels) + kNumPanels) % kNumPanels;
   Eigen::VectorXd x0 = Eigen::VectorXd::Zero(Idx::kDim);
 
-  const double armor_yaw = obs.yaw;
+  // Observation yaw is the armor face direction. The structure phase uses the
+  // radial direction from center to armor, which is opposite by pi.
+  const double armor_yaw = normalize_angle(obs.yaw - M_PI);
   const double center_yaw =
       normalize_angle(armor_yaw - geom_.panel_angles[pid]);
 

@@ -28,6 +28,18 @@ namespace fyt::auto_aim::robot_description
 namespace
 {
 
+geometry_msgs::msg::Pose makeSingleArmorZeroOffset()
+{
+  geometry_msgs::msg::Pose single_offset;
+  single_offset.position.x = 0.0;
+  single_offset.position.y = 0.0;
+  single_offset.position.z = 0.0;
+  tf2::Quaternion q;
+  q.setRPY(0.0, 0.0, 0.0);
+  single_offset.orientation = tf2::toMsg(q);
+  return single_offset;
+}
+
 class FixedProfileTrackedRobotBuilder final : public ITrackedRobotBuilderStrategy
 {
 public:
@@ -128,6 +140,7 @@ public:
       (input.tracker.supports_ambiguous_single_semantics() &&
       input.tracker.is_ambiguous_single_mode()) || force_single_semantics;
     if (ambiguous_mode) {
+      msg.num_armors = 1;
       msg.radius = 0.0;
       msg.radius_2 = 0.0;
       msg.d_za = 0.0;
@@ -141,37 +154,29 @@ public:
     const double off_r2 = input.smoothed ? input.smoothed->r2 : msg.radius_2;
     const double off_dza = input.smoothed ? input.smoothed->dza : msg.d_za;
 
-    const auto runtime_offsets = input.tracker.build_armors_offset_for_message();
-    if (!runtime_offsets.empty()) {
-      msg.armors_offset = runtime_offsets;
-
-      // For outpost, also encode a fallback-compatible tri-layer summary.
-      // Skip this in ambiguous mode (single armor, no tri-layer).
-      if (!ambiguous_mode &&
-          msg.robot_type == rm_interfaces::msg::TrackedRobot::OUTPOST_3 &&
-          runtime_offsets.size() >= 3) {
-        double z_min = runtime_offsets.front().position.z;
-        double z_max = z_min;
-        double z_sum = 0.0;
-        for (const auto &pose : runtime_offsets) {
-          z_min = std::min(z_min, pose.position.z);
-          z_max = std::max(z_max, pose.position.z);
-          z_sum += pose.position.z;
-        }
-        msg.d_za = 0.5 * (z_max - z_min);
-        msg.d_zc = z_sum / static_cast<double>(runtime_offsets.size());
-      }
+    if (ambiguous_mode) {
+      // Ambiguous mode is a single-armor representation: center_position is
+      // already the armor position, so offsets must not encode structure.
+      msg.armors_offset = {makeSingleArmorZeroOffset()};
     } else {
-      if (ambiguous_mode) {
-        // Single zero-offset armor for ambiguous mode.
-        geometry_msgs::msg::Pose single_offset;
-        single_offset.position.x = 0.0;
-        single_offset.position.y = 0.0;
-        single_offset.position.z = 0.0;
-        tf2::Quaternion q;
-        q.setRPY(0.0, 0.0, 0.0);
-        single_offset.orientation = tf2::toMsg(q);
-        msg.armors_offset = {single_offset};
+      const auto runtime_offsets = input.tracker.build_armors_offset_for_message();
+      if (!runtime_offsets.empty()) {
+        msg.armors_offset = runtime_offsets;
+
+        // For outpost, also encode a fallback-compatible tri-layer summary.
+        if (msg.robot_type == rm_interfaces::msg::TrackedRobot::OUTPOST_3 &&
+            runtime_offsets.size() >= 3) {
+          double z_min = runtime_offsets.front().position.z;
+          double z_max = z_min;
+          double z_sum = 0.0;
+          for (const auto &pose : runtime_offsets) {
+            z_min = std::min(z_min, pose.position.z);
+            z_max = std::max(z_max, pose.position.z);
+            z_sum += pose.position.z;
+          }
+          msg.d_za = 0.5 * (z_max - z_min);
+          msg.d_zc = z_sum / static_cast<double>(runtime_offsets.size());
+        }
       } else {
         msg.armors_offset = TrackedRobotUsage::generateArmorsOffsetFromProfile(
           msg.num_armors,

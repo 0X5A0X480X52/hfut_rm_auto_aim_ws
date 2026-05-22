@@ -91,6 +91,11 @@ class OutpostLegacyBindingPolicy {
       double binding_confidence,
       bool binding_conflict_for_update) const;
 
+  void apply_directional_topology_prior(
+      std::array<BindingHypothesis, 3> & hyps,
+      int bound_panel_id,
+      int spin_direction) const;
+
   UnifiedConfig config_;
   RobotBindingProfile profile_;
   std::array<double, 3> z_offsets_{{0.06, 0.0, -0.06}};

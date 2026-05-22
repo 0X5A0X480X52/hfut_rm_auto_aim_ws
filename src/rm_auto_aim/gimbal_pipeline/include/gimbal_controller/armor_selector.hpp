@@ -394,6 +394,11 @@ private:
 
   // 自动虚拟模式启停状态
   bool virtual_mode_active_{false};
+
+  // 对 |target_v_yaw| 做一阶低通，降低噪声导致的抖动进出
+  double filtered_abs_v_yaw_{0.0};
+  bool abs_v_yaw_filter_initialized_{false};
+  double abs_v_yaw_lpf_alpha_{0.2};
 };
 
 }  // namespace gimbal_controller

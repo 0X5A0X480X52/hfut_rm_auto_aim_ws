@@ -59,6 +59,13 @@ OutpostTrackerV2::OutpostTrackerV2(const UnifiedConfig &config, double dt,
 }
 
 int OutpostTrackerV2::infer_init_panel(const ObservationData &obs) const {
+  if (obs.panel_id.has_value()) {
+    return clamp_panel(obs.panel_id.value());
+  }
+  // A single absolute z observation cannot identify the outpost layer unless
+  // the target center height is known. Use the middle layer as a neutral seed.
+  return 1;
+/*
   int init_panel = 0;
   double min_abs_cz = std::abs(obs.z - z_offsets_[0]);
   for (int i = 1; i < 3; ++i) {
@@ -69,6 +76,7 @@ int OutpostTrackerV2::infer_init_panel(const ObservationData &obs) const {
     }
   }
   return init_panel;
+*/
 }
 
 int OutpostTrackerV2::semantic_from_panel(int panel_id) const {
@@ -84,6 +92,182 @@ void OutpostTrackerV2::sync_runtime_from_backend(
   ctx_.center_vel = snap.center_vel;
   ctx_.center_yaw = snap.center_yaw;
   ctx_.yaw_rate = snap.yaw_rate;
+}
+
+void OutpostTrackerV2::reset_warmup() {
+  warmup_active_ = config_.outpost.v2_warmup_enable;
+  warmup_frames_ = 0;
+  warmup_current_group_ = -1;
+  warmup_groups_.clear();
+}
+
+void OutpostTrackerV2::update_warmup_evidence(const ObservationData &obs) {
+  if (!warmup_active_) return;
+  ++warmup_frames_;
+  if (warmup_frames_ > config_.outpost.v2_warmup_max_frames) {
+    warmup_frames_ = 1;
+    warmup_current_group_ = -1;
+    warmup_groups_.clear();
+  }
+
+  const Eigen::Vector3d pos(obs.x, obs.y, obs.z);
+  bool start_new_group = warmup_current_group_ < 0 ||
+                         warmup_current_group_ >=
+                             static_cast<int>(warmup_groups_.size());
+  if (!start_new_group) {
+    const auto &g = warmup_groups_[warmup_current_group_];
+    const double z_jump = std::abs(obs.z - g.last_pos.z());
+    const double yaw_jump = std::abs(normalize_angle(obs.yaw - g.last_yaw));
+    const double xyz_jump = (pos - g.last_pos).norm();
+    start_new_group =
+        z_jump >= config_.outpost.v2_warmup_z_jump_gate ||
+        yaw_jump >= config_.outpost.v2_warmup_yaw_jump_gate ||
+        xyz_jump >= config_.outpost.v2_warmup_xyz_jump_gate;
+  }
+
+  if (start_new_group) {
+    WarmupGroup g;
+    g.sample_count = 1;
+    g.mean_z = obs.z;
+    g.last_pos = pos;
+    g.last_yaw = obs.yaw;
+    warmup_groups_.push_back(g);
+    warmup_current_group_ = static_cast<int>(warmup_groups_.size()) - 1;
+    return;
+  }
+
+  auto &g = warmup_groups_[warmup_current_group_];
+  ++g.sample_count;
+  const double n = static_cast<double>(g.sample_count);
+  g.mean_z += (obs.z - g.mean_z) / n;
+  g.last_pos = pos;
+  g.last_yaw = obs.yaw;
+}
+
+OutpostTrackerV2::WarmupCommit OutpostTrackerV2::try_commit_warmup() const {
+  WarmupCommit out;
+  if (!warmup_active_ ||
+      static_cast<int>(warmup_groups_.size()) <
+          config_.outpost.v2_warmup_min_groups) {
+    return out;
+  }
+
+  struct Level {
+    double mean_z = 0.0;
+    int samples = 0;
+    std::vector<int> groups;
+  };
+
+  std::vector<int> valid_groups;
+  for (int i = 0; i < static_cast<int>(warmup_groups_.size()); ++i) {
+    if (warmup_groups_[i].sample_count >=
+        config_.outpost.v2_warmup_min_samples_per_group) {
+      valid_groups.push_back(i);
+    }
+  }
+  if (static_cast<int>(valid_groups.size()) <
+      config_.outpost.v2_warmup_min_groups) {
+    return out;
+  }
+
+  std::sort(valid_groups.begin(), valid_groups.end(), [this](int a, int b) {
+    return warmup_groups_[a].mean_z > warmup_groups_[b].mean_z;
+  });
+
+  const double merge_gate =
+      std::max(0.015, 0.6 * config_.outpost.v2_warmup_z_jump_gate);
+  std::vector<Level> levels;
+  for (int group_idx : valid_groups) {
+    const auto &g = warmup_groups_[group_idx];
+    bool merged = false;
+    for (auto &level : levels) {
+      if (std::abs(g.mean_z - level.mean_z) <= merge_gate) {
+        const int new_samples = level.samples + g.sample_count;
+        level.mean_z =
+            (level.mean_z * level.samples + g.mean_z * g.sample_count) /
+            static_cast<double>(new_samples);
+        level.samples = new_samples;
+        level.groups.push_back(group_idx);
+        merged = true;
+        break;
+      }
+    }
+    if (!merged) {
+      Level level;
+      level.mean_z = g.mean_z;
+      level.samples = g.sample_count;
+      level.groups.push_back(group_idx);
+      levels.push_back(level);
+    }
+  }
+
+  if (levels.size() < 3) return out;
+  std::sort(levels.begin(), levels.end(),
+            [](const Level &a, const Level &b) { return a.mean_z > b.mean_z; });
+
+  const double dz01 = levels[0].mean_z - levels[1].mean_z;
+  const double dz12 = levels[1].mean_z - levels[2].mean_z;
+  const double dz02 = levels[0].mean_z - levels[2].mean_z;
+  if (!(dz01 > 1e-5 && dz12 > 1e-5 && dz02 > 1e-5)) return out;
+  if (dz02 < config_.outpost.v2_warmup_min_large_diff) return out;
+
+  const double dz_small = 0.5 * (dz01 + dz12);
+  const double ratio = dz02 / std::max(1e-5, dz_small);
+  const double balance = std::max(dz01, dz12) / std::max(1e-5, std::min(dz01, dz12));
+  if (ratio < config_.outpost.v2_warmup_ratio_min ||
+      ratio > config_.outpost.v2_warmup_ratio_max || balance > 1.8) {
+    return out;
+  }
+
+  int current_level = -1;
+  if (warmup_current_group_ >= 0) {
+    double best_err = std::numeric_limits<double>::infinity();
+    const double current_z = warmup_groups_[warmup_current_group_].mean_z;
+    for (int i = 0; i < 3; ++i) {
+      const double err = std::abs(current_z - levels[i].mean_z);
+      if (err < best_err) {
+        best_err = err;
+        current_level = i;
+      }
+    }
+  }
+  if (current_level < 0 || current_level > 2) return out;
+
+  out.ready = true;
+  out.current_panel = current_level;  // sorted high/mid/low maps to panel 0/1/2
+  out.dz_small = dz_small;
+  out.dz_large = dz02;
+  return out;
+}
+
+bool OutpostTrackerV2::run_warmup_update(const ObservationData &obs) {
+  update_warmup_evidence(obs);
+
+  outpost_v2::BackendUpdateHint hint;
+  hint.panel_id = 1;
+  hint.position_confidence = 0.25;
+  ambiguous_backend_.update(obs, hint);
+
+  const auto snap = ambiguous_backend_.snapshot();
+  sync_runtime_from_backend(snap);
+  outpost_v2::PublishStateInput pub_input;
+  pub_input.mode = mode::TrackMode::AMBIGUOUS;
+  pub_input.backend_snap = &snap;
+  pub_input.armor_snap = &ambiguous_backend_.ambiguous_snapshot();
+  output_adapter_.update_publish_state(&ctx_, pub_input);
+
+  const auto commit = try_commit_warmup();
+  if (!commit.ready) return true;
+
+  const int panel = clamp_panel(commit.current_panel);
+  warmup_active_ = false;
+  ctx_.selected_panel_id = panel;
+  ctx_.bound_panel_id = panel;
+  ctx_.binding_confidence = 0.75;
+  binder_bridge_.reset(panel, obs.z);
+  structured_backend_.reset(obs, panel);
+  ambiguous_backend_.update(obs, outpost_v2::BackendUpdateHint{panel, 0.5, true});
+  return true;
 }
 
 void OutpostTrackerV2::initialize(const std::vector<ObservationData> &obs,

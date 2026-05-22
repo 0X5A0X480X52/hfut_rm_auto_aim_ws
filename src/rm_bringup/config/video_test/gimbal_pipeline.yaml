@@ -480,8 +480,8 @@ gimbal_pipeline:
     outpost:
       translation_model: "CA"   # Outpost平移模型
       rotation_model: "CA"      # Outpost旋转模型
-      use_tracker_v2: true
-      use_tracker_v3: false
+      use_tracker_v2: false
+      use_tracker_v3: true
       tracking_thres: 2
       lost_thres: 50
       temp_lost_thres: 5

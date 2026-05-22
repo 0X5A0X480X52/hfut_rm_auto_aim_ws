@@ -3,7 +3,7 @@
 armor_detector_node:  
   ros__parameters:
     # Image preprocessing
-    binary_thres: 80
+    binary_thres: 40
 
     # Light extraction parameters
     light:

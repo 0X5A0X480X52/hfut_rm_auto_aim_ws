@@ -22,6 +22,8 @@ struct DecoderContext {
   int period_phase = -1;
   double period_confidence = 0.0;
   int spin_direction = 0;
+  int pending_spin_direction = 0;
+  int pending_spin_direction_count = 0;
 };
 
 class JumpEventDecoder {
