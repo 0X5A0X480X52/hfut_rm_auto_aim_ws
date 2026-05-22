@@ -4963,27 +4963,27 @@ void GimbalPipelineNode::publishGimbalMarkers(
     marker_array.markers.push_back(predicted_marker_);
   }
 
-  // Trajectory
+  // Trajectory (in gimbal_link frame, with air resistance)
   if (has_valid_measurement) {
     trajectory_marker_.header.frame_id = "gimbal_link";
     trajectory_marker_.header.stamp = target_robot.header.stamp;
     trajectory_marker_.id = 0;
     trajectory_marker_.action = visualization_msgs::msg::Marker::ADD;
     trajectory_marker_.points.clear();
-    int num_points = 20;
-    double yaw_rad = cmd.yaw * M_PI / 180.0;
+
     double pitch_rad = cmd.pitch * M_PI / 180.0;
-    for (int i = 0; i <= num_points; ++i) {
-      double t = static_cast<double>(i) / num_points;
-      double distance = cmd.distance * t;
+    double distance = cmd.distance;
+
+    local_compensator_->setBulletSpeed(bullet_speed_);
+    auto traj_points = local_compensator_->getTrajectory(distance, pitch_rad);
+    for (const auto & [x, z] : traj_points) {
       geometry_msgs::msg::Point p;
-      p.x = distance * std::cos(pitch_rad) * std::cos(yaw_rad);
-      p.y = distance * std::cos(pitch_rad) * std::sin(yaw_rad);
-      double flight_time = cmd.distance / bullet_speed_ * t;
-      p.z = distance * std::sin(pitch_rad) -
-            0.5 * 9.8 * flight_time * flight_time;
+      p.x = x;
+      p.y = 0.0;
+      p.z = z;
       trajectory_marker_.points.push_back(p);
     }
+
     if (cmd.fire_advice) {
       trajectory_marker_.color.r = 0.0;
       trajectory_marker_.color.g = 1.0;
@@ -4994,6 +4994,66 @@ void GimbalPipelineNode::publishGimbalMarkers(
       trajectory_marker_.color.b = 0.79;
     }
     marker_array.markers.push_back(trajectory_marker_);
+
+    // Predicted hit point
+    if (!traj_points.empty()) {
+      const auto & [hx, hz] = traj_points.back();
+
+      visualization_msgs::msg::Marker hit_marker;
+      hit_marker.header.frame_id = "gimbal_link";
+      hit_marker.header.stamp = target_robot.header.stamp;
+      hit_marker.ns = "predicted_hit_point";
+      hit_marker.id = 0;
+      hit_marker.type = visualization_msgs::msg::Marker::SPHERE;
+      hit_marker.action = visualization_msgs::msg::Marker::ADD;
+      hit_marker.pose.position.x = hx;
+      hit_marker.pose.position.y = 0.0;
+      hit_marker.pose.position.z = hz;
+      hit_marker.pose.orientation.w = 1.0;
+      hit_marker.scale.x = hit_marker.scale.y = hit_marker.scale.z = 0.06;
+      hit_marker.color.a = 1.0;
+      hit_marker.color.r = 1.0;
+      hit_marker.color.g = 0.2;
+      hit_marker.color.b = 0.2;
+      marker_array.markers.push_back(hit_marker);
+
+      // Hit info text (distance + flight time)
+      double flight_time = local_compensator_->getFlyingTime(
+        Eigen::Vector3d(hx, 0.0, hz));
+      visualization_msgs::msg::Marker text_marker;
+      text_marker.header = hit_marker.header;
+      text_marker.ns = "predicted_hit_text";
+      text_marker.id = 0;
+      text_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+      text_marker.action = visualization_msgs::msg::Marker::ADD;
+      text_marker.pose.position.x = hx;
+      text_marker.pose.position.y = 0.0;
+      text_marker.pose.position.z = hz + 0.12;
+      text_marker.pose.orientation.w = 1.0;
+      text_marker.scale.z = 0.08;
+      text_marker.color.a = 1.0;
+      text_marker.color.r = 1.0;
+      text_marker.color.g = 1.0;
+      text_marker.color.b = 1.0;
+      std::ostringstream oss;
+      oss << std::fixed << std::setprecision(2)
+          << "d=" << distance << "m t=" << flight_time << "s";
+      text_marker.text = oss.str();
+      marker_array.markers.push_back(text_marker);
+    }
+  } else {
+    // Clear trajectory and hit markers when no target
+    visualization_msgs::msg::Marker del;
+    del.header.frame_id = "gimbal_link";
+    del.header.stamp = target_robot.header.stamp;
+    del.action = visualization_msgs::msg::Marker::DELETE;
+    del.ns = "trajectory";
+    del.id = 0;
+    marker_array.markers.push_back(del);
+    del.ns = "predicted_hit_point";
+    marker_array.markers.push_back(del);
+    del.ns = "predicted_hit_text";
+    marker_array.markers.push_back(del);
   }
 
   if (fire_prob_vis_enable_) {
