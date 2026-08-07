@@ -350,7 +350,7 @@ def test_gimbal_parameters_are_declared_and_current(launch_module):
     )
     forbidden_prefixes = (
         "norm4_v2.",
-        "norm4_v3.ukf_v2.",
+        "norm4_v3.",
         "outpost.v3.",
         "controller.current_position.",
         "controller.predicted_position.",
@@ -377,8 +377,8 @@ def test_gimbal_parameters_are_declared_and_current(launch_module):
         assert not any(
             key.startswith(forbidden_prefixes) for key in merged
         )
-        assert merged["norm4_v3.backend_config.backend_type"] in {
-            "ukf_v1",
+        assert merged["norm4_baseline.backend_config.backend_type"] in {
+            "ukf_baseline",
             "inekf",
         }
 

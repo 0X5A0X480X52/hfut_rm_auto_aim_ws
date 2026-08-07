@@ -8,32 +8,24 @@ enum class HeightLabel { UNKNOWN = -1, LOWER = 0, MIDDLE = 1, UPPER = 2 };
 
 enum class BindingFSMState {
   LOCKED = 0,
-  PENDING_SWITCH = 1,
-  UNLOCKED = 2,
-  LOCKED_NEW = 3
+  PENDING_SWITCH = 1
 };
 
 enum class BindingAction {
   HOLD = 0,
   PENDING = 1,
-  SWITCH = 2,
-  FORCE_REBIND = 3,
-  RELOCK = 4
+  SWITCH = 2
 };
 
 enum class JumpKind {
   NONE = 0,
   DZ = 1,
-  DOUBLE_DZ = 2,
-  AMBIGUOUS = 3,
-  INVALID = 4
+  DOUBLE_DZ = 2
 };
 
 enum class TrackEventType {
   CONTINUITY = 0,
-  REACQUIRE = 1,
-  SWITCH_CANDIDATE = 2,
-  AMBIGUOUS = 3
+  SWITCH_CANDIDATE = 1
 };
 
 }  // namespace fyt::auto_aim::binder

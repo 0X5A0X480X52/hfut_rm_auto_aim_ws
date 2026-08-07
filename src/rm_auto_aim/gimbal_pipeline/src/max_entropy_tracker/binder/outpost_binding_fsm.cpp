@@ -149,7 +149,6 @@ OutpostBindingFSMOutput OutpostBindingFSM::output() const {
                           : BindingAction::HOLD);
   out.switch_occurred = switch_event_;
   out.switch_reason = switch_reason_;
-  out.transition_state = (state_ == BindingFSMState::PENDING_SWITCH) ? 1 : 0;
   return out;
 }
 

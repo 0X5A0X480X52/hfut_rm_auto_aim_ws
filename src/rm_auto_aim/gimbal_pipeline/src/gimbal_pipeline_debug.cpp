@@ -24,7 +24,7 @@
 
 #include "gimbal_pipeline/gimbal_pipeline_node.hpp"
 #include "max_entropy_tracker/msg_converter.hpp"
-#include "max_entropy_tracker/trackers/norm4_v3/tracker/norm4_tracker_v2.hpp"
+#include "max_entropy_tracker/trackers/norm4_baseline/tracker/norm4_tracker_baseline.hpp"
 #include "max_entropy_tracker/visualization.hpp"
 #include "rm_utils/logger/log.hpp"
 
@@ -47,8 +47,8 @@ void GimbalPipelineNode::publish2DTrackerDebugImage(
     if (!view.tracker) continue;
     const evidence::ArmorEvidenceFrame *frame = nullptr;
 
-    if (const auto *norm4v2 = dynamic_cast<const Norm4ArmorTrackerV2 *>(view.tracker)) {
-      frame = &norm4v2->last_evidence_frame();
+    if (const auto *norm4_baseline = dynamic_cast<const Norm4TrackerBaseline *>(view.tracker)) {
+      frame = &norm4_baseline->last_evidence_frame();
     }
     if (!frame) continue;
 
@@ -142,8 +142,8 @@ void GimbalPipelineNode::publishEvidenceFrameDebug(
     const evidence::ArmorEvidenceFrame *frame = nullptr;
     std::string rid = view.robot_id;
 
-    if (const auto *norm4v2 = dynamic_cast<const Norm4ArmorTrackerV2 *>(view.tracker)) {
-      frame = &norm4v2->last_evidence_frame();
+    if (const auto *norm4_baseline = dynamic_cast<const Norm4TrackerBaseline *>(view.tracker)) {
+      frame = &norm4_baseline->last_evidence_frame();
     }
     if (!frame) continue;
 
@@ -174,35 +174,35 @@ void GimbalPipelineNode::publishEvidenceFrameDebug(
   debug_evidence_frame_pub_->publish(out);
 }
 
-void GimbalPipelineNode::logNorm4V3TrackerDebug(
+void GimbalPipelineNode::logNorm4BaselineTrackerDebug(
   const std::vector<TrackerManager::TrackerConstView> &tracker_views) {
-  const auto &dbg_cfg = tracker_config_.norm4_v3.debug_log;
+  const auto &dbg_cfg = tracker_config_.norm4_baseline.debug_log;
   if (!dbg_cfg.enable) return;
 
   std::ostringstream oss;
-  bool has_norm4v3 = false;
+  bool has_norm4_baseline = false;
   for (const auto &view : tracker_views) {
     if (!view.tracker) continue;
-    const auto *norm4v3 = dynamic_cast<const Norm4ArmorTrackerV2 *>(view.tracker);
-    if (!norm4v3) continue;
+    const auto *norm4_baseline = dynamic_cast<const Norm4TrackerBaseline *>(view.tracker);
+    if (!norm4_baseline) continue;
 
-    has_norm4v3 = true;
-    const auto &h = norm4v3->last_hypothesis_debug();
-    const auto &s = norm4v3->debug_snapshot();
+    has_norm4_baseline = true;
+    const auto &h = norm4_baseline->last_hypothesis_debug();
+    const auto &s = norm4_baseline->debug_snapshot();
 
     oss << " [" << view.robot_id << " committed=" << (h.committed ? 1 : 0)
         << " panel=" << s.current_panel_id << " cand=" << s.candidate_panel_id
         << " conf=" << h.top1_confidence << " margin=" << h.top1_top2_margin;
     if (dbg_cfg.verbose) {
-      oss << " mode=" << static_cast<int>(norm4v3->current_mode()) << " top1_nis=" << s.top1_nis
+      oss << " mode=" << static_cast<int>(norm4_baseline->current_mode()) << " top1_nis=" << s.top1_nis
           << " degraded=" << (h.degraded ? 1 : 0);
     }
     oss << " reason=" << h.decision_reason << "]";
   }
 
-  if (!has_norm4v3) return;
+  if (!has_norm4_baseline) return;
   RCLCPP_INFO_THROTTLE(
-    get_logger(), *get_clock(), dbg_cfg.throttle_ms, "norm4_v3_debug:%s", oss.str().c_str());
+    get_logger(), *get_clock(), dbg_cfg.throttle_ms, "norm4_baseline_debug:%s", oss.str().c_str());
 }
 
 /* ================================================================ */

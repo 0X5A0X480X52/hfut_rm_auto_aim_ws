@@ -263,7 +263,7 @@ bool DualRadiusSpinUKF::update_single(
   }
 
   // Observation noise:
-  // 1) fallback to legacy XYZ diagonal noise
+  // 1) fall back to baseline XYZ diagonal noise
   // 2) when enabled, build YPD noise and map to XYZ with Jacobian
   double np_ = config_.ukf.obs_noise_pos;
   double ny = config_.ukf.obs_noise_yaw;

@@ -25,7 +25,7 @@
 #include <unordered_set>
 
 #include "max_entropy_tracker/msg_converter.hpp"
-#include "max_entropy_tracker/trackers/norm4_v3/tracker/norm4_tracker_v2.hpp"
+#include "max_entropy_tracker/trackers/norm4_baseline/tracker/norm4_tracker_baseline.hpp"
 #include "max_entropy_tracker/visualization.hpp"
 #include "rm_utils/logger/log.hpp"
 

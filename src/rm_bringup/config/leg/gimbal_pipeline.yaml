@@ -1,8 +1,5 @@
 gimbal_pipeline:
   ros__parameters:
-    binder:
-      enable_soft_fusion: true
-      soft_fusion_w_topology: 0.05
     controller:
       bullet_speed: 22.5
       delay:
@@ -103,10 +100,10 @@ gimbal_pipeline:
       cv_process_noise_vel: 1.2
       singer_alpha: 4.5
       singer_sigma: 1.8
-    norm4_v3:
+    norm4_baseline:
       backend_config:
         backend_type: inekf
-        noise_profile: package://gimbal_pipeline/config/norm4_v3/profiles/noise/ypd_ba_low_weight.yaml
+        noise_profile: package://gimbal_pipeline/config/norm4_baseline/profiles/noise/ypd_ba_low_weight.yaml
       debug_log:
         enable: true
         throttle_ms: 300
@@ -120,7 +117,7 @@ gimbal_pipeline:
           structural_gain_r: 0.0
       inekf_runtime:
         motion_profile: ca
-        noise_profile: package://gimbal_pipeline/config/norm4_v3/profiles/noise/default.yaml
+        noise_profile: package://gimbal_pipeline/config/norm4_baseline/profiles/noise/default.yaml
         translation_model: ''
       slow_structure:
         alpha_dza_dual: 1.0
@@ -139,7 +136,6 @@ gimbal_pipeline:
         min_confidence_to_commit: 0.1
         min_margin_to_commit: 0.5
     outpost:
-      binding_enable_multi_obs: false
       lost_thres: 50
       max_match_distance: 5.0
       max_match_yaw_diff: 3.0

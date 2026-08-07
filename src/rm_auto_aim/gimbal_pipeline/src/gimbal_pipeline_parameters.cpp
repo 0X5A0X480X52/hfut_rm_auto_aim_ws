@@ -24,7 +24,7 @@
 
 #include "gimbal_pipeline/gimbal_pipeline_node.hpp"
 #include "max_entropy_tracker/msg_converter.hpp"
-#include "max_entropy_tracker/trackers/norm4_v3/tracker/norm4_tracker_v2.hpp"
+#include "max_entropy_tracker/trackers/norm4_baseline/tracker/norm4_tracker_baseline.hpp"
 #include "max_entropy_tracker/visualization.hpp"
 #include "rm_utils/logger/log.hpp"
 
@@ -171,8 +171,6 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("outpost.stable_frames", 4);
   declare_parameter("outpost.z_history_window", 15);
   declare_parameter("outpost.single_mode_confidence_scale", 0.70);
-  declare_parameter("outpost.binding_use_new_binder_pipeline", false);
-  declare_parameter("outpost.binding_enable_multi_obs", true);
   declare_parameter("outpost.binding_transition_confirm_frames", 3);
   declare_parameter("outpost.binding_same_panel_yaw_gate", 0.35);
   declare_parameter("outpost.binding_same_panel_z_gate", 0.08);
@@ -217,16 +215,16 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("outpost.ambiguous_publish_single_armor_semantics", true);
   declare_parameter("outpost.ambiguous_single_armor_zero_offset", true);
   declare_parameter("outpost.ambiguous_backend_use_imm_adapter", false);
-  declare_parameter("outpost.v2_warmup_enable", true);
-  declare_parameter("outpost.v2_warmup_min_groups", 3);
-  declare_parameter("outpost.v2_warmup_min_samples_per_group", 2);
-  declare_parameter("outpost.v2_warmup_max_frames", 60);
-  declare_parameter("outpost.v2_warmup_z_jump_gate", 0.025);
-  declare_parameter("outpost.v2_warmup_yaw_jump_gate", 0.75);
-  declare_parameter("outpost.v2_warmup_xyz_jump_gate", 0.18);
-  declare_parameter("outpost.v2_warmup_ratio_min", 1.55);
-  declare_parameter("outpost.v2_warmup_ratio_max", 2.45);
-  declare_parameter("outpost.v2_warmup_min_large_diff", 0.06);
+  declare_parameter("outpost.baseline_warmup_enable", true);
+  declare_parameter("outpost.baseline_warmup_min_groups", 3);
+  declare_parameter("outpost.baseline_warmup_min_samples_per_group", 2);
+  declare_parameter("outpost.baseline_warmup_max_frames", 60);
+  declare_parameter("outpost.baseline_warmup_z_jump_gate", 0.025);
+  declare_parameter("outpost.baseline_warmup_yaw_jump_gate", 0.75);
+  declare_parameter("outpost.baseline_warmup_xyz_jump_gate", 0.18);
+  declare_parameter("outpost.baseline_warmup_ratio_min", 1.55);
+  declare_parameter("outpost.baseline_warmup_ratio_max", 2.45);
+  declare_parameter("outpost.baseline_warmup_min_large_diff", 0.06);
   // Maneuver detection
   declare_parameter("maneuver.enable", true);
   declare_parameter("maneuver.nis_threshold_single", 238.807);
@@ -237,187 +235,145 @@ void GimbalPipelineNode::declareTrackerParameters() {
   declare_parameter("maneuver.mad_window", 10);
   declare_parameter("maneuver.mad_k", 3.0);
 
-  // Common binder config (Norm4/Outpost v2 pipeline)
-  declare_parameter("binder.confirm_frames", 3);
-  declare_parameter("binder.lock_new_hold_frames", 2);
-  declare_parameter("binder.force_rebind_bad_frames", 10);
-  declare_parameter("binder.pending_window_frames", 0);
-  declare_parameter("binder.post_jump_min_confidence", 0.45);
-  declare_parameter("binder.confidence_floor", 0.15);
-  declare_parameter("binder.z_jump_min", 0.015);
-  declare_parameter("binder.dz_match_tolerance", 0.03);
-  declare_parameter("binder.dz_gate", 0.010);
-  declare_parameter("binder.yaw_err_gate", 0.35);
-  declare_parameter("binder.cost_margin_min", 0.08);
-  declare_parameter("binder.dz_ema_alpha", 0.20);
-  declare_parameter("binder.periodic_enable", false);
-  declare_parameter("binder.periodic_window", 12);
-  declare_parameter("binder.periodic_weight", 0.60);
-  declare_parameter("binder.periodic_min_spin_rate", 0.8);
-  declare_parameter("binder.periodic_update_min_jump", 0.015);
-  declare_parameter("binder.periodic_signature_threshold", 0.60);
-  declare_parameter("binder.reacquire_gap_dt_gate", 0.12);
-  declare_parameter("binder.reacquire_lost_frames_gate", 1);
-  declare_parameter("binder.z_cluster_ema_alpha", 0.25);
-  declare_parameter("binder.z_cluster_assign_gate", 0.10);
-  declare_parameter("binder.min_candidate_prob", 0.40);
-  declare_parameter("binder.min_candidate_margin", 0.12);
-  declare_parameter("binder.switch_strong_score", 0.60);
-  declare_parameter("binder.single_obs_history_window", 8);
-  declare_parameter("binder.dual_obs_enable", true);
-  declare_parameter("binder.scorer_enable", true);
-  declare_parameter("binder.same_panel_yaw_gate", 0.35);
-  declare_parameter("binder.same_panel_z_gate", 0.08);
-  declare_parameter("binder.same_panel_xy_gate", 0.18);
-  declare_parameter("binder.z_audit_rebind_enable", false);
-  declare_parameter("binder.z_audit_rebind_confirm_frames", 3);
-  declare_parameter("binder.z_audit_rebind_min_confidence", 0.60);
-  declare_parameter("binder.z_audit_rebind_min_jump", 0.015);
-  declare_parameter("binder.enable_soft_fusion", false);
-  declare_parameter("binder.soft_fusion_w_seq", 0.25);
-  declare_parameter("binder.soft_fusion_w_geo", 0.40);
-  declare_parameter("binder.soft_fusion_w_dyn", 0.20);
-  declare_parameter("binder.soft_fusion_w_continuity", 0.15);
-  declare_parameter("binder.soft_fusion_w_topology", 0.15);
 
-  // Norm4 V3 (dedicated for trackers/norm4_v3/tracker/norm4_tracker_v2.hpp)
-  declare_parameter("norm4_v3.enable_common_pipeline", false);
-  declare_parameter("norm4_v3.enable_phase_memory", true);
-  declare_parameter("norm4_v3.enable_kinematic_anti_pingpong", true);
-  declare_parameter("norm4_v3.enable_2d_tracker", false);
-  declare_parameter("norm4_v3.enable_proxy_manager", false);
-  declare_parameter("norm4_v3.phase_memory.enable_phase_memory", true);
-  declare_parameter("norm4_v3.phase_memory.enable_kinematic_anti_pingpong", true);
-  declare_parameter("norm4_v3.phase_memory.sequence_window_size", 10);
-  declare_parameter("norm4_v3.phase_memory.ping_pong_pattern_threshold", 0.7);
-  declare_parameter("norm4_v3.phase_memory.enable_opposite_jump_detect", true);
-  declare_parameter("norm4_v3.phase_memory.anti_pingpong.min_consistent_frames_to_commit", 3);
-  declare_parameter("norm4_v3.phase_memory.anti_pingpong.jerk_gate", 1.5);
-  declare_parameter("norm4_v3.phase_memory.anti_pingpong.yaw_rate_jump_gate", 2.0);
-  declare_parameter("norm4_v3.phase_memory.anti_pingpong.velocity_dir_cos_min", 0.2);
-  declare_parameter("norm4_v3.phase_memory.anti_pingpong.pending_timeout_frames", 12);
+  // Norm4 baseline tracker
+  declare_parameter("norm4_baseline.enable_common_pipeline", false);
+  declare_parameter("norm4_baseline.enable_phase_memory", true);
+  declare_parameter("norm4_baseline.enable_kinematic_anti_pingpong", true);
+  declare_parameter("norm4_baseline.enable_2d_tracker", false);
+  declare_parameter("norm4_baseline.enable_proxy_manager", false);
+  declare_parameter("norm4_baseline.phase_memory.enable_phase_memory", true);
+  declare_parameter("norm4_baseline.phase_memory.enable_kinematic_anti_pingpong", true);
+  declare_parameter("norm4_baseline.phase_memory.sequence_window_size", 10);
+  declare_parameter("norm4_baseline.phase_memory.ping_pong_pattern_threshold", 0.7);
+  declare_parameter("norm4_baseline.phase_memory.enable_opposite_jump_detect", true);
+  declare_parameter("norm4_baseline.phase_memory.anti_pingpong.min_consistent_frames_to_commit", 3);
+  declare_parameter("norm4_baseline.phase_memory.anti_pingpong.jerk_gate", 1.5);
+  declare_parameter("norm4_baseline.phase_memory.anti_pingpong.yaw_rate_jump_gate", 2.0);
+  declare_parameter("norm4_baseline.phase_memory.anti_pingpong.velocity_dir_cos_min", 0.2);
+  declare_parameter("norm4_baseline.phase_memory.anti_pingpong.pending_timeout_frames", 12);
 
-  declare_parameter("norm4_v3.ukf_v1.enabled", true);
-  declare_parameter("norm4_v3.ukf_v1.force_rotation_ca", false);
-  declare_parameter("norm4_v3.ukf_v1.dual_raw_batch", true);
-  declare_parameter("norm4_v3.ukf_v1.sigma_pos_xy", 0.06);
-  declare_parameter("norm4_v3.ukf_v1.sigma_pos_z", 0.08);
-  declare_parameter("norm4_v3.ukf_v1.sigma_yaw", 0.12);
-  declare_parameter("norm4_v3.ukf_v1.dual_raw_R_scale", 1.5);
-  declare_parameter("norm4_v3.ukf_v1.gate.single_total_nis", 25.0);
-  declare_parameter("norm4_v3.ukf_v1.gate.single_pos_chi2", 16.0);
-  declare_parameter("norm4_v3.ukf_v1.gate.single_yaw_chi2", 9.0);
-  declare_parameter("norm4_v3.ukf_v1.gate.dual_total_nis", 45.0);
-  declare_parameter("norm4_v3.ukf_v1.gate.dual_each_pos_chi2", 16.0);
-  declare_parameter("norm4_v3.ukf_v1.gate.dual_each_yaw_chi2", 9.0);
-  declare_parameter("norm4_v3.ukf_v1.single_update.structural_gain_r", 0.0);
-  declare_parameter("norm4_v3.ukf_v1.single_update.structural_gain_dza", 0.0);
-  declare_parameter("norm4_v3.ukf_v1.dual_update.structural_gain_r", 0.05);
-  declare_parameter("norm4_v3.ukf_v1.dual_update.structural_gain_dza", 0.02);
-  declare_parameter("norm4_v3.ukf_v1.posterior_sanity.max_center_jump", 0.25);
-  declare_parameter("norm4_v3.ukf_v1.posterior_sanity.max_yaw_jump", 0.80);
-  declare_parameter("norm4_v3.ukf_v1.posterior_sanity.min_r", 0.05);
-  declare_parameter("norm4_v3.ukf_v1.posterior_sanity.max_r", 0.50);
-  declare_parameter("norm4_v3.ukf_v1.posterior_sanity.max_r_jump", 0.05);
-  declare_parameter("norm4_v3.ukf_v1.posterior_sanity.min_dza", 0.0);
-  declare_parameter("norm4_v3.ukf_v1.posterior_sanity.max_dza", 0.15);
-  declare_parameter("norm4_v3.ukf_v1.posterior_sanity.max_dza_jump", 0.03);
+  declare_parameter("norm4_baseline.ukf_baseline.enabled", true);
+  declare_parameter("norm4_baseline.ukf_baseline.force_rotation_ca", false);
+  declare_parameter("norm4_baseline.ukf_baseline.dual_raw_batch", true);
+  declare_parameter("norm4_baseline.ukf_baseline.sigma_pos_xy", 0.06);
+  declare_parameter("norm4_baseline.ukf_baseline.sigma_pos_z", 0.08);
+  declare_parameter("norm4_baseline.ukf_baseline.sigma_yaw", 0.12);
+  declare_parameter("norm4_baseline.ukf_baseline.dual_raw_R_scale", 1.5);
+  declare_parameter("norm4_baseline.ukf_baseline.gate.single_total_nis", 25.0);
+  declare_parameter("norm4_baseline.ukf_baseline.gate.single_pos_chi2", 16.0);
+  declare_parameter("norm4_baseline.ukf_baseline.gate.single_yaw_chi2", 9.0);
+  declare_parameter("norm4_baseline.ukf_baseline.gate.dual_total_nis", 45.0);
+  declare_parameter("norm4_baseline.ukf_baseline.gate.dual_each_pos_chi2", 16.0);
+  declare_parameter("norm4_baseline.ukf_baseline.gate.dual_each_yaw_chi2", 9.0);
+  declare_parameter("norm4_baseline.ukf_baseline.single_update.structural_gain_r", 0.0);
+  declare_parameter("norm4_baseline.ukf_baseline.single_update.structural_gain_dza", 0.0);
+  declare_parameter("norm4_baseline.ukf_baseline.dual_update.structural_gain_r", 0.05);
+  declare_parameter("norm4_baseline.ukf_baseline.dual_update.structural_gain_dza", 0.02);
+  declare_parameter("norm4_baseline.ukf_baseline.posterior_sanity.max_center_jump", 0.25);
+  declare_parameter("norm4_baseline.ukf_baseline.posterior_sanity.max_yaw_jump", 0.80);
+  declare_parameter("norm4_baseline.ukf_baseline.posterior_sanity.min_r", 0.05);
+  declare_parameter("norm4_baseline.ukf_baseline.posterior_sanity.max_r", 0.50);
+  declare_parameter("norm4_baseline.ukf_baseline.posterior_sanity.max_r_jump", 0.05);
+  declare_parameter("norm4_baseline.ukf_baseline.posterior_sanity.min_dza", 0.0);
+  declare_parameter("norm4_baseline.ukf_baseline.posterior_sanity.max_dza", 0.15);
+  declare_parameter("norm4_baseline.ukf_baseline.posterior_sanity.max_dza_jump", 0.03);
 
-  declare_parameter("norm4_v3.inekf.enabled", true);
-  declare_parameter("norm4_v3.inekf.force_rotation_ca", false);
-  declare_parameter("norm4_v3.inekf.dual_raw_batch", true);
-  declare_parameter("norm4_v3.inekf.sigma_pos_xy", 0.06);
-  declare_parameter("norm4_v3.inekf.sigma_pos_z", 0.08);
-  declare_parameter("norm4_v3.inekf.sigma_yaw", 0.12);
-  declare_parameter("norm4_v3.inekf.dual_raw_R_scale", 1.5);
-  declare_parameter("norm4_v3.inekf.gate.single_total_nis", 25.0);
-  declare_parameter("norm4_v3.inekf.gate.single_pos_chi2", 16.0);
-  declare_parameter("norm4_v3.inekf.gate.single_yaw_chi2", 9.0);
-  declare_parameter("norm4_v3.inekf.gate.dual_total_nis", 45.0);
-  declare_parameter("norm4_v3.inekf.gate.dual_each_pos_chi2", 16.0);
-  declare_parameter("norm4_v3.inekf.gate.dual_each_yaw_chi2", 9.0);
-  declare_parameter("norm4_v3.inekf.single_update.structural_gain_r", 0.0);
-  declare_parameter("norm4_v3.inekf.single_update.structural_gain_dza", 0.0);
-  declare_parameter("norm4_v3.inekf.dual_update.structural_gain_r", 0.05);
-  declare_parameter("norm4_v3.inekf.dual_update.structural_gain_dza", 0.02);
-  declare_parameter("norm4_v3.inekf.posterior_sanity.max_center_jump", 0.25);
-  declare_parameter("norm4_v3.inekf.posterior_sanity.max_yaw_jump", 0.80);
-  declare_parameter("norm4_v3.inekf.posterior_sanity.min_r", 0.05);
-  declare_parameter("norm4_v3.inekf.posterior_sanity.max_r", 0.50);
-  declare_parameter("norm4_v3.inekf.posterior_sanity.max_r_jump", 0.05);
-  declare_parameter("norm4_v3.inekf.posterior_sanity.min_dza", 0.0);
-  declare_parameter("norm4_v3.inekf.posterior_sanity.max_dza", 0.15);
-  declare_parameter("norm4_v3.inekf.posterior_sanity.max_dza_jump", 0.03);
+  declare_parameter("norm4_baseline.inekf.enabled", true);
+  declare_parameter("norm4_baseline.inekf.force_rotation_ca", false);
+  declare_parameter("norm4_baseline.inekf.dual_raw_batch", true);
+  declare_parameter("norm4_baseline.inekf.sigma_pos_xy", 0.06);
+  declare_parameter("norm4_baseline.inekf.sigma_pos_z", 0.08);
+  declare_parameter("norm4_baseline.inekf.sigma_yaw", 0.12);
+  declare_parameter("norm4_baseline.inekf.dual_raw_R_scale", 1.5);
+  declare_parameter("norm4_baseline.inekf.gate.single_total_nis", 25.0);
+  declare_parameter("norm4_baseline.inekf.gate.single_pos_chi2", 16.0);
+  declare_parameter("norm4_baseline.inekf.gate.single_yaw_chi2", 9.0);
+  declare_parameter("norm4_baseline.inekf.gate.dual_total_nis", 45.0);
+  declare_parameter("norm4_baseline.inekf.gate.dual_each_pos_chi2", 16.0);
+  declare_parameter("norm4_baseline.inekf.gate.dual_each_yaw_chi2", 9.0);
+  declare_parameter("norm4_baseline.inekf.single_update.structural_gain_r", 0.0);
+  declare_parameter("norm4_baseline.inekf.single_update.structural_gain_dza", 0.0);
+  declare_parameter("norm4_baseline.inekf.dual_update.structural_gain_r", 0.05);
+  declare_parameter("norm4_baseline.inekf.dual_update.structural_gain_dza", 0.02);
+  declare_parameter("norm4_baseline.inekf.posterior_sanity.max_center_jump", 0.25);
+  declare_parameter("norm4_baseline.inekf.posterior_sanity.max_yaw_jump", 0.80);
+  declare_parameter("norm4_baseline.inekf.posterior_sanity.min_r", 0.05);
+  declare_parameter("norm4_baseline.inekf.posterior_sanity.max_r", 0.50);
+  declare_parameter("norm4_baseline.inekf.posterior_sanity.max_r_jump", 0.05);
+  declare_parameter("norm4_baseline.inekf.posterior_sanity.min_dza", 0.0);
+  declare_parameter("norm4_baseline.inekf.posterior_sanity.max_dza", 0.15);
+  declare_parameter("norm4_baseline.inekf.posterior_sanity.max_dza_jump", 0.03);
 
-  declare_parameter("norm4_v3.slow_structure.enable", true);
-  declare_parameter("norm4_v3.slow_structure.q_theta_r1", 1.0e-6);
-  declare_parameter("norm4_v3.slow_structure.q_theta_r2", 1.0e-6);
-  declare_parameter("norm4_v3.slow_structure.q_theta_dza", 5.0e-7);
-  declare_parameter("norm4_v3.slow_structure.prior_r1", 0.15);
-  declare_parameter("norm4_v3.slow_structure.prior_r2", 0.20);
-  declare_parameter("norm4_v3.slow_structure.prior_dza", 0.0);
-  declare_parameter("norm4_v3.slow_structure.prior_sigma_r", 0.06);
-  declare_parameter("norm4_v3.slow_structure.prior_sigma_dza", 0.06);
-  declare_parameter("norm4_v3.slow_structure.alpha_r1_single", 0.0);
-  declare_parameter("norm4_v3.slow_structure.alpha_r2_single", 0.0);
-  declare_parameter("norm4_v3.slow_structure.alpha_dza_single", 0.0);
-  declare_parameter("norm4_v3.slow_structure.alpha_r1_dual", 0.05);
-  declare_parameter("norm4_v3.slow_structure.alpha_r2_dual", 0.05);
-  declare_parameter("norm4_v3.slow_structure.alpha_dza_dual", 0.02);
-  declare_parameter("norm4_v3.slow_structure.prior_pull_gain", 0.002);
-  declare_parameter("norm4_v3.slow_structure.min_r", 0.05);
-  declare_parameter("norm4_v3.slow_structure.max_r", 0.50);
-  declare_parameter("norm4_v3.slow_structure.min_dza", 0.0);
-  declare_parameter("norm4_v3.slow_structure.max_dza", 0.12);
+  declare_parameter("norm4_baseline.slow_structure.enable", true);
+  declare_parameter("norm4_baseline.slow_structure.q_theta_r1", 1.0e-6);
+  declare_parameter("norm4_baseline.slow_structure.q_theta_r2", 1.0e-6);
+  declare_parameter("norm4_baseline.slow_structure.q_theta_dza", 5.0e-7);
+  declare_parameter("norm4_baseline.slow_structure.prior_r1", 0.15);
+  declare_parameter("norm4_baseline.slow_structure.prior_r2", 0.20);
+  declare_parameter("norm4_baseline.slow_structure.prior_dza", 0.0);
+  declare_parameter("norm4_baseline.slow_structure.prior_sigma_r", 0.06);
+  declare_parameter("norm4_baseline.slow_structure.prior_sigma_dza", 0.06);
+  declare_parameter("norm4_baseline.slow_structure.alpha_r1_single", 0.0);
+  declare_parameter("norm4_baseline.slow_structure.alpha_r2_single", 0.0);
+  declare_parameter("norm4_baseline.slow_structure.alpha_dza_single", 0.0);
+  declare_parameter("norm4_baseline.slow_structure.alpha_r1_dual", 0.05);
+  declare_parameter("norm4_baseline.slow_structure.alpha_r2_dual", 0.05);
+  declare_parameter("norm4_baseline.slow_structure.alpha_dza_dual", 0.02);
+  declare_parameter("norm4_baseline.slow_structure.prior_pull_gain", 0.002);
+  declare_parameter("norm4_baseline.slow_structure.min_r", 0.05);
+  declare_parameter("norm4_baseline.slow_structure.max_r", 0.50);
+  declare_parameter("norm4_baseline.slow_structure.min_dza", 0.0);
+  declare_parameter("norm4_baseline.slow_structure.max_dza", 0.12);
 
-  declare_parameter("norm4_v3.backend_config.backend_type", "ukf_v1");
-  declare_parameter("norm4_v3.backend_config.motion_profile", "default");
-  declare_parameter("norm4_v3.backend_config.noise_profile", "default");
-  declare_parameter("norm4_v3.backend_config.structure_profile", "slow");
-  declare_parameter("norm4_v3.inekf_runtime.motion_profile", "default");
-  declare_parameter("norm4_v3.inekf_runtime.noise_profile", "default");
-  declare_parameter("norm4_v3.inekf_runtime.structure_profile", "slow");
-  declare_parameter("norm4_v3.inekf_runtime.translation_model", "");
-  declare_parameter("norm4_v3.inekf_runtime.cv_process_noise_vel", -1.0);
-  declare_parameter("norm4_v3.inekf_runtime.ca_process_noise_acc", -1.0);
-  declare_parameter("norm4_v3.inekf_runtime.singer_alpha", -1.0);
-  declare_parameter("norm4_v3.inekf_runtime.singer_sigma", -1.0);
-  declare_parameter("norm4_v3.inekf_runtime.process_noise_r", -1.0);
-  declare_parameter("norm4_v3.inekf_runtime.process_noise_dz", -1.0);
-  declare_parameter("norm4_v3.inekf_runtime.spin_process_noise_delta_rate", -1.0);
-  declare_parameter("norm4_v3.inekf_runtime.spin_process_noise_delta_acc", -1.0);
+  declare_parameter("norm4_baseline.backend_config.backend_type", "ukf_baseline");
+  declare_parameter("norm4_baseline.backend_config.motion_profile", "default");
+  declare_parameter("norm4_baseline.backend_config.noise_profile", "default");
+  declare_parameter("norm4_baseline.backend_config.structure_profile", "slow");
+  declare_parameter("norm4_baseline.inekf_runtime.motion_profile", "default");
+  declare_parameter("norm4_baseline.inekf_runtime.noise_profile", "default");
+  declare_parameter("norm4_baseline.inekf_runtime.structure_profile", "slow");
+  declare_parameter("norm4_baseline.inekf_runtime.translation_model", "");
+  declare_parameter("norm4_baseline.inekf_runtime.cv_process_noise_vel", -1.0);
+  declare_parameter("norm4_baseline.inekf_runtime.ca_process_noise_acc", -1.0);
+  declare_parameter("norm4_baseline.inekf_runtime.singer_alpha", -1.0);
+  declare_parameter("norm4_baseline.inekf_runtime.singer_sigma", -1.0);
+  declare_parameter("norm4_baseline.inekf_runtime.process_noise_r", -1.0);
+  declare_parameter("norm4_baseline.inekf_runtime.process_noise_dz", -1.0);
+  declare_parameter("norm4_baseline.inekf_runtime.spin_process_noise_delta_rate", -1.0);
+  declare_parameter("norm4_baseline.inekf_runtime.spin_process_noise_delta_acc", -1.0);
 
-  declare_parameter("norm4_v3.hypothesis_selector.topk", 4);
-  declare_parameter("norm4_v3.hypothesis_selector.commit_top1_only", true);
-  declare_parameter("norm4_v3.hypothesis_selector.min_top1_confidence", 0.55);
-  declare_parameter("norm4_v3.hypothesis_selector.min_top1_top2_margin", 0.0);
-  declare_parameter("norm4_v3.hypothesis_selector.ambiguous_margin", 1.0);
-  declare_parameter("norm4_v3.hypothesis_selector.include_rejected_in_debug", true);
-  declare_parameter("norm4_v3.hypothesis_selector.evidence_prior_enable", false);
-  declare_parameter("norm4_v3.hypothesis_selector.max_reconstruction_pos_error", 0.30);
+  declare_parameter("norm4_baseline.hypothesis_selector.topk", 4);
+  declare_parameter("norm4_baseline.hypothesis_selector.commit_top1_only", true);
+  declare_parameter("norm4_baseline.hypothesis_selector.min_top1_confidence", 0.55);
+  declare_parameter("norm4_baseline.hypothesis_selector.min_top1_top2_margin", 0.0);
+  declare_parameter("norm4_baseline.hypothesis_selector.ambiguous_margin", 1.0);
+  declare_parameter("norm4_baseline.hypothesis_selector.include_rejected_in_debug", true);
+  declare_parameter("norm4_baseline.hypothesis_selector.evidence_prior_enable", false);
+  declare_parameter("norm4_baseline.hypothesis_selector.max_reconstruction_pos_error", 0.30);
 
-  declare_parameter("norm4_v3.warmup.enable_dual_seed_01", true);
-  declare_parameter("norm4_v3.warmup.warmup_frames", 8);
-  declare_parameter("norm4_v3.warmup.min_settle_frames", 3);
-  declare_parameter("norm4_v3.warmup.min_margin_to_commit", 1.5);
-  declare_parameter("norm4_v3.warmup.min_confidence_to_commit", 0.70);
+  declare_parameter("norm4_baseline.warmup.enable_dual_seed_01", true);
+  declare_parameter("norm4_baseline.warmup.warmup_frames", 8);
+  declare_parameter("norm4_baseline.warmup.min_settle_frames", 3);
+  declare_parameter("norm4_baseline.warmup.min_margin_to_commit", 1.5);
+  declare_parameter("norm4_baseline.warmup.min_confidence_to_commit", 0.70);
 
-  declare_parameter("norm4_v3.mode_routing.ambiguous_output", "single_plate_3d");
-  declare_parameter("norm4_v3.mode_routing.structured_output", "structured_ukf");
-  declare_parameter("norm4_v3.mode_routing.ambiguous_structured_backend_mode",
+  declare_parameter("norm4_baseline.mode_routing.ambiguous_output", "single_plate_3d");
+  declare_parameter("norm4_baseline.mode_routing.structured_output", "structured_ukf");
+  declare_parameter("norm4_baseline.mode_routing.ambiguous_structured_backend_mode",
                     "shallow_or_predict");
-  declare_parameter("norm4_v3.mode_routing.structured_single_plate_mode", "shallow");
+  declare_parameter("norm4_baseline.mode_routing.structured_single_plate_mode", "shallow");
 
-  declare_parameter("norm4_v3.single_plate_bridge.enable", false);
-  declare_parameter("norm4_v3.single_plate_bridge.source_semantic", "track2d_id");
-  declare_parameter("norm4_v3.single_plate_bridge.backend_type", "norm4_ambiguous_backend");
-  declare_parameter("norm4_v3.single_plate_bridge.require_semantic_stable_frames", 2);
+  declare_parameter("norm4_baseline.single_plate_bridge.enable", false);
+  declare_parameter("norm4_baseline.single_plate_bridge.source_semantic", "track2d_id");
+  declare_parameter("norm4_baseline.single_plate_bridge.backend_type", "norm4_ambiguous_backend");
+  declare_parameter("norm4_baseline.single_plate_bridge.require_semantic_stable_frames", 2);
 
-  declare_parameter("norm4_v3.fallback.predict_only_on_reject", true);
-  declare_parameter("norm4_v3.fallback.enable_ambiguous_single_fallback", true);
-  declare_parameter("norm4_v3.debug_log.enable", false);
-  declare_parameter("norm4_v3.debug_log.throttle_ms", 500);
-  declare_parameter("norm4_v3.debug_log.verbose", false);
+  declare_parameter("norm4_baseline.fallback.predict_only_on_reject", true);
+  declare_parameter("norm4_baseline.fallback.enable_ambiguous_single_fallback", true);
+  declare_parameter("norm4_baseline.debug_log.enable", false);
+  declare_parameter("norm4_baseline.debug_log.throttle_ms", 500);
+  declare_parameter("norm4_baseline.debug_log.verbose", false);
 
   // Panel mismatch detection
   declare_parameter("panel_mismatch.enable", true);
@@ -825,170 +781,87 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
   c.maneuver.mad_window = std::max(1, c.maneuver.mad_window);
   c.maneuver.mad_k = std::max(0.1, c.maneuver.mad_k);
 
-  c.binder.confirm_frames = get_parameter("binder.confirm_frames").as_int();
-  c.binder.lock_new_hold_frames = get_parameter("binder.lock_new_hold_frames").as_int();
-  c.binder.force_rebind_bad_frames = get_parameter("binder.force_rebind_bad_frames").as_int();
-  c.binder.pending_window_frames = get_parameter("binder.pending_window_frames").as_int();
-  c.binder.post_jump_min_confidence = get_parameter("binder.post_jump_min_confidence").as_double();
-  c.binder.confidence_floor = get_parameter("binder.confidence_floor").as_double();
-  c.binder.z_jump_min = get_parameter("binder.z_jump_min").as_double();
-  c.binder.dz_match_tolerance = get_parameter("binder.dz_match_tolerance").as_double();
-  c.binder.dz_gate = get_parameter("binder.dz_gate").as_double();
-  c.binder.yaw_err_gate = get_parameter("binder.yaw_err_gate").as_double();
-  c.binder.cost_margin_min = get_parameter("binder.cost_margin_min").as_double();
-  c.binder.dz_ema_alpha = get_parameter("binder.dz_ema_alpha").as_double();
-  c.binder.periodic_enable = get_parameter("binder.periodic_enable").as_bool();
-  c.binder.periodic_window = get_parameter("binder.periodic_window").as_int();
-  c.binder.periodic_weight = get_parameter("binder.periodic_weight").as_double();
-  c.binder.periodic_min_spin_rate = get_parameter("binder.periodic_min_spin_rate").as_double();
-  c.binder.periodic_update_min_jump = get_parameter("binder.periodic_update_min_jump").as_double();
-  c.binder.periodic_signature_threshold =
-    get_parameter("binder.periodic_signature_threshold").as_double();
-  c.binder.reacquire_gap_dt_gate = get_parameter("binder.reacquire_gap_dt_gate").as_double();
-  c.binder.reacquire_lost_frames_gate = get_parameter("binder.reacquire_lost_frames_gate").as_int();
-  c.binder.z_cluster_ema_alpha = get_parameter("binder.z_cluster_ema_alpha").as_double();
-  c.binder.z_cluster_assign_gate = get_parameter("binder.z_cluster_assign_gate").as_double();
-  c.binder.min_candidate_prob = get_parameter("binder.min_candidate_prob").as_double();
-  c.binder.min_candidate_margin = get_parameter("binder.min_candidate_margin").as_double();
-  c.binder.switch_strong_score = get_parameter("binder.switch_strong_score").as_double();
-  c.binder.single_obs_history_window = get_parameter("binder.single_obs_history_window").as_int();
-  c.binder.dual_obs_enable = get_parameter("binder.dual_obs_enable").as_bool();
-  c.binder.scorer_enable = get_parameter("binder.scorer_enable").as_bool();
-  c.binder.same_panel_yaw_gate = get_parameter("binder.same_panel_yaw_gate").as_double();
-  c.binder.same_panel_z_gate = get_parameter("binder.same_panel_z_gate").as_double();
-  c.binder.same_panel_xy_gate = get_parameter("binder.same_panel_xy_gate").as_double();
-  c.binder.z_audit_rebind_enable = get_parameter("binder.z_audit_rebind_enable").as_bool();
-  c.binder.z_audit_rebind_confirm_frames =
-    get_parameter("binder.z_audit_rebind_confirm_frames").as_int();
-  c.binder.z_audit_rebind_min_confidence =
-    get_parameter("binder.z_audit_rebind_min_confidence").as_double();
-  c.binder.z_audit_rebind_min_jump = get_parameter("binder.z_audit_rebind_min_jump").as_double();
-  c.binder.enable_soft_fusion = get_parameter("binder.enable_soft_fusion").as_bool();
-  c.binder.soft_fusion_w_seq = get_parameter("binder.soft_fusion_w_seq").as_double();
-  c.binder.soft_fusion_w_geo = get_parameter("binder.soft_fusion_w_geo").as_double();
-  c.binder.soft_fusion_w_dyn = get_parameter("binder.soft_fusion_w_dyn").as_double();
-  c.binder.soft_fusion_w_continuity = get_parameter("binder.soft_fusion_w_continuity").as_double();
-  c.binder.soft_fusion_w_topology = get_parameter("binder.soft_fusion_w_topology").as_double();
 
-  c.binder.confirm_frames = std::max(1, c.binder.confirm_frames);
-  c.binder.lock_new_hold_frames = std::max(0, c.binder.lock_new_hold_frames);
-  c.binder.force_rebind_bad_frames = std::max(1, c.binder.force_rebind_bad_frames);
-  c.binder.pending_window_frames = std::max(0, c.binder.pending_window_frames);
-  c.binder.post_jump_min_confidence = std::clamp(c.binder.post_jump_min_confidence, 0.0, 1.0);
-  c.binder.confidence_floor = std::clamp(c.binder.confidence_floor, 0.0, 1.0);
-  c.binder.z_jump_min = std::max(0.0, c.binder.z_jump_min);
-  c.binder.dz_match_tolerance = std::max(0.0, c.binder.dz_match_tolerance);
-  c.binder.dz_gate = std::max(0.0, c.binder.dz_gate);
-  c.binder.yaw_err_gate = std::max(1e-3, c.binder.yaw_err_gate);
-  c.binder.cost_margin_min = std::max(0.0, c.binder.cost_margin_min);
-  c.binder.dz_ema_alpha = std::clamp(c.binder.dz_ema_alpha, 0.01, 1.0);
-  c.binder.periodic_window = std::max(3, c.binder.periodic_window);
-  c.binder.periodic_weight = std::max(0.0, c.binder.periodic_weight);
-  c.binder.periodic_min_spin_rate = std::max(0.0, c.binder.periodic_min_spin_rate);
-  c.binder.periodic_update_min_jump = std::max(0.0, c.binder.periodic_update_min_jump);
-  c.binder.periodic_signature_threshold =
-    std::clamp(c.binder.periodic_signature_threshold, 0.0, 1.0);
-  c.binder.reacquire_gap_dt_gate = std::max(0.0, c.binder.reacquire_gap_dt_gate);
-  c.binder.reacquire_lost_frames_gate = std::max(0, c.binder.reacquire_lost_frames_gate);
-  c.binder.z_cluster_ema_alpha = std::clamp(c.binder.z_cluster_ema_alpha, 0.01, 1.0);
-  c.binder.z_cluster_assign_gate = std::max(0.0, c.binder.z_cluster_assign_gate);
-  c.binder.min_candidate_prob = std::clamp(c.binder.min_candidate_prob, 0.0, 1.0);
-  c.binder.min_candidate_margin = std::clamp(c.binder.min_candidate_margin, 0.0, 1.0);
-  c.binder.switch_strong_score = std::clamp(c.binder.switch_strong_score, 0.0, 1.0);
-  c.binder.single_obs_history_window = std::max(1, c.binder.single_obs_history_window);
-  c.binder.same_panel_yaw_gate = std::max(1e-3, c.binder.same_panel_yaw_gate);
-  c.binder.same_panel_z_gate = std::max(1e-3, c.binder.same_panel_z_gate);
-  c.binder.same_panel_xy_gate = std::max(1e-3, c.binder.same_panel_xy_gate);
-  c.binder.z_audit_rebind_confirm_frames = std::max(1, c.binder.z_audit_rebind_confirm_frames);
-  c.binder.z_audit_rebind_min_confidence =
-    std::clamp(c.binder.z_audit_rebind_min_confidence, 0.0, 1.0);
-  c.binder.z_audit_rebind_min_jump = std::max(0.0, c.binder.z_audit_rebind_min_jump);
-  c.binder.soft_fusion_w_seq = std::max(0.0, c.binder.soft_fusion_w_seq);
-  c.binder.soft_fusion_w_geo = std::max(0.0, c.binder.soft_fusion_w_geo);
-  c.binder.soft_fusion_w_dyn = std::max(0.0, c.binder.soft_fusion_w_dyn);
-  c.binder.soft_fusion_w_continuity = std::max(0.0, c.binder.soft_fusion_w_continuity);
-  c.binder.soft_fusion_w_topology = std::max(0.0, c.binder.soft_fusion_w_topology);
+  c.norm4_baseline.enable_common_pipeline = get_parameter("norm4_baseline.enable_common_pipeline").as_bool();
+  c.norm4_baseline.enable_phase_memory = get_parameter("norm4_baseline.enable_phase_memory").as_bool();
+  c.norm4_baseline.enable_kinematic_anti_pingpong =
+    get_parameter("norm4_baseline.enable_kinematic_anti_pingpong").as_bool();
+  c.norm4_baseline.enable_2d_tracker = get_parameter("norm4_baseline.enable_2d_tracker").as_bool();
+  c.norm4_baseline.enable_proxy_manager = get_parameter("norm4_baseline.enable_proxy_manager").as_bool();
+  c.norm4_baseline.phase_memory.enable_phase_memory =
+    get_parameter("norm4_baseline.phase_memory.enable_phase_memory").as_bool();
+  c.norm4_baseline.phase_memory.enable_kinematic_anti_pingpong =
+    get_parameter("norm4_baseline.phase_memory.enable_kinematic_anti_pingpong").as_bool();
+  c.norm4_baseline.phase_memory.sequence_window_size =
+    get_parameter("norm4_baseline.phase_memory.sequence_window_size").as_int();
+  c.norm4_baseline.phase_memory.ping_pong_pattern_threshold =
+    get_parameter("norm4_baseline.phase_memory.ping_pong_pattern_threshold").as_double();
+  c.norm4_baseline.phase_memory.enable_opposite_jump_detect =
+    get_parameter("norm4_baseline.phase_memory.enable_opposite_jump_detect").as_bool();
+  c.norm4_baseline.phase_memory.anti_pingpong.min_consistent_frames_to_commit =
+    get_parameter("norm4_baseline.phase_memory.anti_pingpong.min_consistent_frames_to_commit").as_int();
+  c.norm4_baseline.phase_memory.anti_pingpong.jerk_gate =
+    get_parameter("norm4_baseline.phase_memory.anti_pingpong.jerk_gate").as_double();
+  c.norm4_baseline.phase_memory.anti_pingpong.yaw_rate_jump_gate =
+    get_parameter("norm4_baseline.phase_memory.anti_pingpong.yaw_rate_jump_gate").as_double();
+  c.norm4_baseline.phase_memory.anti_pingpong.velocity_dir_cos_min =
+    get_parameter("norm4_baseline.phase_memory.anti_pingpong.velocity_dir_cos_min").as_double();
+  c.norm4_baseline.phase_memory.anti_pingpong.pending_timeout_frames =
+    get_parameter("norm4_baseline.phase_memory.anti_pingpong.pending_timeout_frames").as_int();
 
-  c.norm4_v3.enable_common_pipeline = get_parameter("norm4_v3.enable_common_pipeline").as_bool();
-  c.norm4_v3.enable_phase_memory = get_parameter("norm4_v3.enable_phase_memory").as_bool();
-  c.norm4_v3.enable_kinematic_anti_pingpong =
-    get_parameter("norm4_v3.enable_kinematic_anti_pingpong").as_bool();
-  c.norm4_v3.enable_2d_tracker = get_parameter("norm4_v3.enable_2d_tracker").as_bool();
-  c.norm4_v3.enable_proxy_manager = get_parameter("norm4_v3.enable_proxy_manager").as_bool();
-  c.norm4_v3.phase_memory.enable_phase_memory =
-    get_parameter("norm4_v3.phase_memory.enable_phase_memory").as_bool();
-  c.norm4_v3.phase_memory.enable_kinematic_anti_pingpong =
-    get_parameter("norm4_v3.phase_memory.enable_kinematic_anti_pingpong").as_bool();
-  c.norm4_v3.phase_memory.sequence_window_size =
-    get_parameter("norm4_v3.phase_memory.sequence_window_size").as_int();
-  c.norm4_v3.phase_memory.ping_pong_pattern_threshold =
-    get_parameter("norm4_v3.phase_memory.ping_pong_pattern_threshold").as_double();
-  c.norm4_v3.phase_memory.enable_opposite_jump_detect =
-    get_parameter("norm4_v3.phase_memory.enable_opposite_jump_detect").as_bool();
-  c.norm4_v3.phase_memory.anti_pingpong.min_consistent_frames_to_commit =
-    get_parameter("norm4_v3.phase_memory.anti_pingpong.min_consistent_frames_to_commit").as_int();
-  c.norm4_v3.phase_memory.anti_pingpong.jerk_gate =
-    get_parameter("norm4_v3.phase_memory.anti_pingpong.jerk_gate").as_double();
-  c.norm4_v3.phase_memory.anti_pingpong.yaw_rate_jump_gate =
-    get_parameter("norm4_v3.phase_memory.anti_pingpong.yaw_rate_jump_gate").as_double();
-  c.norm4_v3.phase_memory.anti_pingpong.velocity_dir_cos_min =
-    get_parameter("norm4_v3.phase_memory.anti_pingpong.velocity_dir_cos_min").as_double();
-  c.norm4_v3.phase_memory.anti_pingpong.pending_timeout_frames =
-    get_parameter("norm4_v3.phase_memory.anti_pingpong.pending_timeout_frames").as_int();
+  c.norm4_baseline.phase_memory.enable_phase_memory = c.norm4_baseline.enable_phase_memory;
+  c.norm4_baseline.phase_memory.enable_kinematic_anti_pingpong =
+    c.norm4_baseline.enable_kinematic_anti_pingpong;
+  c.norm4_baseline.phase_memory.sequence_window_size =
+    std::max(3, c.norm4_baseline.phase_memory.sequence_window_size);
 
-  c.norm4_v3.phase_memory.enable_phase_memory = c.norm4_v3.enable_phase_memory;
-  c.norm4_v3.phase_memory.enable_kinematic_anti_pingpong =
-    c.norm4_v3.enable_kinematic_anti_pingpong;
-  c.norm4_v3.phase_memory.sequence_window_size =
-    std::max(3, c.norm4_v3.phase_memory.sequence_window_size);
+  c.norm4_baseline.ukf_baseline.enabled = get_parameter("norm4_baseline.ukf_baseline.enabled").as_bool();
+  c.norm4_baseline.ukf_baseline.force_rotation_ca =
+    get_parameter("norm4_baseline.ukf_baseline.force_rotation_ca").as_bool();
+  c.norm4_baseline.ukf_baseline.dual_raw_batch = get_parameter("norm4_baseline.ukf_baseline.dual_raw_batch").as_bool();
+  c.norm4_baseline.ukf_baseline.sigma_pos_xy = get_parameter("norm4_baseline.ukf_baseline.sigma_pos_xy").as_double();
+  c.norm4_baseline.ukf_baseline.sigma_pos_z = get_parameter("norm4_baseline.ukf_baseline.sigma_pos_z").as_double();
+  c.norm4_baseline.ukf_baseline.sigma_yaw = get_parameter("norm4_baseline.ukf_baseline.sigma_yaw").as_double();
+  c.norm4_baseline.ukf_baseline.dual_raw_R_scale =
+    get_parameter("norm4_baseline.ukf_baseline.dual_raw_R_scale").as_double();
+  c.norm4_baseline.ukf_baseline.gate.single_total_nis =
+    get_parameter("norm4_baseline.ukf_baseline.gate.single_total_nis").as_double();
+  c.norm4_baseline.ukf_baseline.gate.single_pos_chi2 =
+    get_parameter("norm4_baseline.ukf_baseline.gate.single_pos_chi2").as_double();
+  c.norm4_baseline.ukf_baseline.gate.single_yaw_chi2 =
+    get_parameter("norm4_baseline.ukf_baseline.gate.single_yaw_chi2").as_double();
+  c.norm4_baseline.ukf_baseline.gate.dual_total_nis =
+    get_parameter("norm4_baseline.ukf_baseline.gate.dual_total_nis").as_double();
+  c.norm4_baseline.ukf_baseline.gate.dual_each_pos_chi2 =
+    get_parameter("norm4_baseline.ukf_baseline.gate.dual_each_pos_chi2").as_double();
+  c.norm4_baseline.ukf_baseline.gate.dual_each_yaw_chi2 =
+    get_parameter("norm4_baseline.ukf_baseline.gate.dual_each_yaw_chi2").as_double();
+  c.norm4_baseline.ukf_baseline.single_update.structural_gain_r =
+    get_parameter("norm4_baseline.ukf_baseline.single_update.structural_gain_r").as_double();
+  c.norm4_baseline.ukf_baseline.single_update.structural_gain_dza =
+    get_parameter("norm4_baseline.ukf_baseline.single_update.structural_gain_dza").as_double();
+  c.norm4_baseline.ukf_baseline.dual_update.structural_gain_r =
+    get_parameter("norm4_baseline.ukf_baseline.dual_update.structural_gain_r").as_double();
+  c.norm4_baseline.ukf_baseline.dual_update.structural_gain_dza =
+    get_parameter("norm4_baseline.ukf_baseline.dual_update.structural_gain_dza").as_double();
+  c.norm4_baseline.ukf_baseline.posterior_sanity.max_center_jump =
+    get_parameter("norm4_baseline.ukf_baseline.posterior_sanity.max_center_jump").as_double();
+  c.norm4_baseline.ukf_baseline.posterior_sanity.max_yaw_jump =
+    get_parameter("norm4_baseline.ukf_baseline.posterior_sanity.max_yaw_jump").as_double();
+  c.norm4_baseline.ukf_baseline.posterior_sanity.min_r =
+    get_parameter("norm4_baseline.ukf_baseline.posterior_sanity.min_r").as_double();
+  c.norm4_baseline.ukf_baseline.posterior_sanity.max_r =
+    get_parameter("norm4_baseline.ukf_baseline.posterior_sanity.max_r").as_double();
+  c.norm4_baseline.ukf_baseline.posterior_sanity.max_r_jump =
+    get_parameter("norm4_baseline.ukf_baseline.posterior_sanity.max_r_jump").as_double();
+  c.norm4_baseline.ukf_baseline.posterior_sanity.min_dza =
+    get_parameter("norm4_baseline.ukf_baseline.posterior_sanity.min_dza").as_double();
+  c.norm4_baseline.ukf_baseline.posterior_sanity.max_dza =
+    get_parameter("norm4_baseline.ukf_baseline.posterior_sanity.max_dza").as_double();
+  c.norm4_baseline.ukf_baseline.posterior_sanity.max_dza_jump =
+    get_parameter("norm4_baseline.ukf_baseline.posterior_sanity.max_dza_jump").as_double();
 
-  c.norm4_v3.ukf_v1.enabled = get_parameter("norm4_v3.ukf_v1.enabled").as_bool();
-  c.norm4_v3.ukf_v1.force_rotation_ca =
-    get_parameter("norm4_v3.ukf_v1.force_rotation_ca").as_bool();
-  c.norm4_v3.ukf_v1.dual_raw_batch = get_parameter("norm4_v3.ukf_v1.dual_raw_batch").as_bool();
-  c.norm4_v3.ukf_v1.sigma_pos_xy = get_parameter("norm4_v3.ukf_v1.sigma_pos_xy").as_double();
-  c.norm4_v3.ukf_v1.sigma_pos_z = get_parameter("norm4_v3.ukf_v1.sigma_pos_z").as_double();
-  c.norm4_v3.ukf_v1.sigma_yaw = get_parameter("norm4_v3.ukf_v1.sigma_yaw").as_double();
-  c.norm4_v3.ukf_v1.dual_raw_R_scale =
-    get_parameter("norm4_v3.ukf_v1.dual_raw_R_scale").as_double();
-  c.norm4_v3.ukf_v1.gate.single_total_nis =
-    get_parameter("norm4_v3.ukf_v1.gate.single_total_nis").as_double();
-  c.norm4_v3.ukf_v1.gate.single_pos_chi2 =
-    get_parameter("norm4_v3.ukf_v1.gate.single_pos_chi2").as_double();
-  c.norm4_v3.ukf_v1.gate.single_yaw_chi2 =
-    get_parameter("norm4_v3.ukf_v1.gate.single_yaw_chi2").as_double();
-  c.norm4_v3.ukf_v1.gate.dual_total_nis =
-    get_parameter("norm4_v3.ukf_v1.gate.dual_total_nis").as_double();
-  c.norm4_v3.ukf_v1.gate.dual_each_pos_chi2 =
-    get_parameter("norm4_v3.ukf_v1.gate.dual_each_pos_chi2").as_double();
-  c.norm4_v3.ukf_v1.gate.dual_each_yaw_chi2 =
-    get_parameter("norm4_v3.ukf_v1.gate.dual_each_yaw_chi2").as_double();
-  c.norm4_v3.ukf_v1.single_update.structural_gain_r =
-    get_parameter("norm4_v3.ukf_v1.single_update.structural_gain_r").as_double();
-  c.norm4_v3.ukf_v1.single_update.structural_gain_dza =
-    get_parameter("norm4_v3.ukf_v1.single_update.structural_gain_dza").as_double();
-  c.norm4_v3.ukf_v1.dual_update.structural_gain_r =
-    get_parameter("norm4_v3.ukf_v1.dual_update.structural_gain_r").as_double();
-  c.norm4_v3.ukf_v1.dual_update.structural_gain_dza =
-    get_parameter("norm4_v3.ukf_v1.dual_update.structural_gain_dza").as_double();
-  c.norm4_v3.ukf_v1.posterior_sanity.max_center_jump =
-    get_parameter("norm4_v3.ukf_v1.posterior_sanity.max_center_jump").as_double();
-  c.norm4_v3.ukf_v1.posterior_sanity.max_yaw_jump =
-    get_parameter("norm4_v3.ukf_v1.posterior_sanity.max_yaw_jump").as_double();
-  c.norm4_v3.ukf_v1.posterior_sanity.min_r =
-    get_parameter("norm4_v3.ukf_v1.posterior_sanity.min_r").as_double();
-  c.norm4_v3.ukf_v1.posterior_sanity.max_r =
-    get_parameter("norm4_v3.ukf_v1.posterior_sanity.max_r").as_double();
-  c.norm4_v3.ukf_v1.posterior_sanity.max_r_jump =
-    get_parameter("norm4_v3.ukf_v1.posterior_sanity.max_r_jump").as_double();
-  c.norm4_v3.ukf_v1.posterior_sanity.min_dza =
-    get_parameter("norm4_v3.ukf_v1.posterior_sanity.min_dza").as_double();
-  c.norm4_v3.ukf_v1.posterior_sanity.max_dza =
-    get_parameter("norm4_v3.ukf_v1.posterior_sanity.max_dza").as_double();
-  c.norm4_v3.ukf_v1.posterior_sanity.max_dza_jump =
-    get_parameter("norm4_v3.ukf_v1.posterior_sanity.max_dza_jump").as_double();
-
-  auto load_norm4_v3_ukf_cfg = [this](const std::string &prefix, Norm4V3UkfConfig *out) {
+  auto load_norm4_baseline_ukf_cfg = [this](const std::string &prefix, Norm4BaselineUkfConfig *out) {
     out->enabled = get_parameter(prefix + ".enabled").as_bool();
     out->force_rotation_ca = get_parameter(prefix + ".force_rotation_ca").as_bool();
     out->dual_raw_batch = get_parameter(prefix + ".dual_raw_batch").as_bool();
@@ -1023,140 +896,140 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
     out->posterior_sanity.max_dza_jump =
       get_parameter(prefix + ".posterior_sanity.max_dza_jump").as_double();
   };
-  load_norm4_v3_ukf_cfg("norm4_v3.inekf", &c.norm4_v3.inekf);
+  load_norm4_baseline_ukf_cfg("norm4_baseline.inekf", &c.norm4_baseline.inekf);
 
-  c.norm4_v3.slow_structure.enable = get_parameter("norm4_v3.slow_structure.enable").as_bool();
-  c.norm4_v3.slow_structure.q_theta_r1 =
-    get_parameter("norm4_v3.slow_structure.q_theta_r1").as_double();
-  c.norm4_v3.slow_structure.q_theta_r2 =
-    get_parameter("norm4_v3.slow_structure.q_theta_r2").as_double();
-  c.norm4_v3.slow_structure.q_theta_dza =
-    get_parameter("norm4_v3.slow_structure.q_theta_dza").as_double();
-  c.norm4_v3.slow_structure.prior_r1 =
-    get_parameter("norm4_v3.slow_structure.prior_r1").as_double();
-  c.norm4_v3.slow_structure.prior_r2 =
-    get_parameter("norm4_v3.slow_structure.prior_r2").as_double();
-  c.norm4_v3.slow_structure.prior_dza =
-    get_parameter("norm4_v3.slow_structure.prior_dza").as_double();
-  c.norm4_v3.slow_structure.prior_sigma_r =
-    get_parameter("norm4_v3.slow_structure.prior_sigma_r").as_double();
-  c.norm4_v3.slow_structure.prior_sigma_dza =
-    get_parameter("norm4_v3.slow_structure.prior_sigma_dza").as_double();
-  c.norm4_v3.slow_structure.alpha_r1_single =
-    get_parameter("norm4_v3.slow_structure.alpha_r1_single").as_double();
-  c.norm4_v3.slow_structure.alpha_r2_single =
-    get_parameter("norm4_v3.slow_structure.alpha_r2_single").as_double();
-  c.norm4_v3.slow_structure.alpha_dza_single =
-    get_parameter("norm4_v3.slow_structure.alpha_dza_single").as_double();
-  c.norm4_v3.slow_structure.alpha_r1_dual =
-    get_parameter("norm4_v3.slow_structure.alpha_r1_dual").as_double();
-  c.norm4_v3.slow_structure.alpha_r2_dual =
-    get_parameter("norm4_v3.slow_structure.alpha_r2_dual").as_double();
-  c.norm4_v3.slow_structure.alpha_dza_dual =
-    get_parameter("norm4_v3.slow_structure.alpha_dza_dual").as_double();
-  c.norm4_v3.slow_structure.prior_pull_gain =
-    get_parameter("norm4_v3.slow_structure.prior_pull_gain").as_double();
-  c.norm4_v3.slow_structure.min_r = get_parameter("norm4_v3.slow_structure.min_r").as_double();
-  c.norm4_v3.slow_structure.max_r = get_parameter("norm4_v3.slow_structure.max_r").as_double();
-  c.norm4_v3.slow_structure.min_dza = get_parameter("norm4_v3.slow_structure.min_dza").as_double();
-  c.norm4_v3.slow_structure.max_dza = get_parameter("norm4_v3.slow_structure.max_dza").as_double();
+  c.norm4_baseline.slow_structure.enable = get_parameter("norm4_baseline.slow_structure.enable").as_bool();
+  c.norm4_baseline.slow_structure.q_theta_r1 =
+    get_parameter("norm4_baseline.slow_structure.q_theta_r1").as_double();
+  c.norm4_baseline.slow_structure.q_theta_r2 =
+    get_parameter("norm4_baseline.slow_structure.q_theta_r2").as_double();
+  c.norm4_baseline.slow_structure.q_theta_dza =
+    get_parameter("norm4_baseline.slow_structure.q_theta_dza").as_double();
+  c.norm4_baseline.slow_structure.prior_r1 =
+    get_parameter("norm4_baseline.slow_structure.prior_r1").as_double();
+  c.norm4_baseline.slow_structure.prior_r2 =
+    get_parameter("norm4_baseline.slow_structure.prior_r2").as_double();
+  c.norm4_baseline.slow_structure.prior_dza =
+    get_parameter("norm4_baseline.slow_structure.prior_dza").as_double();
+  c.norm4_baseline.slow_structure.prior_sigma_r =
+    get_parameter("norm4_baseline.slow_structure.prior_sigma_r").as_double();
+  c.norm4_baseline.slow_structure.prior_sigma_dza =
+    get_parameter("norm4_baseline.slow_structure.prior_sigma_dza").as_double();
+  c.norm4_baseline.slow_structure.alpha_r1_single =
+    get_parameter("norm4_baseline.slow_structure.alpha_r1_single").as_double();
+  c.norm4_baseline.slow_structure.alpha_r2_single =
+    get_parameter("norm4_baseline.slow_structure.alpha_r2_single").as_double();
+  c.norm4_baseline.slow_structure.alpha_dza_single =
+    get_parameter("norm4_baseline.slow_structure.alpha_dza_single").as_double();
+  c.norm4_baseline.slow_structure.alpha_r1_dual =
+    get_parameter("norm4_baseline.slow_structure.alpha_r1_dual").as_double();
+  c.norm4_baseline.slow_structure.alpha_r2_dual =
+    get_parameter("norm4_baseline.slow_structure.alpha_r2_dual").as_double();
+  c.norm4_baseline.slow_structure.alpha_dza_dual =
+    get_parameter("norm4_baseline.slow_structure.alpha_dza_dual").as_double();
+  c.norm4_baseline.slow_structure.prior_pull_gain =
+    get_parameter("norm4_baseline.slow_structure.prior_pull_gain").as_double();
+  c.norm4_baseline.slow_structure.min_r = get_parameter("norm4_baseline.slow_structure.min_r").as_double();
+  c.norm4_baseline.slow_structure.max_r = get_parameter("norm4_baseline.slow_structure.max_r").as_double();
+  c.norm4_baseline.slow_structure.min_dza = get_parameter("norm4_baseline.slow_structure.min_dza").as_double();
+  c.norm4_baseline.slow_structure.max_dza = get_parameter("norm4_baseline.slow_structure.max_dza").as_double();
 
-  c.norm4_v3.backend_config.backend_type =
-    get_parameter("norm4_v3.backend_config.backend_type").as_string();
-  c.norm4_v3.backend_config.motion_profile =
-    get_parameter("norm4_v3.backend_config.motion_profile").as_string();
-  c.norm4_v3.backend_config.noise_profile =
-    get_parameter("norm4_v3.backend_config.noise_profile").as_string();
-  c.norm4_v3.backend_config.structure_profile =
-    get_parameter("norm4_v3.backend_config.structure_profile").as_string();
-  c.norm4_v3.inekf_runtime.motion_profile =
-    get_parameter("norm4_v3.inekf_runtime.motion_profile").as_string();
-  c.norm4_v3.inekf_runtime.noise_profile =
-    get_parameter("norm4_v3.inekf_runtime.noise_profile").as_string();
-  c.norm4_v3.inekf_runtime.structure_profile =
-    get_parameter("norm4_v3.inekf_runtime.structure_profile").as_string();
-  c.norm4_v3.inekf_runtime.translation_model =
-    get_parameter("norm4_v3.inekf_runtime.translation_model").as_string();
-  c.norm4_v3.inekf_runtime.cv_process_noise_vel =
-    get_parameter("norm4_v3.inekf_runtime.cv_process_noise_vel").as_double();
-  c.norm4_v3.inekf_runtime.ca_process_noise_acc =
-    get_parameter("norm4_v3.inekf_runtime.ca_process_noise_acc").as_double();
-  c.norm4_v3.inekf_runtime.singer_alpha =
-    get_parameter("norm4_v3.inekf_runtime.singer_alpha").as_double();
-  c.norm4_v3.inekf_runtime.singer_sigma =
-    get_parameter("norm4_v3.inekf_runtime.singer_sigma").as_double();
-  c.norm4_v3.inekf_runtime.process_noise_r =
-    get_parameter("norm4_v3.inekf_runtime.process_noise_r").as_double();
-  c.norm4_v3.inekf_runtime.process_noise_dz =
-    get_parameter("norm4_v3.inekf_runtime.process_noise_dz").as_double();
-  c.norm4_v3.inekf_runtime.spin_process_noise_delta_rate =
-    get_parameter("norm4_v3.inekf_runtime.spin_process_noise_delta_rate").as_double();
-  c.norm4_v3.inekf_runtime.spin_process_noise_delta_acc =
-    get_parameter("norm4_v3.inekf_runtime.spin_process_noise_delta_acc").as_double();
+  c.norm4_baseline.backend_config.backend_type =
+    get_parameter("norm4_baseline.backend_config.backend_type").as_string();
+  c.norm4_baseline.backend_config.motion_profile =
+    get_parameter("norm4_baseline.backend_config.motion_profile").as_string();
+  c.norm4_baseline.backend_config.noise_profile =
+    get_parameter("norm4_baseline.backend_config.noise_profile").as_string();
+  c.norm4_baseline.backend_config.structure_profile =
+    get_parameter("norm4_baseline.backend_config.structure_profile").as_string();
+  c.norm4_baseline.inekf_runtime.motion_profile =
+    get_parameter("norm4_baseline.inekf_runtime.motion_profile").as_string();
+  c.norm4_baseline.inekf_runtime.noise_profile =
+    get_parameter("norm4_baseline.inekf_runtime.noise_profile").as_string();
+  c.norm4_baseline.inekf_runtime.structure_profile =
+    get_parameter("norm4_baseline.inekf_runtime.structure_profile").as_string();
+  c.norm4_baseline.inekf_runtime.translation_model =
+    get_parameter("norm4_baseline.inekf_runtime.translation_model").as_string();
+  c.norm4_baseline.inekf_runtime.cv_process_noise_vel =
+    get_parameter("norm4_baseline.inekf_runtime.cv_process_noise_vel").as_double();
+  c.norm4_baseline.inekf_runtime.ca_process_noise_acc =
+    get_parameter("norm4_baseline.inekf_runtime.ca_process_noise_acc").as_double();
+  c.norm4_baseline.inekf_runtime.singer_alpha =
+    get_parameter("norm4_baseline.inekf_runtime.singer_alpha").as_double();
+  c.norm4_baseline.inekf_runtime.singer_sigma =
+    get_parameter("norm4_baseline.inekf_runtime.singer_sigma").as_double();
+  c.norm4_baseline.inekf_runtime.process_noise_r =
+    get_parameter("norm4_baseline.inekf_runtime.process_noise_r").as_double();
+  c.norm4_baseline.inekf_runtime.process_noise_dz =
+    get_parameter("norm4_baseline.inekf_runtime.process_noise_dz").as_double();
+  c.norm4_baseline.inekf_runtime.spin_process_noise_delta_rate =
+    get_parameter("norm4_baseline.inekf_runtime.spin_process_noise_delta_rate").as_double();
+  c.norm4_baseline.inekf_runtime.spin_process_noise_delta_acc =
+    get_parameter("norm4_baseline.inekf_runtime.spin_process_noise_delta_acc").as_double();
 
-  c.norm4_v3.hypothesis_selector.topk = get_parameter("norm4_v3.hypothesis_selector.topk").as_int();
-  c.norm4_v3.hypothesis_selector.commit_top1_only =
-    get_parameter("norm4_v3.hypothesis_selector.commit_top1_only").as_bool();
-  c.norm4_v3.hypothesis_selector.min_top1_confidence =
-    get_parameter("norm4_v3.hypothesis_selector.min_top1_confidence").as_double();
-  c.norm4_v3.hypothesis_selector.min_top1_top2_margin =
-    get_parameter("norm4_v3.hypothesis_selector.min_top1_top2_margin").as_double();
-  c.norm4_v3.hypothesis_selector.ambiguous_margin =
-    get_parameter("norm4_v3.hypothesis_selector.ambiguous_margin").as_double();
-  c.norm4_v3.hypothesis_selector.include_rejected_in_debug =
-    get_parameter("norm4_v3.hypothesis_selector.include_rejected_in_debug").as_bool();
-  c.norm4_v3.hypothesis_selector.evidence_prior_enable =
-    get_parameter("norm4_v3.hypothesis_selector.evidence_prior_enable").as_bool();
-  c.norm4_v3.hypothesis_selector.max_reconstruction_pos_error =
-    get_parameter("norm4_v3.hypothesis_selector.max_reconstruction_pos_error").as_double();
+  c.norm4_baseline.hypothesis_selector.topk = get_parameter("norm4_baseline.hypothesis_selector.topk").as_int();
+  c.norm4_baseline.hypothesis_selector.commit_top1_only =
+    get_parameter("norm4_baseline.hypothesis_selector.commit_top1_only").as_bool();
+  c.norm4_baseline.hypothesis_selector.min_top1_confidence =
+    get_parameter("norm4_baseline.hypothesis_selector.min_top1_confidence").as_double();
+  c.norm4_baseline.hypothesis_selector.min_top1_top2_margin =
+    get_parameter("norm4_baseline.hypothesis_selector.min_top1_top2_margin").as_double();
+  c.norm4_baseline.hypothesis_selector.ambiguous_margin =
+    get_parameter("norm4_baseline.hypothesis_selector.ambiguous_margin").as_double();
+  c.norm4_baseline.hypothesis_selector.include_rejected_in_debug =
+    get_parameter("norm4_baseline.hypothesis_selector.include_rejected_in_debug").as_bool();
+  c.norm4_baseline.hypothesis_selector.evidence_prior_enable =
+    get_parameter("norm4_baseline.hypothesis_selector.evidence_prior_enable").as_bool();
+  c.norm4_baseline.hypothesis_selector.max_reconstruction_pos_error =
+    get_parameter("norm4_baseline.hypothesis_selector.max_reconstruction_pos_error").as_double();
 
-  c.norm4_v3.warmup.enable_dual_seed_01 =
-    get_parameter("norm4_v3.warmup.enable_dual_seed_01").as_bool();
-  c.norm4_v3.warmup.warmup_frames = get_parameter("norm4_v3.warmup.warmup_frames").as_int();
-  c.norm4_v3.warmup.min_settle_frames = get_parameter("norm4_v3.warmup.min_settle_frames").as_int();
-  c.norm4_v3.warmup.min_margin_to_commit =
-    get_parameter("norm4_v3.warmup.min_margin_to_commit").as_double();
-  c.norm4_v3.warmup.min_confidence_to_commit =
-    get_parameter("norm4_v3.warmup.min_confidence_to_commit").as_double();
+  c.norm4_baseline.warmup.enable_dual_seed_01 =
+    get_parameter("norm4_baseline.warmup.enable_dual_seed_01").as_bool();
+  c.norm4_baseline.warmup.warmup_frames = get_parameter("norm4_baseline.warmup.warmup_frames").as_int();
+  c.norm4_baseline.warmup.min_settle_frames = get_parameter("norm4_baseline.warmup.min_settle_frames").as_int();
+  c.norm4_baseline.warmup.min_margin_to_commit =
+    get_parameter("norm4_baseline.warmup.min_margin_to_commit").as_double();
+  c.norm4_baseline.warmup.min_confidence_to_commit =
+    get_parameter("norm4_baseline.warmup.min_confidence_to_commit").as_double();
 
-  c.norm4_v3.mode_routing.ambiguous_output =
-    get_parameter("norm4_v3.mode_routing.ambiguous_output").as_string();
-  c.norm4_v3.mode_routing.structured_output =
-    get_parameter("norm4_v3.mode_routing.structured_output").as_string();
-  c.norm4_v3.mode_routing.ambiguous_structured_backend_mode =
-    get_parameter("norm4_v3.mode_routing.ambiguous_structured_backend_mode").as_string();
-  c.norm4_v3.mode_routing.structured_single_plate_mode =
-    get_parameter("norm4_v3.mode_routing.structured_single_plate_mode").as_string();
+  c.norm4_baseline.mode_routing.ambiguous_output =
+    get_parameter("norm4_baseline.mode_routing.ambiguous_output").as_string();
+  c.norm4_baseline.mode_routing.structured_output =
+    get_parameter("norm4_baseline.mode_routing.structured_output").as_string();
+  c.norm4_baseline.mode_routing.ambiguous_structured_backend_mode =
+    get_parameter("norm4_baseline.mode_routing.ambiguous_structured_backend_mode").as_string();
+  c.norm4_baseline.mode_routing.structured_single_plate_mode =
+    get_parameter("norm4_baseline.mode_routing.structured_single_plate_mode").as_string();
 
-  c.norm4_v3.single_plate_bridge.enable =
-    get_parameter("norm4_v3.single_plate_bridge.enable").as_bool();
-  c.norm4_v3.single_plate_bridge.source_semantic =
-    get_parameter("norm4_v3.single_plate_bridge.source_semantic").as_string();
-  c.norm4_v3.single_plate_bridge.backend_type =
-    get_parameter("norm4_v3.single_plate_bridge.backend_type").as_string();
-  c.norm4_v3.single_plate_bridge.require_semantic_stable_frames =
-    get_parameter("norm4_v3.single_plate_bridge.require_semantic_stable_frames").as_int();
+  c.norm4_baseline.single_plate_bridge.enable =
+    get_parameter("norm4_baseline.single_plate_bridge.enable").as_bool();
+  c.norm4_baseline.single_plate_bridge.source_semantic =
+    get_parameter("norm4_baseline.single_plate_bridge.source_semantic").as_string();
+  c.norm4_baseline.single_plate_bridge.backend_type =
+    get_parameter("norm4_baseline.single_plate_bridge.backend_type").as_string();
+  c.norm4_baseline.single_plate_bridge.require_semantic_stable_frames =
+    get_parameter("norm4_baseline.single_plate_bridge.require_semantic_stable_frames").as_int();
 
-  c.norm4_v3.fallback.predict_only_on_reject =
-    get_parameter("norm4_v3.fallback.predict_only_on_reject").as_bool();
-  c.norm4_v3.fallback.enable_ambiguous_single_fallback =
-    get_parameter("norm4_v3.fallback.enable_ambiguous_single_fallback").as_bool();
-  c.norm4_v3.debug_log.enable = get_parameter("norm4_v3.debug_log.enable").as_bool();
-  c.norm4_v3.debug_log.throttle_ms =
-    std::max<int>(50, static_cast<int>(get_parameter("norm4_v3.debug_log.throttle_ms").as_int()));
-  c.norm4_v3.debug_log.verbose = get_parameter("norm4_v3.debug_log.verbose").as_bool();
-  c.norm4_v3.phase_memory.ping_pong_pattern_threshold =
-    std::clamp(c.norm4_v3.phase_memory.ping_pong_pattern_threshold, 0.0, 1.0);
-  c.norm4_v3.phase_memory.anti_pingpong.min_consistent_frames_to_commit =
-    std::max(1, c.norm4_v3.phase_memory.anti_pingpong.min_consistent_frames_to_commit);
-  c.norm4_v3.phase_memory.anti_pingpong.jerk_gate =
-    std::max(0.0, c.norm4_v3.phase_memory.anti_pingpong.jerk_gate);
-  c.norm4_v3.phase_memory.anti_pingpong.yaw_rate_jump_gate =
-    std::max(0.0, c.norm4_v3.phase_memory.anti_pingpong.yaw_rate_jump_gate);
-  c.norm4_v3.phase_memory.anti_pingpong.velocity_dir_cos_min =
-    std::clamp(c.norm4_v3.phase_memory.anti_pingpong.velocity_dir_cos_min, -1.0, 1.0);
-  c.norm4_v3.phase_memory.anti_pingpong.pending_timeout_frames =
-    std::max(1, c.norm4_v3.phase_memory.anti_pingpong.pending_timeout_frames);
+  c.norm4_baseline.fallback.predict_only_on_reject =
+    get_parameter("norm4_baseline.fallback.predict_only_on_reject").as_bool();
+  c.norm4_baseline.fallback.enable_ambiguous_single_fallback =
+    get_parameter("norm4_baseline.fallback.enable_ambiguous_single_fallback").as_bool();
+  c.norm4_baseline.debug_log.enable = get_parameter("norm4_baseline.debug_log.enable").as_bool();
+  c.norm4_baseline.debug_log.throttle_ms =
+    std::max<int>(50, static_cast<int>(get_parameter("norm4_baseline.debug_log.throttle_ms").as_int()));
+  c.norm4_baseline.debug_log.verbose = get_parameter("norm4_baseline.debug_log.verbose").as_bool();
+  c.norm4_baseline.phase_memory.ping_pong_pattern_threshold =
+    std::clamp(c.norm4_baseline.phase_memory.ping_pong_pattern_threshold, 0.0, 1.0);
+  c.norm4_baseline.phase_memory.anti_pingpong.min_consistent_frames_to_commit =
+    std::max(1, c.norm4_baseline.phase_memory.anti_pingpong.min_consistent_frames_to_commit);
+  c.norm4_baseline.phase_memory.anti_pingpong.jerk_gate =
+    std::max(0.0, c.norm4_baseline.phase_memory.anti_pingpong.jerk_gate);
+  c.norm4_baseline.phase_memory.anti_pingpong.yaw_rate_jump_gate =
+    std::max(0.0, c.norm4_baseline.phase_memory.anti_pingpong.yaw_rate_jump_gate);
+  c.norm4_baseline.phase_memory.anti_pingpong.velocity_dir_cos_min =
+    std::clamp(c.norm4_baseline.phase_memory.anti_pingpong.velocity_dir_cos_min, -1.0, 1.0);
+  c.norm4_baseline.phase_memory.anti_pingpong.pending_timeout_frames =
+    std::max(1, c.norm4_baseline.phase_memory.anti_pingpong.pending_timeout_frames);
 
   c.panel_mismatch.enable = get_parameter("panel_mismatch.enable").as_bool();
   c.panel_mismatch.window_size = get_parameter("panel_mismatch.window_size").as_int();
@@ -1199,9 +1072,6 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
   c.outpost.z_history_window = get_parameter("outpost.z_history_window").as_int();
   c.outpost.single_mode_confidence_scale =
     get_parameter("outpost.single_mode_confidence_scale").as_double();
-  c.outpost.binding_use_new_binder_pipeline =
-    get_parameter("outpost.binding_use_new_binder_pipeline").as_bool();
-  c.outpost.binding_enable_multi_obs = get_parameter("outpost.binding_enable_multi_obs").as_bool();
   c.outpost.binding_transition_confirm_frames =
     get_parameter("outpost.binding_transition_confirm_frames").as_int();
   c.outpost.binding_same_panel_yaw_gate =
@@ -1265,18 +1135,18 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
     get_parameter("outpost.ambiguous_single_armor_zero_offset").as_bool();
   c.outpost.ambiguous_backend_use_imm_adapter =
     get_parameter("outpost.ambiguous_backend_use_imm_adapter").as_bool();
-  c.outpost.v2_warmup_enable = get_parameter("outpost.v2_warmup_enable").as_bool();
-  c.outpost.v2_warmup_min_groups = get_parameter("outpost.v2_warmup_min_groups").as_int();
-  c.outpost.v2_warmup_min_samples_per_group =
-    get_parameter("outpost.v2_warmup_min_samples_per_group").as_int();
-  c.outpost.v2_warmup_max_frames = get_parameter("outpost.v2_warmup_max_frames").as_int();
-  c.outpost.v2_warmup_z_jump_gate = get_parameter("outpost.v2_warmup_z_jump_gate").as_double();
-  c.outpost.v2_warmup_yaw_jump_gate = get_parameter("outpost.v2_warmup_yaw_jump_gate").as_double();
-  c.outpost.v2_warmup_xyz_jump_gate = get_parameter("outpost.v2_warmup_xyz_jump_gate").as_double();
-  c.outpost.v2_warmup_ratio_min = get_parameter("outpost.v2_warmup_ratio_min").as_double();
-  c.outpost.v2_warmup_ratio_max = get_parameter("outpost.v2_warmup_ratio_max").as_double();
-  c.outpost.v2_warmup_min_large_diff =
-    get_parameter("outpost.v2_warmup_min_large_diff").as_double();
+  c.outpost.baseline_warmup_enable = get_parameter("outpost.baseline_warmup_enable").as_bool();
+  c.outpost.baseline_warmup_min_groups = get_parameter("outpost.baseline_warmup_min_groups").as_int();
+  c.outpost.baseline_warmup_min_samples_per_group =
+    get_parameter("outpost.baseline_warmup_min_samples_per_group").as_int();
+  c.outpost.baseline_warmup_max_frames = get_parameter("outpost.baseline_warmup_max_frames").as_int();
+  c.outpost.baseline_warmup_z_jump_gate = get_parameter("outpost.baseline_warmup_z_jump_gate").as_double();
+  c.outpost.baseline_warmup_yaw_jump_gate = get_parameter("outpost.baseline_warmup_yaw_jump_gate").as_double();
+  c.outpost.baseline_warmup_xyz_jump_gate = get_parameter("outpost.baseline_warmup_xyz_jump_gate").as_double();
+  c.outpost.baseline_warmup_ratio_min = get_parameter("outpost.baseline_warmup_ratio_min").as_double();
+  c.outpost.baseline_warmup_ratio_max = get_parameter("outpost.baseline_warmup_ratio_max").as_double();
+  c.outpost.baseline_warmup_min_large_diff =
+    get_parameter("outpost.baseline_warmup_min_large_diff").as_double();
   c.outpost.tracking_thres = std::max(1, c.outpost.tracking_thres);
   c.outpost.lost_thres = std::max(1, c.outpost.lost_thres);
   c.outpost.temp_lost_thres = std::max(1, c.outpost.temp_lost_thres);
@@ -1309,17 +1179,17 @@ void GimbalPipelineNode::applyTrackerParamsToConfig() {
   c.outpost.z_audit_rebind_min_confidence =
     std::clamp(c.outpost.z_audit_rebind_min_confidence, 0.0, 1.0);
   c.outpost.z_audit_rebind_min_jump = std::max(0.0, c.outpost.z_audit_rebind_min_jump);
-  c.outpost.v2_warmup_min_groups = std::clamp(c.outpost.v2_warmup_min_groups, 2, 6);
-  c.outpost.v2_warmup_min_samples_per_group =
-    std::max(1, c.outpost.v2_warmup_min_samples_per_group);
-  c.outpost.v2_warmup_max_frames = std::max(1, c.outpost.v2_warmup_max_frames);
-  c.outpost.v2_warmup_z_jump_gate = std::max(0.0, c.outpost.v2_warmup_z_jump_gate);
-  c.outpost.v2_warmup_yaw_jump_gate = std::max(0.0, c.outpost.v2_warmup_yaw_jump_gate);
-  c.outpost.v2_warmup_xyz_jump_gate = std::max(0.0, c.outpost.v2_warmup_xyz_jump_gate);
-  c.outpost.v2_warmup_ratio_min = std::max(1.0, c.outpost.v2_warmup_ratio_min);
-  c.outpost.v2_warmup_ratio_max =
-    std::max(c.outpost.v2_warmup_ratio_min, c.outpost.v2_warmup_ratio_max);
-  c.outpost.v2_warmup_min_large_diff = std::max(0.0, c.outpost.v2_warmup_min_large_diff);
+  c.outpost.baseline_warmup_min_groups = std::clamp(c.outpost.baseline_warmup_min_groups, 2, 6);
+  c.outpost.baseline_warmup_min_samples_per_group =
+    std::max(1, c.outpost.baseline_warmup_min_samples_per_group);
+  c.outpost.baseline_warmup_max_frames = std::max(1, c.outpost.baseline_warmup_max_frames);
+  c.outpost.baseline_warmup_z_jump_gate = std::max(0.0, c.outpost.baseline_warmup_z_jump_gate);
+  c.outpost.baseline_warmup_yaw_jump_gate = std::max(0.0, c.outpost.baseline_warmup_yaw_jump_gate);
+  c.outpost.baseline_warmup_xyz_jump_gate = std::max(0.0, c.outpost.baseline_warmup_xyz_jump_gate);
+  c.outpost.baseline_warmup_ratio_min = std::max(1.0, c.outpost.baseline_warmup_ratio_min);
+  c.outpost.baseline_warmup_ratio_max =
+    std::max(c.outpost.baseline_warmup_ratio_min, c.outpost.baseline_warmup_ratio_max);
+  c.outpost.baseline_warmup_min_large_diff = std::max(0.0, c.outpost.baseline_warmup_min_large_diff);
   c.outpost.binding_conflict_position_scale =
     std::clamp(c.outpost.binding_conflict_position_scale, 0.0, 1.0);
   c.outpost.weight_xy_residual = std::max(0.0, c.outpost.weight_xy_residual);

@@ -178,8 +178,6 @@ struct OutpostParameters {
   double single_mode_confidence_scale = 0.70;
 
   // Binding engine controls (periodic evidence + transition confirmation)
-  bool binding_use_new_binder_pipeline = false;
-  bool binding_enable_multi_obs = true;
   int binding_transition_confirm_frames = 3;
   double binding_same_panel_yaw_gate = 0.35;
   double binding_same_panel_z_gate = 0.08;
@@ -221,27 +219,27 @@ struct OutpostParameters {
   bool ambiguous_single_armor_zero_offset = true;
   bool ambiguous_backend_use_imm_adapter = false;
 
-  // OutpostTrackerV2 ID warmup: publish ambiguous single-armor output while
+  // OutpostTrackerBaseline ID warmup: publish ambiguous single-armor output while
   // collecting relative z-level evidence, then bind 0/1/2 after dz/2dz is observed.
-  bool v2_warmup_enable = true;
-  int v2_warmup_min_groups = 3;
-  int v2_warmup_min_samples_per_group = 2;
-  int v2_warmup_max_frames = 60;
-  double v2_warmup_z_jump_gate = 0.025;
-  double v2_warmup_yaw_jump_gate = 0.75;
-  double v2_warmup_xyz_jump_gate = 0.18;
-  double v2_warmup_ratio_min = 1.55;
-  double v2_warmup_ratio_max = 2.45;
-  double v2_warmup_min_large_diff = 0.06;
+  bool baseline_warmup_enable = true;
+  int baseline_warmup_min_groups = 3;
+  int baseline_warmup_min_samples_per_group = 2;
+  int baseline_warmup_max_frames = 60;
+  double baseline_warmup_z_jump_gate = 0.025;
+  double baseline_warmup_yaw_jump_gate = 0.75;
+  double baseline_warmup_xyz_jump_gate = 0.18;
+  double baseline_warmup_ratio_min = 1.55;
+  double baseline_warmup_ratio_max = 2.45;
+  double baseline_warmup_min_large_diff = 0.06;
 
-  // ModeFSM (OutpostTrackerV2)
+  // ModeFSM (OutpostTrackerBaseline)
   int mode_enter_confirm_frames = 3;
   int mode_exit_confirm_frames = 4;
   int mode_min_dwell_frames = 6;
   double mode_enter_threshold = 0.72;
   double mode_exit_threshold = 0.45;
 
-  // Mode evidence fusion weights (OutpostTrackerV2)
+  // Mode evidence fusion weights (OutpostTrackerBaseline)
   double mode_weight_jump = 0.30;
   double mode_weight_dual = 0.20;
   double mode_weight_margin = 0.20;
@@ -264,66 +262,7 @@ struct ManeuverDetectionParameters {
   double mad_k             = 3.0;   ///< outlier threshold = mad_k * MAD
 };
 
-// ======================== Binder Config ========================
-
-struct BinderConfig {
-  // ── Common / FSM ──
-  int confirm_frames = 3;
-  int lock_new_hold_frames = 2;
-  int force_rebind_bad_frames = 10;
-  int pending_window_frames = 0;
-  double post_jump_min_confidence = 0.45;
-  double confidence_floor = 0.15;
-
-  // ── Decoder: PROXIMITY gates (4-panel) ──
-  double z_jump_min = 0.015;
-  double dz_match_tolerance = 0.03;
-  double dz_gate = 0.010;
-  double yaw_err_gate = 0.35;
-  double cost_margin_min = 0.08;
-  double dz_ema_alpha = 0.20;
-
-  // ── Decoder: periodic evidence ──
-  bool periodic_enable = false;
-  int periodic_window = 12;
-  double periodic_weight = 0.60;
-  double periodic_min_spin_rate = 0.8;
-  double periodic_update_min_jump = 0.015;
-  double periodic_signature_threshold = 0.60;
-  double reacquire_gap_dt_gate = 0.12;
-  int reacquire_lost_frames_gate = 1;
-  double z_cluster_ema_alpha = 0.25;
-  double z_cluster_assign_gate = 0.10;
-
-  // ── ID Binder: COST gates ──
-  double min_candidate_prob = 0.40;
-  double min_candidate_margin = 0.12;
-  double switch_strong_score = 0.60;
-  int single_obs_history_window = 8;
-  bool dual_obs_enable = true;
-
-  // ── Scorer ──
-  bool scorer_enable = true;
-  double same_panel_yaw_gate = 0.35;
-  double same_panel_z_gate = 0.08;
-  double same_panel_xy_gate = 0.18;
-
-  // ── Scorer: z-audit rebind (outpost) ──
-  bool z_audit_rebind_enable = false;
-  int z_audit_rebind_confirm_frames = 3;
-  double z_audit_rebind_min_confidence = 0.60;
-  double z_audit_rebind_min_jump = 0.015;
-
-  // ── Phase 6: soft fusion weights ──
-  bool enable_soft_fusion = false;
-  double soft_fusion_w_seq = 0.25;
-  double soft_fusion_w_geo = 0.40;
-  double soft_fusion_w_dyn = 0.20;
-  double soft_fusion_w_continuity = 0.15;
-  double soft_fusion_w_topology = 0.15;
-};
-
-// ======================== Norm4 V2 Config ========================
+// ======================== Norm4 Baseline Config ========================
 
 struct AntiPingPongConfig {
   int min_consistent_frames_to_commit = 3;
@@ -342,7 +281,7 @@ struct PhaseMemoryConfig {
   AntiPingPongConfig anti_pingpong;
 };
 
-struct Norm4V2UkfGateConfig {
+struct Norm4BaselineUkfGateConfig {
   double single_total_nis = 25.0;
   double single_pos_chi2 = 16.0;
   double single_yaw_chi2 = 9.0;
@@ -351,17 +290,17 @@ struct Norm4V2UkfGateConfig {
   double dual_each_yaw_chi2 = 9.0;
 };
 
-struct Norm4V2UkfSingleUpdateConfig {
+struct Norm4BaselineUkfSingleUpdateConfig {
   double structural_gain_r = 0.0;
   double structural_gain_dza = 0.0;
 };
 
-struct Norm4V2UkfDualUpdateConfig {
+struct Norm4BaselineUkfDualUpdateConfig {
   double structural_gain_r = 0.05;
   double structural_gain_dza = 0.02;
 };
 
-struct Norm4V2UkfPosteriorSanityConfig {
+struct Norm4BaselineUkfPosteriorSanityConfig {
   double max_center_jump = 0.25;
   double max_yaw_jump = 0.80;
   double min_r = 0.05;
@@ -372,7 +311,7 @@ struct Norm4V2UkfPosteriorSanityConfig {
   double max_dza_jump = 0.03;
 };
 
-struct Norm4V2UkfConfig {
+struct Norm4BaselineUkfConfig {
   bool enabled = true;
   bool force_rotation_ca = false;
   bool dual_raw_batch = true;
@@ -382,13 +321,13 @@ struct Norm4V2UkfConfig {
   double sigma_yaw = 0.12;
   double dual_raw_R_scale = 1.5;
 
-  Norm4V2UkfGateConfig gate;
-  Norm4V2UkfSingleUpdateConfig single_update;
-  Norm4V2UkfDualUpdateConfig dual_update;
-  Norm4V2UkfPosteriorSanityConfig posterior_sanity;
+  Norm4BaselineUkfGateConfig gate;
+  Norm4BaselineUkfSingleUpdateConfig single_update;
+  Norm4BaselineUkfDualUpdateConfig dual_update;
+  Norm4BaselineUkfPosteriorSanityConfig posterior_sanity;
 };
 
-struct Norm4V2SelectorConfig {
+struct Norm4BaselineSelectorConfig {
   int topk = 4;
   bool commit_top1_only = true;
   double min_top1_confidence = 0.55;
@@ -401,7 +340,7 @@ struct Norm4V2SelectorConfig {
   double max_reconstruction_pos_error = 0.30;
 };
 
-struct Norm4V2WarmupConfig {
+struct Norm4BaselineWarmupConfig {
   bool enable_dual_seed_01 = true;
   int warmup_frames = 8;
   int min_settle_frames = 3;
@@ -409,7 +348,7 @@ struct Norm4V2WarmupConfig {
   double min_confidence_to_commit = 0.70;
 };
 
-struct Norm4V2ModeRoutingConfig {
+struct Norm4BaselineModeRoutingConfig {
   // "single_plate_3d" | "structured_ukf"
   std::string ambiguous_output = "single_plate_3d";
   std::string structured_output = "structured_ukf";
@@ -419,46 +358,19 @@ struct Norm4V2ModeRoutingConfig {
   std::string structured_single_plate_mode = "shallow";
 };
 
-struct Norm4V2SinglePlateBridgeConfig {
+struct Norm4BaselineSinglePlateBridgeConfig {
   bool enable = false;
   std::string source_semantic = "track2d_id";
   std::string backend_type = "norm4_ambiguous_backend";
   int require_semantic_stable_frames = 2;
 };
 
-struct Norm4V2FallbackConfig {
+struct Norm4BaselineFallbackConfig {
   bool predict_only_on_reject = true;
   bool enable_ambiguous_single_fallback = true;
 };
 
-struct Norm4V2Config {
-  bool enable_common_pipeline = false;
-  bool enable_phase_memory = true;
-  bool enable_kinematic_anti_pingpong = true;
-  bool enable_2d_tracker = false;
-  bool enable_proxy_manager = false;
-  PhaseMemoryConfig phase_memory;
-
-  Norm4V2UkfConfig ukf_v1;
-  Norm4V2SelectorConfig hypothesis_selector;
-  Norm4V2WarmupConfig warmup;
-  Norm4V2ModeRoutingConfig mode_routing;
-  Norm4V2SinglePlateBridgeConfig single_plate_bridge;
-  Norm4V2FallbackConfig fallback;
-};
-
-using Norm4V3UkfGateConfig = Norm4V2UkfGateConfig;
-using Norm4V3UkfSingleUpdateConfig = Norm4V2UkfSingleUpdateConfig;
-using Norm4V3UkfDualUpdateConfig = Norm4V2UkfDualUpdateConfig;
-using Norm4V3UkfPosteriorSanityConfig = Norm4V2UkfPosteriorSanityConfig;
-using Norm4V3UkfConfig = Norm4V2UkfConfig;
-using Norm4V3SelectorConfig = Norm4V2SelectorConfig;
-using Norm4V3WarmupConfig = Norm4V2WarmupConfig;
-using Norm4V3ModeRoutingConfig = Norm4V2ModeRoutingConfig;
-using Norm4V3SinglePlateBridgeConfig = Norm4V2SinglePlateBridgeConfig;
-using Norm4V3FallbackConfig = Norm4V2FallbackConfig;
-
-// ── Norm4 V3 Observation Noise Config (Phase 1: YPD + BA dynamic R) ──
+// Norm4 baseline observation noise
 
 struct MeasurementNoiseCameraConfig {
   std::string source = "config";
@@ -563,10 +475,10 @@ struct MeasurementNoiseConfig {
   MeasurementNoiseDebugConfig debug;
 };
 
-// ── Norm4 V3 Backend / Selector ──
+// Norm4 baseline backend and selector
 
-struct Norm4V3BackendConfig {
-  std::string backend_type = "ukf_v1";       // "ukf_v1" | "inekf"
+struct Norm4BaselineBackendConfig {
+  std::string backend_type = "ukf_baseline";       // "ukf_baseline" | "inekf"
   std::string motion_profile = "default";
   std::string noise_profile = "default";
   std::string structure_profile = "slow";
@@ -574,7 +486,7 @@ struct Norm4V3BackendConfig {
   int shadow_convergence_frames = 30;
 };
 
-struct Norm4V3InEKFRuntimeConfig {
+struct Norm4BaselineInEKFRuntimeConfig {
   // Backend-local profile selection (overrides backend_config.* for inekf only).
   std::string motion_profile = "default";
   std::string noise_profile = "default";
@@ -593,7 +505,7 @@ struct Norm4V3InEKFRuntimeConfig {
   double spin_process_noise_delta_acc = -1.0;
 };
 
-struct Norm4V3SlowStructureConfig {
+struct Norm4BaselineSlowStructureConfig {
   bool enable = true;
   double q_theta_r1 = 1.0e-6;
   double q_theta_r2 = 1.0e-6;
@@ -620,13 +532,13 @@ struct Norm4V3SlowStructureConfig {
   double max_dza = 0.12;
 };
 
-struct Norm4V3DebugLogConfig {
+struct Norm4BaselineDebugLogConfig {
   bool enable = false;
   int throttle_ms = 500;
   bool verbose = false;
 };
 
-struct Norm4V3Config {
+struct Norm4BaselineConfig {
   bool enable_common_pipeline = false;
   bool enable_phase_memory = true;
   bool enable_kinematic_anti_pingpong = true;
@@ -634,17 +546,17 @@ struct Norm4V3Config {
   bool enable_proxy_manager = false;
   PhaseMemoryConfig phase_memory;
 
-  Norm4V3UkfConfig ukf_v1;
-  Norm4V3UkfConfig inekf;
-  Norm4V3SlowStructureConfig slow_structure;
-  Norm4V3SelectorConfig hypothesis_selector;
-  Norm4V3WarmupConfig warmup;
-  Norm4V3ModeRoutingConfig mode_routing;
-  Norm4V3SinglePlateBridgeConfig single_plate_bridge;
-  Norm4V3FallbackConfig fallback;
-  Norm4V3BackendConfig backend_config;
-  Norm4V3InEKFRuntimeConfig inekf_runtime;
-  Norm4V3DebugLogConfig debug_log;
+  Norm4BaselineUkfConfig ukf_baseline;
+  Norm4BaselineUkfConfig inekf;
+  Norm4BaselineSlowStructureConfig slow_structure;
+  Norm4BaselineSelectorConfig hypothesis_selector;
+  Norm4BaselineWarmupConfig warmup;
+  Norm4BaselineModeRoutingConfig mode_routing;
+  Norm4BaselineSinglePlateBridgeConfig single_plate_bridge;
+  Norm4BaselineFallbackConfig fallback;
+  Norm4BaselineBackendConfig backend_config;
+  Norm4BaselineInEKFRuntimeConfig inekf_runtime;
+  Norm4BaselineDebugLogConfig debug_log;
 };
 
 // ======================== Unified Config ========================
@@ -662,8 +574,7 @@ struct UnifiedConfig {
   ManeuverDetectionParameters maneuver;
   PanelMismatchParameters panel_mismatch;
   OutpostParameters outpost;
-  BinderConfig binder;
-  Norm4V3Config norm4_v3;
+  Norm4BaselineConfig norm4_baseline;
 
   static UnifiedConfig create_default() { return UnifiedConfig{}; }
 

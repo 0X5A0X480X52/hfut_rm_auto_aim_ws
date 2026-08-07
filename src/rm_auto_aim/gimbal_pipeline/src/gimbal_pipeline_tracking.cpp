@@ -24,7 +24,7 @@
 
 #include "gimbal_pipeline/gimbal_pipeline_node.hpp"
 #include "max_entropy_tracker/msg_converter.hpp"
-#include "max_entropy_tracker/trackers/norm4_v3/tracker/norm4_tracker_v2.hpp"
+#include "max_entropy_tracker/trackers/norm4_baseline/tracker/norm4_tracker_baseline.hpp"
 #include "max_entropy_tracker/visualization.hpp"
 #include "rm_utils/logger/log.hpp"
 
@@ -225,9 +225,9 @@ void GimbalPipelineNode::armorsCallback(const rm_interfaces::msg::Armors::Shared
             st.dz_large_est = snap.dz_large_est;
           };
 
-          if (const auto *outpost_v2_tracker = dynamic_cast<const OutpostTrackerV2 *>(tracker);
-              outpost_v2_tracker != nullptr) {
-            apply_outpost_snapshot(outpost_v2_tracker->debug_snapshot());
+          if (const auto *outpost_baseline_tracker = dynamic_cast<const OutpostTrackerBaseline *>(tracker);
+              outpost_baseline_tracker != nullptr) {
+            apply_outpost_snapshot(outpost_baseline_tracker->debug_snapshot());
           }
         }
       }
@@ -253,7 +253,7 @@ void GimbalPipelineNode::armorsCallback(const rm_interfaces::msg::Armors::Shared
 
   // ── Step 6: Debug publishing ──
   const auto tracker_views = tracker_manager_->initialized_tracker_views();
-  logNorm4V3TrackerDebug(tracker_views);
+  logNorm4BaselineTrackerDebug(tracker_views);
   if (debug_mode_) {
     if (debug_tracked_robots_pub_ && !tracked_msg.robots.empty())
       debug_tracked_robots_pub_->publish(tracked_msg);

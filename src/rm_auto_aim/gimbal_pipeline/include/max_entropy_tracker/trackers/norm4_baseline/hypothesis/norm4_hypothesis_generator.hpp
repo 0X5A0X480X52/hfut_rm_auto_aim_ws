@@ -1,0 +1,31 @@
+// Copyright (C) Max Entropy Tracker. Licensed under the MIT License.
+#ifndef MAX_ENTROPY_TRACKER_TRACKERS_NORM4_BASELINE_NORM4_HYPOTHESIS_GENERATOR_HPP_
+#define MAX_ENTROPY_TRACKER_TRACKERS_NORM4_BASELINE_NORM4_HYPOTHESIS_GENERATOR_HPP_
+
+#include <string>
+#include <vector>
+
+#include "max_entropy_tracker/core/observation.hpp"
+#include "max_entropy_tracker/trackers/norm4_baseline/hypothesis/norm4_hypothesis_types.hpp"
+
+namespace fyt::auto_aim::norm4_baseline {
+
+class HypothesisGenerator {
+ public:
+  HypothesisGenerator() = default;
+
+  std::vector<Hypothesis> generate(
+      const std::vector<ObservationData> &observations) const;
+
+  void attach_prior(std::vector<Hypothesis> * /*hypotheses*/) const {
+    // Phase 1: prior_log_weight stays 0.0; evidence integration in later phases.
+  }
+
+ private:
+  std::vector<Hypothesis> generate_single(int obs_index) const;
+  std::vector<Hypothesis> generate_dual(int obs0, int obs1) const;
+};
+
+}  // namespace fyt::auto_aim::norm4_baseline
+
+#endif  // MAX_ENTROPY_TRACKER_TRACKERS_NORM4_BASELINE_NORM4_HYPOTHESIS_GENERATOR_HPP_

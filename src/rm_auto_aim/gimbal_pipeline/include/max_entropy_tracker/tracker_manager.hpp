@@ -13,8 +13,8 @@
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/core/observation.hpp"
 #include "max_entropy_tracker/trackers/base_tracker.hpp"
-#include "max_entropy_tracker/trackers/norm4_v3/tracker/norm4_tracker_v2.hpp"
-#include "max_entropy_tracker/trackers/outpost_tracker_v2.hpp"
+#include "max_entropy_tracker/trackers/norm4_baseline/tracker/norm4_tracker_baseline.hpp"
+#include "max_entropy_tracker/trackers/outpost_tracker_baseline.hpp"
 #include "max_entropy_tracker/utils/observation_outlier_filter.hpp"
 #include "max_entropy_tracker/utils/output_smoother.hpp"
 
@@ -174,9 +174,9 @@ class TrackerManager {
 
     std::unique_ptr<BaseTracker> t;
     if (robot_id == "outpost") {
-      t = std::make_unique<OutpostTrackerV2>(config_, dt_, enable_osc_);
+      t = std::make_unique<OutpostTrackerBaseline>(config_, dt_, enable_osc_);
     } else {
-      t = std::make_unique<Norm4ArmorTrackerV2>(config_, dt_, enable_osc_);
+      t = std::make_unique<Norm4TrackerBaseline>(config_, dt_, enable_osc_);
     }
     t->initialize(initial_obs, default_r1_, default_r2_, default_dza_);
 

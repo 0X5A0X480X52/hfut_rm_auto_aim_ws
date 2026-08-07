@@ -12,20 +12,20 @@
 #include "gimbal_pipeline/adapters/buff_target_adapter.hpp"
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/core/observation.hpp"
-#include "max_entropy_tracker/trackers/norm4_v3/backends/norm4_backend_factory.hpp"
-#include "max_entropy_tracker/trackers/outpost_tracker_v2.hpp"
+#include "max_entropy_tracker/trackers/norm4_baseline/backends/norm4_backend_factory.hpp"
+#include "max_entropy_tracker/trackers/outpost_tracker_baseline.hpp"
 #include "target_selector/strategies/priority_list_strategy.hpp"
 
 namespace
 {
 
 using fyt::auto_aim::ObservationData;
-using fyt::auto_aim::OutpostTrackerV2;
+using fyt::auto_aim::OutpostTrackerBaseline;
 using fyt::auto_aim::PriorityListStrategy;
 using fyt::auto_aim::SelectionConfig;
 using fyt::auto_aim::UnifiedConfig;
 using fyt::auto_aim::adapters::BuffTargetAdapter;
-using fyt::auto_aim::norm4_v3::BackendType;
+using fyt::auto_aim::norm4_baseline::BackendType;
 
 ObservationData makeObservation(double timestamp)
 {
@@ -55,10 +55,10 @@ rm_interfaces::msg::TrackedRobot makeRobot(
 
 TEST(Norm4BackendFactory, CreatesAndAdvancesRetainedBackends)
 {
-  for (const auto type : {BackendType::UKF_V1, BackendType::INEKF}) {
+  for (const auto type : {BackendType::UKF_BASELINE, BackendType::INEKF}) {
     auto config = UnifiedConfig::create_default();
-    config.norm4_v3.inekf.enabled = true;
-    auto backend = fyt::auto_aim::norm4_v3::create_backend(type, config, 0.05);
+    config.norm4_baseline.inekf.enabled = true;
+    auto backend = fyt::auto_aim::norm4_baseline::create_backend(type, config, 0.05);
 
     ASSERT_NE(backend, nullptr);
     backend->reset(makeObservation(1.0), 0, 0.15, 0.20, 0.0);
@@ -72,11 +72,11 @@ TEST(Norm4BackendFactory, CreatesAndAdvancesRetainedBackends)
   }
 }
 
-TEST(OutpostV2, InitializesAndUpdatesSingleObservationMode)
+TEST(OutpostBaseline, InitializesAndUpdatesSingleObservationMode)
 {
   auto config = UnifiedConfig::create_default();
-  config.outpost.v2_warmup_enable = false;
-  OutpostTrackerV2 tracker(config, 0.05, false);
+  config.outpost.baseline_warmup_enable = false;
+  OutpostTrackerBaseline tracker(config, 0.05, false);
 
   tracker.initialize({makeObservation(1.0)});
   EXPECT_TRUE(tracker.is_initialized());

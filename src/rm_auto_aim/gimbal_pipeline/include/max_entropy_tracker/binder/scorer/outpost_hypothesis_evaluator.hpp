@@ -9,7 +9,6 @@
 
 #include "max_entropy_tracker/binder/model/binding_hypothesis.hpp"
 #include "max_entropy_tracker/binder/model/outpost_binding_types.hpp"
-#include "max_entropy_tracker/binder/model/robot_binding_profile.hpp"
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/core/observation.hpp"
 
@@ -17,8 +16,7 @@ namespace fyt::auto_aim::binder {
 
 class OutpostHypothesisEvaluator {
  public:
-  OutpostHypothesisEvaluator(const UnifiedConfig & config,
-                             const RobotBindingProfile & profile);
+  explicit OutpostHypothesisEvaluator(const UnifiedConfig & config);
 
   std::array<BindingHypothesis, 3> evaluate(
       const ObservationData & obs,
@@ -45,7 +43,6 @@ class OutpostHypothesisEvaluator {
 
  private:
   UnifiedConfig config_;
-  RobotBindingProfile profile_;
   double radius_ = 0.26;
   std::array<double, 3> z_offsets_{{0.06, 0.0, -0.06}};
   std::array<double, 3> panel_angles_{{0.0, 2.0 * M_PI / 3.0,

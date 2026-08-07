@@ -45,7 +45,7 @@ struct BinderDebugSnapshot {
   double period_confidence = 0.0;
   int period_phase = -1;
   double signature_score = 0.0;
-  TrackEventType event_type = TrackEventType::AMBIGUOUS;
+  TrackEventType event_type = TrackEventType::CONTINUITY;
   bool is_reacquired = false;
   double gap_dt = 0.0;
   int lost_frames = 0;

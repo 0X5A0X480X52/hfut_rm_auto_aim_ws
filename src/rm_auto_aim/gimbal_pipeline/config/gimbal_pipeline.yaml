@@ -1,37 +1,5 @@
 gimbal_pipeline:
   ros__parameters:
-    binder:
-      confidence_floor: 0.15
-      confirm_frames: 3
-      cost_margin_min: 0.08
-      dual_obs_enable: true
-      dz_ema_alpha: 0.2
-      dz_gate: 0.01
-      dz_match_tolerance: 0.03
-      force_rebind_bad_frames: 10
-      lock_new_hold_frames: 2
-      min_candidate_margin: 0.12
-      min_candidate_prob: 0.4
-      pending_window_frames: 0
-      periodic_enable: false
-      post_jump_min_confidence: 0.45
-      reacquire_gap_dt_gate: 0.12
-      reacquire_lost_frames_gate: 1
-      same_panel_xy_gate: 0.18
-      same_panel_yaw_gate: 0.35
-      same_panel_z_gate: 0.08
-      scorer_enable: true
-      single_obs_history_window: 8
-      soft_fusion_w_continuity: 0.15
-      soft_fusion_w_dyn: 0.2
-      soft_fusion_w_geo: 0.4
-      soft_fusion_w_seq: 0.25
-      switch_strong_score: 0.6
-      yaw_err_gate: 0.35
-      z_audit_rebind_enable: false
-      z_cluster_assign_gate: 0.1
-      z_cluster_ema_alpha: 0.25
-      z_jump_min: 0.015
     constraints:
       max_dz: 1.0
       max_radius: 0.3
@@ -199,9 +167,9 @@ gimbal_pipeline:
       process_noise_dz: 5.0e-05
       process_noise_r: 0.002
       translation_model: Singer
-    norm4_v3:
+    norm4_baseline:
       backend_config:
-        motion_profile: package://gimbal_pipeline/config/norm4_v3/profiles/motion/default.yaml
+        motion_profile: package://gimbal_pipeline/config/norm4_baseline/profiles/motion/default.yaml
         structure_profile: slow
       enable_2d_tracker: true
       enable_common_pipeline: false
@@ -283,7 +251,7 @@ gimbal_pipeline:
         prior_dza: 0.0
         prior_r1: 0.15
         prior_r2: 0.2
-      ukf_v1:
+      ukf_baseline:
         dual_raw_R_scale: 1.5
         dual_raw_batch: true
         dual_update:
@@ -342,7 +310,6 @@ gimbal_pipeline:
       binding_switch_strong_score: 0.6
       binding_topology_prior_weight: 4.0
       binding_transition_confirm_frames: 3
-      binding_use_new_binder_pipeline: false
       entropy_enter: 0.75
       entropy_exit: 0.6
       linear_velocity_damping: 0.9
@@ -370,16 +337,16 @@ gimbal_pipeline:
       stable_frames: 4
       tracking_thres: 2
       translation_model: CA
-      v2_warmup_enable: true
-      v2_warmup_max_frames: 60
-      v2_warmup_min_groups: 3
-      v2_warmup_min_large_diff: 0.06
-      v2_warmup_min_samples_per_group: 2
-      v2_warmup_ratio_max: 2.45
-      v2_warmup_ratio_min: 1.55
-      v2_warmup_xyz_jump_gate: 0.18
-      v2_warmup_yaw_jump_gate: 0.75
-      v2_warmup_z_jump_gate: 0.025
+      baseline_warmup_enable: true
+      baseline_warmup_max_frames: 60
+      baseline_warmup_min_groups: 3
+      baseline_warmup_min_large_diff: 0.06
+      baseline_warmup_min_samples_per_group: 2
+      baseline_warmup_ratio_max: 2.45
+      baseline_warmup_ratio_min: 1.55
+      baseline_warmup_xyz_jump_gate: 0.18
+      baseline_warmup_yaw_jump_gate: 0.75
+      baseline_warmup_z_jump_gate: 0.025
       weight_switch_penalty: 0.05
       weight_xy_residual: 2.5
       weight_yaw: 1.0

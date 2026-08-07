@@ -15,8 +15,7 @@ AmbiguousSingleArmorFilterAdapter::AmbiguousSingleArmorFilterAdapter(
   dt_ = std::clamp(dt, 1e-3, 0.5);
   use_imm_ = config_.outpost.ambiguous_backend_use_imm_adapter;
 
-  // Legacy KF is always constructed as fallback.
-  legacy_kf_ = std::make_unique<OutpostAmbiguousKF>(config_, dt_);
+  baseline_kf_ = std::make_unique<OutpostAmbiguousKF>(config_, dt_);
 
   // IMM tracker is constructed on-demand when the switch is on.
   if (use_imm_) {
@@ -52,7 +51,7 @@ void AmbiguousSingleArmorFilterAdapter::build_imm_config() {
 }
 
 void AmbiguousSingleArmorFilterAdapter::initialize(const ObservationData &obs) {
-  legacy_kf_->initialize(obs);
+  baseline_kf_->initialize(obs);
   if (imm_tracker_) {
     imm_tracker_->initialize(
         Eigen::Vector3d(obs.x, obs.y, obs.z), obs.yaw);
@@ -60,7 +59,7 @@ void AmbiguousSingleArmorFilterAdapter::initialize(const ObservationData &obs) {
 }
 
 void AmbiguousSingleArmorFilterAdapter::predict(double dt) {
-  legacy_kf_->predict(dt);
+  baseline_kf_->predict(dt);
   if (imm_tracker_) {
     imm_tracker_->predict(dt);
   }
@@ -69,7 +68,7 @@ void AmbiguousSingleArmorFilterAdapter::predict(double dt) {
 void AmbiguousSingleArmorFilterAdapter::update(const ObservationData &obs,
                                                 double position_confidence,
                                                 double yaw_confidence) {
-  legacy_kf_->update(obs, position_confidence, yaw_confidence);
+  baseline_kf_->update(obs, position_confidence, yaw_confidence);
   if (imm_tracker_) {
     imm_tracker_->update(
         Eigen::Vector3d(obs.x, obs.y, obs.z),
@@ -83,35 +82,35 @@ bool AmbiguousSingleArmorFilterAdapter::initialized() const {
   if (imm_tracker_) {
     return imm_tracker_->initialized();
   }
-  return legacy_kf_->initialized();
+  return baseline_kf_->initialized();
 }
 
 Eigen::Vector3d AmbiguousSingleArmorFilterAdapter::armor_position() const {
   if (use_imm_ && imm_tracker_ && imm_tracker_->initialized()) {
     return imm_tracker_->state().pos;
   }
-  return legacy_kf_->armor_position();
+  return baseline_kf_->armor_position();
 }
 
 Eigen::Vector3d AmbiguousSingleArmorFilterAdapter::armor_velocity() const {
   if (use_imm_ && imm_tracker_ && imm_tracker_->initialized()) {
     return imm_tracker_->state().vel;
   }
-  return legacy_kf_->armor_velocity();
+  return baseline_kf_->armor_velocity();
 }
 
 double AmbiguousSingleArmorFilterAdapter::armor_yaw() const {
   if (use_imm_ && imm_tracker_ && imm_tracker_->initialized()) {
     return imm_tracker_->state().yaw;
   }
-  return legacy_kf_->armor_yaw();
+  return baseline_kf_->armor_yaw();
 }
 
 double AmbiguousSingleArmorFilterAdapter::armor_yaw_rate() const {
   if (use_imm_ && imm_tracker_ && imm_tracker_->initialized()) {
     return imm_tracker_->state().yaw_rate;
   }
-  return legacy_kf_->armor_yaw_rate();
+  return baseline_kf_->armor_yaw_rate();
 }
 
 }  // namespace fyt::auto_aim

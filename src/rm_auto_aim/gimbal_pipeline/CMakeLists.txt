@@ -30,25 +30,12 @@ find_package(cv_bridge REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
 set(TRACKING_SRCS
-  src/max_entropy_tracker/binder/binder_factory.cpp
-  src/max_entropy_tracker/binder/binder_pipeline.cpp
-  src/max_entropy_tracker/binder/binding_fsm.cpp
-  src/max_entropy_tracker/binder/binding_window_counter.cpp
-  src/max_entropy_tracker/binder/dual_obs_direct_binder.cpp
-  src/max_entropy_tracker/binder/four_panel_jump_decoder.cpp
-  src/max_entropy_tracker/binder/generic_cyclic_jump_decoder.cpp
-  src/max_entropy_tracker/binder/hybrid_id_binder.cpp
   src/max_entropy_tracker/binder/outpost_binding_confidence.cpp
   src/max_entropy_tracker/binder/outpost_binding_fsm.cpp
   src/max_entropy_tracker/binder/outpost_hypothesis_evaluator.cpp
-  src/max_entropy_tracker/binder/outpost_legacy_binding_policy.cpp
+  src/max_entropy_tracker/binder/outpost_baseline_binding_policy.cpp
   src/max_entropy_tracker/binder/outpost_periodic_dz_evidence.cpp
-  src/max_entropy_tracker/binder/outpost_trilevel_jump_decoder.cpp
   src/max_entropy_tracker/binder/outpost_z_audit.cpp
-  src/max_entropy_tracker/binder/residual_hypothesis_scorer.cpp
-  src/max_entropy_tracker/binder/robot_binding_profile.cpp
-  src/max_entropy_tracker/binder/single_obs_sequence_binder.cpp
-  src/max_entropy_tracker/binder/soft_fusion_scorer.cpp
   src/max_entropy_tracker/evidence/evidence_builder.cpp
   src/max_entropy_tracker/filters/ambiguous_single_armor_filter_adapter.cpp
   src/max_entropy_tracker/filters/dual_radius_spin_ukf.cpp
@@ -58,19 +45,19 @@ set(TRACKING_SRCS
   src/max_entropy_tracker/mode/evidence_fuser.cpp
   src/max_entropy_tracker/mode/mode_fsm.cpp
   src/max_entropy_tracker/pose_tracker_backend/single/single_tracker_manager.cpp
-  src/max_entropy_tracker/trackers/norm4_v3/backends/norm4_inekf_backend.cpp
-  src/max_entropy_tracker/trackers/norm4_v3/backends/norm4_single_armor_imm_bundle.cpp
-  src/max_entropy_tracker/trackers/norm4_v3/backends/norm4_ukf_backend_v1.cpp
-  src/max_entropy_tracker/trackers/norm4_v3/hypothesis/norm4_hypothesis_generator.cpp
-  src/max_entropy_tracker/trackers/norm4_v3/models/norm4_motion_model_bundle.cpp
-  src/max_entropy_tracker/trackers/norm4_v3/norm4_ba_aware_ypd_noise.cpp
-  src/max_entropy_tracker/trackers/norm4_v3/tracker/norm4_tracker_v2.cpp
-  src/max_entropy_tracker/trackers/outpost_tracker_v2.cpp
-  src/max_entropy_tracker/trackers/outpost_v2/outpost_ambiguous_backend.cpp
-  src/max_entropy_tracker/trackers/outpost_v2/outpost_binder_bridge.cpp
-  src/max_entropy_tracker/trackers/outpost_v2/outpost_observation_frontend.cpp
-  src/max_entropy_tracker/trackers/outpost_v2/outpost_output_adapter.cpp
-  src/max_entropy_tracker/trackers/outpost_v2/outpost_structured_backend.cpp
+  src/max_entropy_tracker/trackers/norm4_baseline/backends/norm4_inekf_backend.cpp
+  src/max_entropy_tracker/trackers/norm4_baseline/backends/norm4_single_armor_imm_bundle.cpp
+  src/max_entropy_tracker/trackers/norm4_baseline/backends/norm4_ukf_backend_baseline.cpp
+  src/max_entropy_tracker/trackers/norm4_baseline/hypothesis/norm4_hypothesis_generator.cpp
+  src/max_entropy_tracker/trackers/norm4_baseline/models/norm4_motion_model_bundle.cpp
+  src/max_entropy_tracker/trackers/norm4_baseline/norm4_ba_aware_ypd_noise.cpp
+  src/max_entropy_tracker/trackers/norm4_baseline/tracker/norm4_tracker_baseline.cpp
+  src/max_entropy_tracker/trackers/outpost_tracker_baseline.cpp
+  src/max_entropy_tracker/trackers/outpost_baseline/outpost_ambiguous_backend.cpp
+  src/max_entropy_tracker/trackers/outpost_baseline/outpost_binder_bridge.cpp
+  src/max_entropy_tracker/trackers/outpost_baseline/outpost_observation_frontend.cpp
+  src/max_entropy_tracker/trackers/outpost_baseline/outpost_output_adapter.cpp
+  src/max_entropy_tracker/trackers/outpost_baseline/outpost_structured_backend.cpp
   src/max_entropy_tracker/tracking2d/iou_2d_tracker.cpp
 )
 
@@ -197,11 +184,6 @@ install(TARGETS ${PROJECT_NAME}
 
 install(DIRECTORY include/
   DESTINATION include
-  PATTERN "max_entropy_tracker/pipeline/serial_tracker_pipeline.hpp" EXCLUDE
-  PATTERN "max_entropy_tracker/pose_tracker_backend/backend_execution_plan.hpp" EXCLUDE
-  PATTERN "max_entropy_tracker/pose_tracker_backend/backend_executor.hpp" EXCLUDE
-  PATTERN "max_entropy_tracker/pose_tracker_backend/backend_intent.hpp" EXCLUDE
-  PATTERN "max_entropy_tracker/pose_tracker_backend/backend_planner.hpp" EXCLUDE
 )
 
 install(DIRECTORY config

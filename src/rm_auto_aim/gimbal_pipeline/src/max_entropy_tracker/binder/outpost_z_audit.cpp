@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <iostream>
 
 namespace fyt::auto_aim::binder {
 
@@ -28,20 +27,12 @@ OutpostZAuditResult OutpostZAudit::update(const ObservationData & obs) {
     prev_obs_z_ = obs.z;
     prev_panel_id_ = -1;
     initialized_ = true;
-    result.dz_from_center = obs.z - center_est_;
     return result;
   }
 
   const bool has_prev = std::isfinite(prev_obs_z_);
   const double z_jump = has_prev ? (obs.z - prev_obs_z_) : 0.0;
   result.z_jump = has_prev ? z_jump : kNaN;
-
-  std::cout << "[OutpostZAudit] obs_z=" << obs.z
-            << " prev_obs_z=" << (has_prev ? prev_obs_z_ : kNaN)
-            << " z_jump=" << result.z_jump
-            << " center_est=" << center_est_
-            << " prev_panel_id=" << prev_panel_id_
-            << std::endl;
 
   constexpr double kWeightLevel = 1.0;
   constexpr double kWeightJump = 2.5;
@@ -56,11 +47,9 @@ OutpostZAuditResult OutpostZAudit::update(const ObservationData & obs) {
         std::abs(obs.z - (center_est_ + z_offsets_[i]));
 
     double jump_err = 0.0;
-    double expected_jump_for_log = kNaN;
     if (has_prev) {
       if (prev_panel_id_ >= 0) {
         const double expected_jump = z_offsets_[i] - z_offsets_[prev_panel_id_];
-        expected_jump_for_log = expected_jump;
         jump_err = std::abs(z_jump - expected_jump);
       } else {
         double min_jump_err = std::numeric_limits<double>::infinity();
@@ -69,7 +58,6 @@ OutpostZAuditResult OutpostZAudit::update(const ObservationData & obs) {
           const double err = std::abs(z_jump - expected_jump);
           if (err < min_jump_err) {
             min_jump_err = err;
-            expected_jump_for_log = expected_jump;
           }
         }
         jump_err = min_jump_err;
@@ -82,15 +70,6 @@ OutpostZAuditResult OutpostZAudit::update(const ObservationData & obs) {
     const double cost = kWeightLevel * level_err + kWeightJump * jump_err +
                         kWeightCenter * center_err + switch_penalty;
     result.costs[i] = cost;
-    std::cout << "[OutpostZAudit] candidate panel=" << i
-              << " center_i=" << center_i
-              << " level_err=" << level_err
-              << " expected_jump=" << expected_jump_for_log
-              << " jump_err=" << jump_err
-              << " center_err=" << center_err
-              << " switch_penalty=" << switch_penalty
-              << " cost=" << cost
-              << std::endl;
     if (cost < best_cost) {
       best_cost = cost;
       best_panel = i;
@@ -107,7 +86,6 @@ OutpostZAuditResult OutpostZAudit::update(const ObservationData & obs) {
     prev_panel_id_ = best_panel;
 
     result.panel_id = best_panel;
-    result.dz_from_center = obs.z - center_est_;
 
     double best_audit = std::numeric_limits<double>::infinity();
     double second_audit = std::numeric_limits<double>::infinity();
@@ -124,19 +102,8 @@ OutpostZAuditResult OutpostZAudit::update(const ObservationData & obs) {
           std::clamp(std::max(0.0, second_audit - best_audit) / 0.10,
                      0.0, 1.0);
     }
-    std::cout << "[OutpostZAudit] selected_panel=" << result.panel_id
-              << " best_cost=" << best_cost
-              << " confidence=" << confidence_
-              << " center_est_updated=" << center_est_
-              << " dz_from_center=" << result.dz_from_center
-              << std::endl;
   } else {
     result.panel_id = -1;
-    result.dz_from_center = kNaN;
-    std::cout << "[OutpostZAudit] selected_panel=-1"
-              << " best_cost=" << best_cost
-              << " confidence=" << confidence_
-              << std::endl;
   }
 
   return result;

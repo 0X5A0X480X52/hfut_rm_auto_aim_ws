@@ -21,8 +21,8 @@ double angle_abs_diff(double a, double b) {
 }  // namespace
 
 OutpostHypothesisEvaluator::OutpostHypothesisEvaluator(
-    const UnifiedConfig & config, const RobotBindingProfile & profile)
-    : config_(config), profile_(profile) {
+    const UnifiedConfig & config)
+    : config_(config) {
   radius_ = std::max(0.05, config_.outpost.radius);
   z_offsets_ = {config_.outpost.z_offset_0, config_.outpost.z_offset_1,
                 config_.outpost.z_offset_2};

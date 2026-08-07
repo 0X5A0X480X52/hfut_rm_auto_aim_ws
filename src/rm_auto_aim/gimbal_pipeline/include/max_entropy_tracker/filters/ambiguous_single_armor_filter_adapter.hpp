@@ -10,7 +10,7 @@
 
 namespace fyt::auto_aim {
 
-// Forward declaration for legacy KF (always available).
+// Forward declaration for the baseline KF.
 class OutpostAmbiguousKF;
 
 // Forward declaration for IMM core (kalmanFilters layer, optional).
@@ -20,7 +20,7 @@ struct SingleArmorIMMConfig;
 }  // namespace kalman
 
 /// Adapter that provides the same interface as OutpostAmbiguousKF but can
-/// internally route to either the legacy KF or the new SingleArmorIMMTracker.
+/// internally routes to either the baseline KF or SingleArmorIMMTracker.
 ///
 /// The routing is controlled by OutpostParameters::ambiguous_backend_use_imm_adapter.
 class AmbiguousSingleArmorFilterAdapter {
@@ -49,8 +49,8 @@ class AmbiguousSingleArmorFilterAdapter {
   double dt_ = 0.05;
   bool use_imm_ = false;
 
-  // Legacy KF (always constructed as fallback / reference implementation).
-  std::unique_ptr<OutpostAmbiguousKF> legacy_kf_;
+  // Baseline KF is always available as the fallback implementation.
+  std::unique_ptr<OutpostAmbiguousKF> baseline_kf_;
 
   // IMM core (only constructed when use_imm_ is true).
   std::unique_ptr<kalman::SingleArmorIMMTracker> imm_tracker_;
