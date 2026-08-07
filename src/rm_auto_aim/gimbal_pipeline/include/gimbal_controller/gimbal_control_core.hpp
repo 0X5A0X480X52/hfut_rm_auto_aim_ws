@@ -17,13 +17,14 @@
 
 #include <memory>
 #include <string>
-#include <unordered_map>
+#include <utility>
 
 #include "gimbal_controller/fire_advice_engine.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_controller/gimbal_cmd_filter.hpp"
 #include "gimbal_controller/gimbal_control_orchestrator.hpp"
-#include "gimbal_controller/gimbal_control_strategy.hpp"
+#include "gimbal_controller/gimbal_control_types.hpp"
+#include "gimbal_controller/strategies/mpc_control_strategy.hpp"
 
 namespace gimbal_controller
 {
@@ -34,17 +35,14 @@ struct GimbalControlCoreOutput
   DelayAuditSnapshot delay_audit{};
   FireAdviceDebugSnapshot fire_advice_debug{};
   bool has_tracking{false};
-  bool strategy_found{true};
 };
 
 class GimbalControlCore
 {
 public:
-  using StrategyMap = std::unordered_map<std::string, GimbalControlStrategy::SharedPtr>;
-
-  void setStrategies(const StrategyMap * strategies)
+  void setStrategy(std::shared_ptr<MpcControlStrategy> strategy)
   {
-    strategies_ = strategies;
+    strategy_ = std::move(strategy);
   }
 
   void setFireModules(
@@ -66,16 +64,13 @@ public:
 
   GimbalControlCoreOutput compute(
     const GimbalControlContext & context,
-    const std::string & strategy_name,
     const std::string & selected_target_id,
     bool enable);
 
   void updateFov(double fov_half_yaw, double fov_half_pitch);
 
 private:
-  GimbalControlStrategy::SharedPtr findStrategy(const std::string & name) const;
-
-  StrategyMap const * strategies_{nullptr};
+  std::shared_ptr<MpcControlStrategy> strategy_;
   GimbalControlOrchestrator orchestrator_;
   GimbalCmdFilter filter_;
   std::string prev_tracking_target_id_;

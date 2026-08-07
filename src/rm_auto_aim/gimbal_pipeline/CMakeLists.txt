@@ -29,6 +29,22 @@ find_package(OpenCV REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
+set(PIPELINE_CORE_SRCS
+  src/core/auto_aim_pipeline.cpp
+  src/core/external_target_merger.cpp
+  src/core/pipeline_inbox.cpp
+  src/core/priority_target_selector.cpp
+)
+
+add_library(pipeline_core STATIC ${PIPELINE_CORE_SRCS})
+set_target_properties(pipeline_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(pipeline_core PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${EIGEN3_INCLUDE_DIRS}
+)
+target_link_libraries(pipeline_core PUBLIC Eigen3::Eigen)
+
 set(TRACKING_SRCS
   src/max_entropy_tracker/binder/outpost_binding_confidence.cpp
   src/max_entropy_tracker/binder/outpost_binding_fsm.cpp
@@ -61,14 +77,14 @@ set(TRACKING_SRCS
   src/max_entropy_tracker/tracking2d/iou_2d_tracker.cpp
 )
 
-set(SELECTION_SRCS
+set(DESCRIPTION_SRCS
   src/common/robot_description/Strategy/fixed_profile_tracked_robot_builder.cpp
   src/common/robot_description/robot_description_facade.cpp
   src/common/robot_description/tracked_robot_builder_registry.cpp
   src/common/robot_description/tracked_robot_usage.cpp
-  src/target_selector/selection_strategy.cpp
-  src/target_selector/strategies/priority_list_strategy.cpp
 )
+
+list(APPEND TRACKING_SRCS ${DESCRIPTION_SRCS})
 
 set(CONTROL_SRCS
   src/gimbal_controller/armor_position_calculator.cpp
@@ -79,7 +95,6 @@ set(CONTROL_SRCS
   src/gimbal_controller/fire_advisor.cpp
   src/gimbal_controller/gimbal_control_core.cpp
   src/gimbal_controller/gimbal_control_orchestrator.cpp
-  src/gimbal_controller/gimbal_control_strategy.cpp
   src/gimbal_controller/local_trajectory_compensator.cpp
   src/gimbal_controller/mpc/mpc_reference_generator.cpp
   src/gimbal_controller/strategies/mpc_control_strategy.cpp
@@ -87,24 +102,23 @@ set(CONTROL_SRCS
 
 set(ROS_ADAPTER_SRCS
   src/adapters/buff_target_adapter.cpp
+  src/adapters/pipeline_config_loader.cpp
+  src/adapters/pipeline_ros_conversions.cpp
   src/gimbal_pipeline_control.cpp
   src/gimbal_pipeline_debug.cpp
   src/gimbal_pipeline_node.cpp
   src/gimbal_pipeline_parameters.cpp
-  src/gimbal_pipeline_selection.cpp
   src/gimbal_pipeline_tracking.cpp
   src/prediction_logger.cpp
 )
 
 set(INTERNAL_TARGETS
   gimbal_tracking
-  gimbal_selection
   gimbal_control
   gimbal_ros_adapter
 )
 
 add_library(gimbal_tracking OBJECT ${TRACKING_SRCS})
-add_library(gimbal_selection OBJECT ${SELECTION_SRCS})
 add_library(gimbal_control OBJECT ${CONTROL_SRCS})
 add_library(gimbal_ros_adapter OBJECT ${ROS_ADAPTER_SRCS})
 
@@ -135,7 +149,6 @@ endforeach()
 
 add_library(${PROJECT_NAME} SHARED
   $<TARGET_OBJECTS:gimbal_tracking>
-  $<TARGET_OBJECTS:gimbal_selection>
   $<TARGET_OBJECTS:gimbal_control>
   $<TARGET_OBJECTS:gimbal_ros_adapter>
 )
@@ -165,6 +178,7 @@ ament_target_dependencies(${PROJECT_NAME}
 )
 
 target_link_libraries(${PROJECT_NAME}
+  pipeline_core
   Eigen3::Eigen
   ${qpOASES_LIBRARY}
   ${OpenCV_LIBS}
@@ -237,6 +251,10 @@ if(BUILD_TESTING)
 
   add_gimbal_pipeline_gtest(test_mpc_core test/test_mpc_core.cpp)
   add_gimbal_pipeline_gtest(test_active_pipeline test/test_active_pipeline.cpp)
+
+  ament_add_gtest(test_pipeline_core test/test_pipeline_core.cpp)
+  target_include_directories(test_pipeline_core PRIVATE include ${EIGEN3_INCLUDE_DIRS})
+  target_link_libraries(test_pipeline_core pipeline_core Eigen3::Eigen)
 endif()
 
 ament_export_include_directories(include)

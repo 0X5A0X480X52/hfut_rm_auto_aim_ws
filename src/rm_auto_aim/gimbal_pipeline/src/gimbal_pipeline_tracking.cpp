@@ -23,10 +23,10 @@
 #include <unordered_set>
 
 #include "gimbal_pipeline/gimbal_pipeline_node.hpp"
+#include "gimbal_pipeline/adapters/pipeline_ros_conversions.hpp"
 #include "max_entropy_tracker/msg_converter.hpp"
 #include "max_entropy_tracker/trackers/norm4_baseline/tracker/norm4_tracker_baseline.hpp"
 #include "max_entropy_tracker/visualization.hpp"
-#include "rm_utils/logger/log.hpp"
 
 // Gimbal strategies
 #include "gimbal_controller/fire_advisor.hpp"
@@ -34,277 +34,214 @@
 
 namespace fyt::auto_aim {
 
-void GimbalPipelineNode::armorsCallback(const rm_interfaces::msg::Armors::SharedPtr msg) {
-  rclcpp::Time msg_time(msg->header.stamp);
-  double current_time = msg_time.seconds();
-  if (msg->armors.empty()) {
-    RCLCPP_DEBUG_THROTTLE(get_logger(),
-                          *get_clock(),
-                          1000,
-                          "Received empty armors message, running missing-target update");
-  }
+void GimbalPipelineNode::armorsCallback(
+  const rm_interfaces::msg::Armors::SharedPtr msg)
+{
+  const rclcpp::Time message_time(msg->header.stamp);
+  pipeline::ObservationFrame frame;
+  frame.timestamp_ns = message_time.nanoseconds();
 
-  // ── Step 1: Group observations by robot ID ──
-  std::unordered_map<std::string, std::vector<ObservationData>> obs_by_robot;
-  std::string sf = msg->header.frame_id.empty() ? source_frame_ : msg->header.frame_id;
-
+  const std::string source_frame =
+    msg->header.frame_id.empty() ? source_frame_ : msg->header.frame_id;
   const bool strict_unknown_reject =
     robot_description_facade_ && robot_description_facade_->strictUnknownReject();
 
-  for (const auto &armor : msg->armors) {
-    const bool supported_robot_id =
+  for (const auto & armor : msg->armors) {
+    const bool supported =
       robot_description_facade_ && robot_description_facade_->isSupportedRobotId(armor.number);
-
-    // Strict mode: skip unsupported IDs to prevent false tracker creation.
-    if (strict_unknown_reject && !supported_robot_id) {
-      if (debug_mode_)
-        RCLCPP_WARN(get_logger(), "Ignoring armor with invalid ID: '%s'", armor.number.c_str());
+    if (strict_unknown_reject && !supported) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "Ignoring armor with unsupported ID '%s'", armor.number.c_str());
       continue;
     }
-    auto obs = tf_handler_->transform_armor_to_observation(armor, sf, msg_time);
-    if (!obs.has_value()) {
-      if (debug_mode_) RCLCPP_WARN(get_logger(), "TF failed for armor %s", armor.number.c_str());
+
+    auto observation =
+      tf_handler_->transform_armor_to_observation(armor, source_frame, message_time);
+    if (!observation) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "TF conversion failed for armor '%s'", armor.number.c_str());
       continue;
     }
-    obs_by_robot[armor.number].push_back(obs.value());
+    frame.observations[armor.number].push_back(std::move(*observation));
   }
 
-  // ── Log observations (before update, so we record incoming sensor data) ──
   if (prediction_logger_) {
-    int64_t ts_ns = msg_time.nanoseconds();
-    for (const auto &[rid, obs_list] : obs_by_robot) {
-      bool is_dual = (obs_list.size() >= 2);
-      std::vector<LogObservation> log_obs;
-      log_obs.reserve(obs_list.size());
-      for (const auto &o : obs_list) {
-        LogObservation lo;
-        lo.x = o.x;
-        lo.y = o.y;
-        lo.z = o.z;
-        lo.yaw = o.yaw;
-        lo.panel_id = o.panel_id.value_or(-1);
-        lo.confidence = o.confidence;
-        lo.is_dual_obs = is_dual;
-        log_obs.push_back(lo);
+    for (const auto & [robot_id, observations] : frame.observations) {
+      std::vector<LogObservation> log_observations;
+      log_observations.reserve(observations.size());
+      for (const auto & observation : observations) {
+        LogObservation item;
+        item.x = observation.x;
+        item.y = observation.y;
+        item.z = observation.z;
+        item.yaw = observation.yaw;
+        item.panel_id = observation.panel_id.value_or(-1);
+        item.confidence = observation.confidence;
+        item.is_dual_obs = observations.size() >= 2;
+        log_observations.push_back(item);
       }
-      prediction_logger_->logObservations(ts_ns, rid, log_obs);
+      prediction_logger_->logObservations(
+        frame.timestamp_ns, robot_id, log_observations);
     }
   }
 
-  // ── Step 2: Run tracker core frame process in manager ──
-  auto frame_result = tracker_manager_->process_frame(obs_by_robot, current_time, smoother_config_);
-  if (!frame_result.removed_stale_ids.empty() && debug_mode_) {
-    RCLCPP_INFO(get_logger(), "Removed %zu stale trackers", frame_result.removed_stale_ids.size());
+  const auto push_result = pipeline_inbox_.push(std::move(frame));
+  if (push_result.dropped_oldest) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 1000,
+      "Detector frame inbox overflow; dropped the oldest frame");
   }
-  if (!frame_result.removed_lost_ids.empty() && debug_mode_) {
-    RCLCPP_INFO(get_logger(), "Removed %zu lost trackers", frame_result.removed_lost_ids.size());
+}
+
+pipeline::RobotTrackSet GimbalPipelineNode::processObservationFrame(
+  const pipeline::ObservationFrame & frame)
+{
+  const double timestamp_s = static_cast<double>(frame.timestamp_ns) * 1e-9;
+  tracker_manager_->process_frame(frame.observations, timestamp_s, smoother_config_);
+
+  std_msgs::msg::Header header;
+  header.stamp = pipeline::ros_adapter::toRosTime(frame.timestamp_ns);
+  header.frame_id = target_frame_;
+  auto tracks = pipeline::ros_adapter::toDomain(buildTrackedRobotsMsg(header));
+
+  for (auto & robot : tracks.robots) {
+    auto * tracker = tracker_manager_->get(robot.robot_id);
+    robot.is_maneuvering = tracker && tracker->is_initialized() &&
+      tracker->assess_maneuver().is_maneuvering;
   }
+  return tracks;
+}
 
-  // ── Step 3: Build TrackedRobots message (internal) ──
-  auto tracked_msg = buildTrackedRobotsMsg(msg->header);
-
-  // ── Log tracker posterior states (after update, before selection) ──
-  if (prediction_logger_) {
-    int64_t ts_ns = msg_time.nanoseconds();
-    for (const auto &robot : tracked_msg.robots) {
-      const auto center_position = robot_description::TrackedRobotUsage::centerPosition(robot);
-      const auto linear_velocity = robot_description::TrackedRobotUsage::linearVelocity(robot);
-      LogTrackerState st;
-      st.center_x = center_position.x();
-      st.center_y = center_position.y();
-      st.center_z = center_position.z();
-      st.vel_x = linear_velocity.x();
-      st.vel_y = linear_velocity.y();
-      st.vel_z = linear_velocity.z();
-      st.yaw = robot_description::TrackedRobotUsage::yaw(robot);
-      st.yaw_velocity = robot_description::TrackedRobotUsage::yawVelocity(robot);
-      st.yaw_acceleration = robot_description::TrackedRobotUsage::yawAcceleration(robot);
-      st.radius_1 = robot.radius;
-      st.radius_2 = robot.radius_2;
-      st.dza = robot.d_za;
-      st.track_state = robot.track_state;
-      st.num_armors = robot.num_armors;
-      st.visible_armor_count = robot.visible_armor_count;
-      st.is_visible = robot.is_visible;
-      st.confidence = robot.confidence;
-
-      // ── 机动检测指标：从对应 tracker 的 UKF 内部读取 ──
-      auto *tracker = tracker_manager_->get(robot.robot_id);
-      if (tracker && tracker->is_initialized()) {
-        const auto &ukf = tracker->spin_filter();
-        const auto &idx = ukf.state_idx();
-        const auto &xv = ukf.x();
-        const auto &Pv = ukf.P();
-
-        // 创新向量
-        const auto &iv = ukf.last_innov_xyz();
-        if (iv.size() >= 3) {
-          st.innov_x = iv(0);
-          st.innov_y = iv(1);
-          st.innov_z = iv(2);
-        }
-        st.innov_yaw = ukf.last_innov_yaw();
-        st.nis = ukf.last_nis();
-        st.update_type = ukf.last_update_type();
-
-        // P 对角线 —— 位置与速度
-        st.p_var_x = Pv(idx.X(), idx.X());
-        st.p_var_y = Pv(idx.Y(), idx.Y());
-        st.p_var_z = Pv(idx.Z(), idx.Z());
-        st.p_var_vx = Pv(idx.VX(), idx.VX());
-        st.p_var_vy = Pv(idx.VY(), idx.VY());
-        st.p_var_vz = Pv(idx.VZ(), idx.VZ());
-
-        // 加速度状态（仅 CA / Singer 过程模型存在 AX/AY/AZ）
-        constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
-        if (idx.has("AX")) {
-          st.p_var_ax = Pv(idx.AX(), idx.AX());
-          st.p_var_ay = Pv(idx.AY(), idx.AY());
-          st.p_var_az = Pv(idx.AZ(), idx.AZ());
-          st.accel_x = xv(idx.AX());
-          st.accel_y = xv(idx.AY());
-          st.accel_z = xv(idx.AZ());
-          st.accel_magnitude = std::sqrt(xv(idx.AX()) * xv(idx.AX()) + xv(idx.AY()) * xv(idx.AY()) +
-                                         xv(idx.AZ()) * xv(idx.AZ()));
-        } else {
-          st.p_var_ax = kNaN;
-          st.p_var_ay = kNaN;
-          st.p_var_az = kNaN;
-          st.accel_x = kNaN;
-          st.accel_y = kNaN;
-          st.accel_z = kNaN;
-          st.accel_magnitude = kNaN;
-        }
-
-        if (robot.robot_id == "outpost") {
-          auto apply_outpost_snapshot = [&](const auto &snap) {
-            if (!snap.valid) return;
-            st.outpost_mode = snap.track_mode;
-            st.estimated_id = snap.estimated_id;
-            st.runtime_panel_id = snap.runtime_panel_id;
-            st.bound_height_label = snap.bound_height_label;
-            st.obs_inferred_id = snap.obs_inferred_id;
-            st.obs_inferred_id_z = snap.obs_inferred_id_z;
-            st.candidate_panel_id = snap.candidate_panel_id;
-            st.candidate_prob = snap.candidate_prob;
-            st.candidate_margin = snap.candidate_margin;
-            st.selected_xy_residual = snap.selected_xy_residual;
-            st.outpost_entropy = snap.entropy_norm;
-            st.outpost_max_prob = snap.max_prob;
-            st.hyp_cost_0 = snap.hyp_costs[0];
-            st.hyp_cost_1 = snap.hyp_costs[1];
-            st.hyp_cost_2 = snap.hyp_costs[2];
-            st.hyp_prob_0 = snap.hyp_probs[0];
-            st.hyp_prob_1 = snap.hyp_probs[1];
-            st.hyp_prob_2 = snap.hyp_probs[2];
-            st.center_yaw_est = snap.center_yaw_est;
-            st.has_observation = snap.has_observation ? 1 : 0;
-            st.obs_x = snap.obs_x;
-            st.obs_y = snap.obs_y;
-            st.obs_z = snap.obs_z;
-            st.obs_yaw = snap.obs_yaw;
-            st.obs_z_jump = snap.obs_z_jump;
-            st.obs_dz_from_audit_center = snap.obs_dz_from_audit_center;
-            st.obs_z_audit_cost_0 = snap.obs_z_audit_costs[0];
-            st.obs_z_audit_cost_1 = snap.obs_z_audit_costs[1];
-            st.obs_z_audit_cost_2 = snap.obs_z_audit_costs[2];
-            st.binding_confidence = snap.binding_confidence;
-            st.switch_event = snap.switch_event;
-            st.switch_reason = snap.switch_reason;
-            st.transition_state = snap.transition_state;
-            st.z_audit_conflict_count = snap.z_audit_conflict_count;
-            st.z_audit_confidence = snap.z_audit_confidence;
-            st.publish_x = snap.publish_x;
-            st.publish_y = snap.publish_y;
-            st.publish_z = snap.publish_z;
-            st.period_confidence = snap.period_confidence;
-            st.period_update_applied = snap.period_update_applied;
-            st.period_phase_index = snap.period_phase_index;
-            st.spin_direction = snap.spin_direction;
-            st.dz_small_est = snap.dz_small_est;
-            st.dz_large_est = snap.dz_large_est;
-          };
-
-          if (const auto *outpost_baseline_tracker = dynamic_cast<const OutpostTrackerBaseline *>(tracker);
-              outpost_baseline_tracker != nullptr) {
-            apply_outpost_snapshot(outpost_baseline_tracker->debug_snapshot());
-          }
-        }
-      }
-
-      prediction_logger_->logTrackerState(ts_ns, robot.robot_id, st);
-    }
+pipeline::RobotTrackSet GimbalPipelineNode::collectExternalTargets(
+  pipeline::TimestampNs now_ns)
+{
+  pipeline::RobotTrackSet result;
+  result.timestamp_ns = now_ns;
+  if (!external_targets_enable_ || !external_targets_buff_enable_ || !buff_target_adapter_) {
+    return result;
   }
 
-  // ── Step 4: Target selection (direct C++ call, no ROS topic!) ──
-  SelectionResult sel_result;
-  if (!tracked_msg.robots.empty()) {
-    sel_result = selectTargetInternal(tracked_msg);
+  const auto target = buff_target_adapter_->latestValid(rclcpp::Time(now_ns, RCL_ROS_TIME));
+  if (target) {
+    result.robots.push_back(pipeline::ros_adapter::toDomain(*target));
+  }
+  return result;
+}
+
+void GimbalPipelineNode::publishPipelineTelemetry(
+  const pipeline::PipelineCycleResult & result)
+{
+  if (!result.tracking_updated) {
+    return;
   }
 
-  // ── Step 5: Store results for timerCallback (thread-safe) ──
-  {
-    std::lock_guard<std::mutex> lock(pipeline_mutex_);
-    latest_tracked_robots_ = std::make_shared<rm_interfaces::msg::TrackedRobots>(tracked_msg);
-    latest_selected_target_id_ = sel_result.robot_id;
-    latest_selected_confidence_ = sel_result.confidence;
-    latest_update_time_ = now();  // record local clock for processing_delay
-  }
-
-  // ── Step 6: Debug publishing ──
+  const auto tracked_msg = pipeline::ros_adapter::toRos(result.tracks, target_frame_);
   const auto tracker_views = tracker_manager_->initialized_tracker_views();
   logNorm4BaselineTrackerDebug(tracker_views);
-  if (debug_mode_) {
-    if (debug_tracked_robots_pub_ && !tracked_msg.robots.empty())
-      debug_tracked_robots_pub_->publish(tracked_msg);
 
-    if (debug_selected_target_pub_) {
-      rm_interfaces::msg::SelectedTarget sel_msg;
-      sel_msg.header.stamp = now();
-      sel_msg.header.frame_id = target_frame_;
-      sel_msg.robot_id = sel_result.robot_id;
-      sel_msg.confidence = sel_result.confidence;
-      sel_msg.selection_strategy = selector_strategy_name_;
-      debug_selected_target_pub_->publish(sel_msg);
-    }
-
-    if (debug_tracker_marker_pub_) {
-      rclcpp::Time stamp(msg->header.stamp);
-      auto marker_array = build_tracker_markers(visualization_frame_, tracker_views, stamp);
-      debug_tracker_marker_pub_->publish(marker_array);
-    }
-
-    if (debug_maneuver_pub_) {
-      publishManeuverMarkers(msg->header);
-    }
-
-    if (debug_tracker_2d_image_pub_) {
-      publish2DTrackerDebugImage(msg->header, tracker_views);
-    }
-    if (debug_evidence_frame_pub_) {
-      publishEvidenceFrameDebug(msg->header, tracker_views);
+  if (prediction_logger_) {
+    for (const auto & robot : result.tracks.robots) {
+      LogTrackerState state;
+      state.center_x = robot.center_position.x();
+      state.center_y = robot.center_position.y();
+      state.center_z = robot.center_position.z();
+      state.vel_x = robot.center_velocity.x();
+      state.vel_y = robot.center_velocity.y();
+      state.vel_z = robot.center_velocity.z();
+      state.yaw = robot.yaw;
+      state.yaw_velocity = robot.yaw_velocity;
+      state.yaw_acceleration = robot.yaw_acceleration;
+      state.radius_1 = robot.radius;
+      state.radius_2 = robot.radius_2;
+      state.dza = robot.d_za;
+      state.track_state = static_cast<std::uint8_t>(robot.track_state);
+      state.num_armors = robot.num_armors;
+      state.visible_armor_count = robot.visible_armor_count;
+      state.is_visible = robot.is_visible;
+      state.confidence = robot.confidence;
+      prediction_logger_->logTrackerState(
+        result.tracks.timestamp_ns, robot.robot_id, state);
     }
   }
 
-  // ── Step 7: Publish maneuver states (always-on, for chart monitoring) ──
-  if (maneuver_states_pub_) {
-    rm_interfaces::msg::ManeuverStates states_msg;
-    states_msg.header.stamp = msg->header.stamp;
-    states_msg.header.frame_id = target_frame_;
-    for (const auto &view : tracker_views) {
-      if (!view.tracker) continue;
-      const auto result = view.tracker->assess_maneuver();
-      const auto &ukf = view.tracker->spin_filter();
-      rm_interfaces::msg::ManeuverState s;
-      s.robot_id = view.robot_id;
-      s.is_maneuvering = result.is_maneuvering;
-      s.nis = result.nis;
-      s.innov_norm = result.innov_norm;
-      s.innov_yaw_abs = std::abs(ukf.last_innov_yaw());
-      s.update_type = result.update_type;
-      states_msg.states.push_back(s);
+  if (debug_mode_) {
+    if (debug_tracked_robots_pub_ && !tracked_msg.robots.empty()) {
+      debug_tracked_robots_pub_->publish(tracked_msg);
     }
-    maneuver_states_pub_->publish(states_msg);
+    if (debug_selected_target_pub_) {
+      rm_interfaces::msg::SelectedTarget selected;
+      selected.header = tracked_msg.header;
+      selected.selection_strategy = "priority_list";
+      if (result.selected_target) {
+        selected.robot_id = result.selected_target->robot_id;
+        selected.confidence = result.selected_target->confidence;
+      }
+      debug_selected_target_pub_->publish(selected);
+    }
+    if (debug_target_pub_ && result.selected_target) {
+      const auto selected_it = std::find_if(
+        result.tracks.robots.begin(), result.tracks.robots.end(),
+        [&](const pipeline::RobotTrack & robot) {
+          return robot.robot_id == result.selected_target->robot_id;
+        });
+      if (selected_it != result.tracks.robots.end()) {
+        rm_interfaces::msg::Target target;
+        target.header = tracked_msg.header;
+        target.tracking = selected_it->track_state == pipeline::TrackState::TRACKING;
+        target.id = selected_it->robot_id;
+        target.armors_num = selected_it->num_armors;
+        target.position.x = selected_it->center_position.x();
+        target.position.y = selected_it->center_position.y();
+        target.position.z = selected_it->center_position.z();
+        target.velocity.x = selected_it->center_velocity.x();
+        target.velocity.y = selected_it->center_velocity.y();
+        target.velocity.z = selected_it->center_velocity.z();
+        target.yaw = selected_it->yaw;
+        target.v_yaw = selected_it->yaw_velocity;
+        target.radius_1 = selected_it->radius;
+        target.radius_2 = selected_it->radius_2;
+        target.d_za = selected_it->d_za;
+        target.d_zc = selected_it->d_zc;
+        debug_target_pub_->publish(target);
+      }
+    }
+    if (debug_tracker_marker_pub_) {
+      debug_tracker_marker_pub_->publish(
+        build_tracker_markers(
+          visualization_frame_, tracker_views,
+          rclcpp::Time(tracked_msg.header.stamp)));
+    }
+    if (debug_maneuver_pub_) {
+      publishManeuverMarkers(tracked_msg.header);
+    }
+    if (debug_tracker_2d_image_pub_) {
+      publish2DTrackerDebugImage(tracked_msg.header, tracker_views);
+    }
+    if (debug_evidence_frame_pub_) {
+      publishEvidenceFrameDebug(tracked_msg.header, tracker_views);
+    }
+  }
+
+  if (maneuver_states_pub_) {
+    rm_interfaces::msg::ManeuverStates states;
+    states.header = tracked_msg.header;
+    for (const auto & robot : result.tracks.robots) {
+      rm_interfaces::msg::ManeuverState state;
+      state.robot_id = robot.robot_id;
+      state.is_maneuvering = robot.is_maneuvering;
+      auto * tracker = tracker_manager_->get(robot.robot_id);
+      if (tracker && tracker->is_initialized()) {
+        const auto assessment = tracker->assess_maneuver();
+        state.nis = assessment.nis;
+        state.innov_norm = assessment.innov_norm;
+        state.innov_yaw_abs = std::abs(tracker->spin_filter().last_innov_yaw());
+        state.update_type = assessment.update_type;
+      }
+      states.states.push_back(state);
+    }
+    maneuver_states_pub_->publish(states);
   }
 }
 
@@ -329,12 +266,6 @@ rm_interfaces::msg::TrackedRobots GimbalPipelineNode::buildTrackedRobotsMsg(
     const SmoothedOutput *smoothed = post.has_smoothed ? &post.smoothed : nullptr;
     const int visible_armor_count = tracker_manager_->visible_observation_count(rid);
 
-    // Publish target for debug
-    if (debug_mode_ && debug_target_pub_) {
-      auto target = buildTargetMessage(header, rid, *tracker, smoothed);
-      debug_target_pub_->publish(target);
-    }
-
     auto robot = buildTrackedRobotMessage(header, rid, *tracker, smoothed, visible_armor_count);
 
     if (robot.robot_id.empty()) {
@@ -344,116 +275,12 @@ rm_interfaces::msg::TrackedRobots GimbalPipelineNode::buildTrackedRobotsMsg(
     tracked_msg.robots.push_back(robot);
   }
 
-  mergeExternalTargets(tracked_msg, header);
-
   return tracked_msg;
-}
-
-void GimbalPipelineNode::mergeExternalTargets(rm_interfaces::msg::TrackedRobots &tracked_msg,
-                                              const std_msgs::msg::Header &header) {
-  if (!external_targets_enable_ || !external_targets_buff_enable_ || !buff_target_adapter_) {
-    return;
-  }
-
-  const auto now = rclcpp::Time(header.stamp);
-  auto buff_robot_opt = buff_target_adapter_->latestValid(now);
-  if (!buff_robot_opt.has_value()) {
-    return;
-  }
-
-  auto buff_robot = buff_robot_opt.value();
-  if (!active_external_allowed_ids_.empty() &&
-      active_external_allowed_ids_.find(buff_robot.robot_id) ==
-        active_external_allowed_ids_.end()) {
-    return;
-  }
-
-  buff_robot.header = tracked_msg.header;
-  bool replaced = false;
-  for (auto &robot : tracked_msg.robots) {
-    if (robot.robot_id == buff_robot.robot_id) {
-      robot = buff_robot;
-      replaced = true;
-      break;
-    }
-  }
-  if (!replaced) {
-    tracked_msg.robots.push_back(buff_robot);
-  }
-}
-
-void GimbalPipelineNode::refreshExternalTargetAllowlist(int mode) {
-  current_mode_ = mode;
-  auto it = allowed_ids_by_mode_.find(mode);
-  if (it == allowed_ids_by_mode_.end()) {
-    active_external_allowed_ids_.clear();
-    return;
-  }
-  active_external_allowed_ids_ = it->second;
 }
 
 /* ================================================================ */
 /*  Target message builders (from MaxEntropyTrackerNode)             */
 /* ================================================================ */
-
-rm_interfaces::msg::Target GimbalPipelineNode::buildTargetMessage(
-  const std_msgs::msg::Header &header,
-  const std::string &robot_id,
-  BaseTracker &tracker,
-  const SmoothedOutput *smoothed) {
-  rm_interfaces::msg::Target target;
-  target.header = header;
-  target.header.frame_id = target_frame_;
-  target.tracking = true;
-  target.id = robot_id;
-
-  // Keep debug target semantic aligned with tracked robot profile.
-  target.armors_num = 4;
-  if (robot_id == "outpost" || robot_id == "base") {
-    target.armors_num = 3;
-  }
-  const int runtime_num_armors = tracker.effective_num_armors();
-  if (runtime_num_armors > 0) {
-    target.armors_num = runtime_num_armors;
-  }
-
-  if (smoothed) {
-    target.position.x = smoothed->center_position.x();
-    target.position.y = smoothed->center_position.y();
-    target.position.z = smoothed->center_position.z();
-    target.velocity.x = smoothed->velocity.x();
-    target.velocity.y = smoothed->velocity.y();
-    target.velocity.z = smoothed->velocity.z();
-    target.yaw = smoothed->yaw;
-    target.v_yaw = smoothed->yaw_velocity;
-    target.radius_1 = smoothed->r1;
-    target.radius_2 = smoothed->r2;
-    target.d_za = smoothed->dza;
-  } else {
-    auto pos = tracker.get_center_position();
-    target.position.x = pos.x();
-    target.position.y = pos.y();
-    target.position.z = pos.z();
-    const auto &filter = tracker.spin_filter();
-    auto idx = filter.state_idx();
-    const auto &x = filter.x();
-    const auto pub_vel = tracker.get_publish_velocity();
-    target.velocity.x = pub_vel.x();
-    target.velocity.y = pub_vel.y();
-    target.velocity.z = pub_vel.z();
-    target.yaw = tracker.get_yaw();
-    target.v_yaw = x(idx.DELTA_RATE());
-    auto [r1, r2] = tracker.get_radii();
-    target.radius_1 = r1;
-    target.radius_2 = r2;
-    target.d_za = filter.get_dza();
-  }
-
-  target.d_zc = 0.0;
-  target.yaw_diff = 0.0;
-  target.position_diff = 0.0;
-  return target;
-}
 
 rm_interfaces::msg::TrackedRobot GimbalPipelineNode::buildTrackedRobotMessage(
   const std_msgs::msg::Header &header,

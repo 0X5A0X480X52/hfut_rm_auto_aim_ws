@@ -240,12 +240,6 @@ void GimbalPipelineNode::initMarkers() {
   selection_marker_.color.r = 1.0;
   selection_marker_.color.g = 1.0;
 
-  predicted_marker_.ns = "predicted_hit";
-  predicted_marker_.type = visualization_msgs::msg::Marker::SPHERE;
-  predicted_marker_.scale.x = predicted_marker_.scale.y = predicted_marker_.scale.z = 0.1;
-  predicted_marker_.color.a = 1.0;
-  predicted_marker_.color.g = 1.0;
-
   trajectory_marker_.ns = "trajectory";
   trajectory_marker_.type = visualization_msgs::msg::Marker::LINE_STRIP;
   trajectory_marker_.scale.x = 0.02;
@@ -513,16 +507,6 @@ void GimbalPipelineNode::publishGimbalMarkers(
     selection_marker_.pose.position.z = cmd.distance * std::sin(pitch_rad);
     selection_marker_.pose.orientation.w = 1.0;
     marker_array.markers.push_back(selection_marker_);
-  }
-
-  // Predicted hit (for predicted strategy)
-  if (current_gimbal_strategy_name_ == "predicted" && has_valid_measurement) {
-    predicted_marker_.header = target_robot.header;
-    predicted_marker_.id = 0;
-    predicted_marker_.action = visualization_msgs::msg::Marker::ADD;
-    predicted_marker_.pose = selection_marker_.pose;
-    predicted_marker_.color.a = 0.6;
-    marker_array.markers.push_back(predicted_marker_);
   }
 
   // Trajectory

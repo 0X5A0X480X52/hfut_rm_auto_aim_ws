@@ -14,15 +14,13 @@
 #include "max_entropy_tracker/core/observation.hpp"
 #include "max_entropy_tracker/trackers/norm4_baseline/backends/norm4_backend_factory.hpp"
 #include "max_entropy_tracker/trackers/outpost_tracker_baseline.hpp"
-#include "target_selector/strategies/priority_list_strategy.hpp"
+#include "gimbal_pipeline/core/priority_target_selector.hpp"
 
 namespace
 {
 
 using fyt::auto_aim::ObservationData;
 using fyt::auto_aim::OutpostTrackerBaseline;
-using fyt::auto_aim::PriorityListStrategy;
-using fyt::auto_aim::SelectionConfig;
 using fyt::auto_aim::UnifiedConfig;
 using fyt::auto_aim::adapters::BuffTargetAdapter;
 using fyt::auto_aim::norm4_baseline::BackendType;
@@ -39,15 +37,15 @@ ObservationData makeObservation(double timestamp)
   return observation;
 }
 
-rm_interfaces::msg::TrackedRobot makeRobot(
+fyt::auto_aim::pipeline::RobotTrack makeRobot(
   const std::string & id, double x, double y, double confidence)
 {
-  rm_interfaces::msg::TrackedRobot robot;
+  fyt::auto_aim::pipeline::RobotTrack robot;
   robot.robot_id = id;
-  robot.center_position.x = x;
-  robot.center_position.y = y;
+  robot.center_position = Eigen::Vector3d(x, y, 0.0);
   robot.confidence = confidence;
-  robot.track_state = rm_interfaces::msg::TrackedRobot::TRACKING;
+  robot.track_state = fyt::auto_aim::pipeline::TrackState::TRACKING;
+  robot.is_visible = true;
   return robot;
 }
 
@@ -93,22 +91,23 @@ TEST(OutpostBaseline, InitializesAndUpdatesSingleObservationMode)
 
 TEST(PriorityList, UsesConfiguredPriorityThenYawFallback)
 {
-  rm_interfaces::msg::TrackedRobots robots;
+  fyt::auto_aim::pipeline::RobotTrackSet robots;
   robots.robots.push_back(makeRobot("3", 5.0, 0.0, 0.9));
   robots.robots.push_back(makeRobot("1", 4.0, 1.0, 0.9));
 
-  SelectionConfig config;
+  fyt::auto_aim::pipeline::TargetSelectionConfig config;
   config.min_confidence = 0.5;
   config.max_distance = 10.0;
   config.priority_robot_ids = {"1", "3"};
 
-  PriorityListStrategy strategy;
-  const auto prioritized = strategy.selectTarget(robots, config);
+  fyt::auto_aim::pipeline::PriorityTargetSelector strategy(config);
+  const auto prioritized = strategy.select(robots);
   ASSERT_TRUE(prioritized.has_value());
   EXPECT_EQ(prioritized->robot_id, "1");
 
   config.priority_robot_ids.clear();
-  const auto yaw_fallback = strategy.selectTarget(robots, config);
+  fyt::auto_aim::pipeline::PriorityTargetSelector fallback_strategy(config);
+  const auto yaw_fallback = fallback_strategy.select(robots);
   ASSERT_TRUE(yaw_fallback.has_value());
   EXPECT_EQ(yaw_fallback->robot_id, "3");
 }

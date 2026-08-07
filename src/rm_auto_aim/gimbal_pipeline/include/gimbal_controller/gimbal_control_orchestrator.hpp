@@ -21,9 +21,10 @@
 #include <vector>
 
 #include <Eigen/Dense>
+#include <rm_interfaces/msg/gimbal_cmd.hpp>
 
 #include "gimbal_controller/fire_advice_engine.hpp"
-#include "gimbal_controller/gimbal_control_strategy.hpp"
+#include "gimbal_controller/gimbal_control_types.hpp"
 
 namespace gimbal_controller
 {

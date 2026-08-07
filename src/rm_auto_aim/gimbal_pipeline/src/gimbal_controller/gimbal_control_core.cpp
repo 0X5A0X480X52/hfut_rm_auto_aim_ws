@@ -39,21 +39,8 @@ rm_interfaces::msg::GimbalCmd makeFallbackIdleCmd(const GimbalControlContext & c
 
 }  // namespace
 
-GimbalControlStrategy::SharedPtr GimbalControlCore::findStrategy(const std::string & name) const
-{
-  if (!strategies_) {
-    return nullptr;
-  }
-  auto it = strategies_->find(name);
-  if (it == strategies_->end()) {
-    return nullptr;
-  }
-  return it->second;
-}
-
 GimbalControlCoreOutput GimbalControlCore::compute(
   const GimbalControlContext & context,
-  const std::string & strategy_name,
   const std::string & selected_target_id,
   bool enable)
 {
@@ -67,7 +54,7 @@ GimbalControlCoreOutput GimbalControlCore::compute(
     }
     output.fire_advice_debug = orchestrator_.lastFireAdviceDebug();
     output.delay_audit = DelayAuditSnapshot{};
-    output.delay_audit.strategy_name = strategy_name;
+    output.delay_audit.strategy_name = "mpc";
     output.delay_audit.tracking = false;
 
     filter_.reset();
@@ -75,9 +62,7 @@ GimbalControlCoreOutput GimbalControlCore::compute(
     return output;
   }
 
-  auto strategy = findStrategy(strategy_name);
-  if (!strategy) {
-    output.strategy_found = false;
+  if (!strategy_) {
     output.cmd = orchestrator_.buildIdleCmd(context);
     if (output.cmd.mode == rm_interfaces::msg::GimbalCmd::MODE_UNKNOWN) {
       output.cmd = makeFallbackIdleCmd(context);
@@ -85,12 +70,12 @@ GimbalControlCoreOutput GimbalControlCore::compute(
     output.fire_advice_debug = orchestrator_.lastFireAdviceDebug();
 
     output.delay_audit = DelayAuditSnapshot{};
-    output.delay_audit.strategy_name = strategy_name;
+    output.delay_audit.strategy_name = "mpc";
     output.delay_audit.tracking = context.is_tracking;
     return output;
   }
 
-  auto cmd = strategy->solve(context);
+  auto cmd = strategy_->solve(context);
   cmd = orchestrator_.finalize(context, cmd);
   output.fire_advice_debug = orchestrator_.lastFireAdviceDebug();
 
@@ -102,13 +87,13 @@ GimbalControlCoreOutput GimbalControlCore::compute(
   prev_tracking_target_id_ = current_target;
 
   output.cmd = std::move(cmd);
-  output.delay_audit = strategy->getLastDelayAudit();
+  output.delay_audit = strategy_->getLastDelayAudit();
   return output;
 }
 
 void GimbalControlCore::updateFov(double fov_half_yaw, double fov_half_pitch)
 {
-  auto mpc_strategy = std::dynamic_pointer_cast<MpcControlStrategy>(findStrategy("mpc"));
+  auto mpc_strategy = std::dynamic_pointer_cast<MpcControlStrategy>(strategy_);
   if (!mpc_strategy) {
     return;
   }

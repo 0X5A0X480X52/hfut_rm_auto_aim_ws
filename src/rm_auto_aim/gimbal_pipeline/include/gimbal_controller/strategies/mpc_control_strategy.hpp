@@ -20,12 +20,14 @@
 #include <cmath>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <string>
 
 #include <Eigen/Dense>
+#include <rm_interfaces/msg/gimbal_cmd.hpp>
 
 #include "gimbal_controller/delay_management/delay_semantic_manager.hpp"
-#include "gimbal_controller/gimbal_control_strategy.hpp"
+#include "gimbal_controller/gimbal_control_types.hpp"
 #include "gimbal_controller/mpc/gimbal_dynamics_model.hpp"
 #include "gimbal_controller/mpc/qp_solver.hpp"
 #include "gimbal_controller/mpc/mpc_reference_generator.hpp"
@@ -43,15 +45,26 @@ namespace gimbal_controller
  *   4. 提取首步控制量推算目标 yaw/pitch
  *   5. 调用 FireAdvisor 判断开火
  */
-class MpcControlStrategy : public GimbalControlStrategy
+class ArmorPositionCalculator;
+class ArmorSelector;
+class FireAdvisor;
+class LocalTrajectoryCompensator;
+
+class MpcControlStrategy
 {
 public:
   MpcControlStrategy();
-  ~MpcControlStrategy() override = default;
+  ~MpcControlStrategy() = default;
 
-  rm_interfaces::msg::GimbalCmd solve(const GimbalControlContext & context) override;
+  rm_interfaces::msg::GimbalCmd solve(const GimbalControlContext & context);
 
-  std::string getName() const override { return "MpcControlStrategy"; }
+  void setComponents(
+    std::shared_ptr<ArmorPositionCalculator> position_calculator,
+    std::shared_ptr<ArmorSelector> armor_selector,
+    std::shared_ptr<LocalTrajectoryCompensator> local_compensator,
+    std::shared_ptr<FireAdvisor> fire_advisor);
+
+  const DelayAuditSnapshot & getLastDelayAudit() const {return last_delay_audit_;}
 
   /**
    * @brief 设置 MPC 参数
@@ -155,7 +168,7 @@ public:
     bool high_cost_enable,
     int high_cost_sample_every,
     int log_every,
-    bool log_on_failure,
+    bool sample_on_failure,
     double active_tol,
     double rank_tol_rel);
 
@@ -199,6 +212,15 @@ public:
   }
 
 private:
+  rm_interfaces::msg::GimbalCmd createIdleCmd() const;
+  void markDelayAuditInvalid(const std::string & strategy_name, bool tracking);
+  void markDelayAuditValid(const DelayAuditSnapshot & snapshot);
+
+  std::shared_ptr<ArmorPositionCalculator> position_calculator_;
+  std::shared_ptr<ArmorSelector> armor_selector_;
+  std::shared_ptr<LocalTrajectoryCompensator> local_compensator_;
+  std::shared_ptr<FireAdvisor> fire_advisor_;
+  DelayAuditSnapshot last_delay_audit_{};
   struct SlidingRms
   {
     int window_size{80};
@@ -291,7 +313,7 @@ private:
   void updateControlHistory(const mpc::GimbalDynamicsModel::ControlVector & u_opt);
   double computeRegularizationEpsilon(const Eigen::MatrixXd & H) const;
   void applyHessianRegularization(Eigen::MatrixXd & H, double epsilon) const;
-  void fillAndLogDiagnostics(
+  void fillDiagnostics(
     bool maneuver_path,
     const Eigen::MatrixXd & H,
     const Eigen::MatrixXd & Q_eff,
@@ -350,7 +372,6 @@ private:
   double max_yaw_feedforward_s_{0.12};  // yaw 前馈上限 (秒)
   delay_management::DelaySemanticManager delay_manager_;
   bool uses_delayed_b_model_{false};
-  bool warned_double_compensation_{false};
 
   // 上一步求解结果 (warmstart)
   Eigen::VectorXd U_prev_;
@@ -408,8 +429,7 @@ private:
   bool diagnostics_low_cost_always_{true};
   bool diagnostics_high_cost_enable_{false};
   int diagnostics_high_cost_sample_every_{20};
-  int diagnostics_log_every_{50};
-  bool diagnostics_log_on_failure_{true};
+  bool diagnostics_sample_on_failure_{true};
   double diagnostics_active_tol_{1e-4};
   double diagnostics_rank_tol_rel_{1e-9};
   uint64_t diagnostics_cycle_{0};

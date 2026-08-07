@@ -23,6 +23,7 @@
 #include <unordered_set>
 
 #include "gimbal_pipeline/gimbal_pipeline_node.hpp"
+#include "gimbal_pipeline/adapters/pipeline_ros_conversions.hpp"
 #include "max_entropy_tracker/msg_converter.hpp"
 #include "max_entropy_tracker/trackers/norm4_baseline/tracker/norm4_tracker_baseline.hpp"
 #include "max_entropy_tracker/visualization.hpp"
@@ -45,7 +46,7 @@ void GimbalPipelineNode::initGimbalComponents() {
   gimbal_control_core_->setFireModules(fire_advice_engine_, fire_advisor_);
 }
 
-void GimbalPipelineNode::initGimbalStrategies() {
+void GimbalPipelineNode::initGimbalControl() {
   auto mpc_s = std::make_shared<gimbal_controller::MpcControlStrategy>();
   mpc_s->setComponents(position_calculator_, armor_selector_, local_compensator_, fire_advisor_);
   mpc_s->initReferenceGenerator();
@@ -153,10 +154,8 @@ void GimbalPipelineNode::initGimbalStrategies() {
     get_parameter("controller.mpc.diagnostics.log_on_failure").as_bool(),
     get_parameter("controller.mpc.diagnostics.active_tol").as_double(),
     get_parameter("controller.mpc.diagnostics.rank_tol_rel").as_double());
-  gimbal_strategies_["mpc"] = mpc_s;
-
   if (gimbal_control_core_) {
-    gimbal_control_core_->setStrategies(&gimbal_strategies_);
+    gimbal_control_core_->setStrategy(mpc_s);
   }
 }
 
@@ -165,6 +164,7 @@ void GimbalPipelineNode::initGimbalStrategies() {
 /* ================================================================ */
 
 void GimbalPipelineNode::jointStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg) {
+  std::lock_guard<std::mutex> lock(sensor_state_mutex_);
   for (size_t i = 0; i < msg->name.size(); ++i) {
     if (msg->name[i] == "yaw_joint")
       current_yaw_ = msg->position[i];
@@ -184,6 +184,7 @@ void GimbalPipelineNode::cameraInfoCallback(const sensor_msgs::msg::CameraInfo::
 
   // 通过核心类透传 FOV 更新，避免 node 直接耦合具体策略实现。
   if (gimbal_control_core_) {
+    std::lock_guard<std::mutex> lock(control_core_mutex_);
     gimbal_control_core_->updateFov(fov_half_yaw, fov_half_pitch);
   }
 
@@ -206,6 +207,7 @@ void GimbalPipelineNode::updateGimbalState() {
     tf2::fromMsg(msg_q, tf_q);
     double roll, pitch, yaw;
     tf2::Matrix3x3(tf_q).getRPY(roll, pitch, yaw);
+    std::lock_guard<std::mutex> lock(sensor_state_mutex_);
     current_yaw_ = yaw;
     current_pitch_ = -pitch;
   } catch (const tf2::TransformException &) {
@@ -213,65 +215,35 @@ void GimbalPipelineNode::updateGimbalState() {
   }
 }
 
-void GimbalPipelineNode::buildControlContextFromCache(
-  gimbal_controller::GimbalControlContext &context, std::string &selected_id) {
-  context.is_tracking = false;
-  context.is_temp_lost = false;
-  context.is_maneuvering = false;
+pipeline::GimbalCommand GimbalPipelineNode::computeGimbalCommand(
+  const pipeline::ControlRequest & request)
+{
+  gimbal_controller::GimbalControlContext context;
+  context.current_time = rclcpp::Time(request.now_ns, RCL_ROS_TIME);
+  context.current_yaw = request.gimbal.yaw;
+  context.current_pitch = request.gimbal.pitch;
+  context.bullet_speed = request.gimbal.bullet_speed;
 
-  // Read shared state (thread-safe)
-  rm_interfaces::msg::TrackedRobots::SharedPtr robots;
-  rclcpp::Time data_update_time{0, 0, RCL_ROS_TIME};
-  {
-    std::lock_guard<std::mutex> lock(pipeline_mutex_);
-    robots = latest_tracked_robots_;
-    selected_id = latest_selected_target_id_;
-    data_update_time = latest_update_time_;
+  std::string selected_id;
+  if (request.target) {
+    std_msgs::msg::Header header;
+    header.frame_id = target_frame_;
+    header.stamp = pipeline::ros_adapter::toRosTime(request.target->timestamp_ns);
+    context.target_robot = pipeline::ros_adapter::toRos(*request.target, header);
+    context.target_stamp = rclcpp::Time(request.target->timestamp_ns, RCL_ROS_TIME);
+    context.is_tracking = request.target->track_state == pipeline::TrackState::TRACKING;
+    context.is_temp_lost = request.target->track_state == pipeline::TrackState::TEMP_LOST;
+    context.is_maneuvering = request.target->is_maneuvering;
+    selected_id = request.target->robot_id;
   }
 
-  if (!robots || robots->robots.empty()) {
-    return;
-  }
-
-  // Cache freshness check: stale target cache should not drive control.
-  const double data_age = (context.current_time - data_update_time).seconds();
-  const double max_data_age = std::max(tracker_timeout_s_, 1e-3);
-  if (data_age > max_data_age) {
-    RCLCPP_WARN_THROTTLE(get_logger(),
-                         *get_clock(),
-                         1000,
-                         "Stale tracking data (age=%.3fs > %.3fs), ignoring",
-                         data_age,
-                         max_data_age);
-    return;
-  }
-
-  const rm_interfaces::msg::TrackedRobot *selected_robot = nullptr;
-  if (!selected_id.empty()) {
-    for (const auto &robot : robots->robots) {
-      if (robot.robot_id == selected_id) {
-        selected_robot = &robot;
-        break;
-      }
-    }
-  } else {
-    selected_robot = &robots->robots[0];
-    selected_id = selected_robot->robot_id;
-  }
-
-  if (!selected_robot) {
-    return;
-  }
-
-  context.target_robot = *selected_robot;
-  context.target_stamp = data_update_time;
-  context.is_tracking = (selected_robot->track_state == rm_interfaces::msg::TrackedRobot::TRACKING);
-  context.is_temp_lost =
-    (selected_robot->track_state == rm_interfaces::msg::TrackedRobot::TEMP_LOST);
-
-  auto *tracker = tracker_manager_->get(selected_robot->robot_id);
-  context.is_maneuvering =
-    (tracker && tracker->is_initialized()) ? tracker->assess_maneuver().is_maneuvering : false;
+  std::lock_guard<std::mutex> lock(control_core_mutex_);
+  last_control_context_ = context;
+  last_control_result_ = gimbal_control_core_->compute(
+    context, selected_id, request.enabled);
+  auto command = pipeline::ros_adapter::toDomain(last_control_result_.cmd);
+  command.timestamp_ns = request.now_ns;
+  return command;
 }
 
 void GimbalPipelineNode::publishDelayAuditDebug(
@@ -369,68 +341,67 @@ void GimbalPipelineNode::publishFireAdviceDebug(
 /* ================================================================ */
 
 void GimbalPipelineNode::timerCallback() {
-  // Step 0: 核心类可用性检查
-  if (!gimbal_control_core_) {
+  if (!auto_aim_pipeline_ || !gimbal_control_core_) {
     RCLCPP_ERROR_THROTTLE(get_logger(),
                           *get_clock(),
                           2000,
-                          "GimbalControlCore is not initialized, skipping control cycle");
+                          "AutoAimPipeline is not initialized, skipping control cycle");
     return;
   }
 
-  gimbal_controller::GimbalControlContext context;
-  context.current_time = now();
-
-  // Step 1: 控制禁用时发布 idle 命令并早返回
-  if (!enable_) {
-    const auto idle_result =
-      gimbal_control_core_->compute(context, current_gimbal_strategy_name_, std::string(), false);
-    gimbal_cmd_pub_->publish(idle_result.cmd);
-    return;
-  }
-
-  // Step 2: 更新云台姿态并填充控制上下文基础字段
   updateGimbalState();
-  context.current_yaw = current_yaw_;
-  context.current_pitch = current_pitch_;
-  context.bullet_speed = bullet_speed_;
+  const auto cycle_time = now();
+  pipeline::GimbalState gimbal_state;
+  int mode = 0;
+  bool enabled = false;
+  {
+    std::lock_guard<std::mutex> lock(sensor_state_mutex_);
+    gimbal_state = {current_yaw_, current_pitch_, bullet_speed_};
+    mode = current_mode_;
+    enabled = enable_;
+  }
+  pipeline::PipelineCycleInput input;
+  input.now_ns = cycle_time.nanoseconds();
+  input.detection_frames = pipeline_inbox_.takeAll();
+  input.external_targets = collectExternalTargets(input.now_ns);
+  input.gimbal = gimbal_state;
+  input.mode = mode;
+  input.enabled = enabled;
 
-  // Step 3: 从共享缓存构建目标上下文
-  std::string selected_id;
-  buildControlContextFromCache(context, selected_id);
+  // The 250 Hz timer is the only caller of the ROS-free end-to-end business cycle.
+  const auto result = auto_aim_pipeline_->runCycle(input);
+  gimbal_cmd_pub_->publish(
+    pipeline::ros_adapter::toRos(result.command, target_frame_));
 
-  // Step 4: 核心类统一生成命令（strategy + finalize + filter + audit）
-  const auto control_result =
-    gimbal_control_core_->compute(context, current_gimbal_strategy_name_, selected_id, true);
-  if (!control_result.strategy_found) {
-    RCLCPP_WARN_THROTTLE(get_logger(),
-                         *get_clock(),
-                         2000,
-                         "Gimbal strategy '%s' not found, fallback to idle cmd",
-                         current_gimbal_strategy_name_.c_str());
+  for (const auto & event : result.events) {
+    if (event.type == pipeline::PipelineEvent::Type::OUT_OF_ORDER_FRAME) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 1000, "Rejected out-of-order detector frame");
+    }
   }
 
-  // Step 5: 发布控制命令
-  gimbal_cmd_pub_->publish(control_result.cmd);
-
-  // Step 6: 发布调试信息（audit + marker）
+  publishPipelineTelemetry(result);
   if (debug_mode_ && debug_delay_audit_pub_) {
-    publishDelayAuditDebug(context, control_result.delay_audit, current_gimbal_strategy_name_);
+    publishDelayAuditDebug(last_control_context_, last_control_result_.delay_audit, "mpc");
   }
 
   if (debug_mode_ && debug_fire_advice_pub_) {
-    publishFireAdviceDebug(context, control_result.cmd, control_result.fire_advice_debug);
+    publishFireAdviceDebug(
+      last_control_context_, last_control_result_.cmd,
+      last_control_result_.fire_advice_debug);
   }
 
-  if (debug_mode_ && debug_armor_selection_pub_ && control_result.has_tracking) {
-    publishArmorSelectionDebug(context, current_gimbal_strategy_name_);
+  if (debug_mode_ && debug_armor_selection_pub_ && last_control_result_.has_tracking) {
+    publishArmorSelectionDebug(last_control_context_, "mpc");
   }
 
-  if (debug_mode_ && control_result.has_tracking) {
+  if (debug_mode_ && last_control_result_.has_tracking) {
     publishGimbalMarkers(
-      context.target_robot, control_result.cmd, control_result.fire_advice_debug);
-    publishFireProbabilityDebugImages(context.target_robot.header,
-                                      control_result.fire_advice_debug);
+      last_control_context_.target_robot, last_control_result_.cmd,
+      last_control_result_.fire_advice_debug);
+    publishFireProbabilityDebugImages(
+      last_control_context_.target_robot.header,
+      last_control_result_.fire_advice_debug);
   }
 }
 
@@ -444,26 +415,26 @@ void GimbalPipelineNode::setModeCallback(
   response->success = true;
   const int mode = request->mode;
   if (mode >= 0 && mode <= 5) {
-    enable_ = true;
-    refreshExternalTargetAllowlist(mode);
+    {
+      std::lock_guard<std::mutex> lock(sensor_state_mutex_);
+      enable_ = true;
+      current_mode_ = mode;
+    }
     if (buff_target_adapter_) {
       const bool enable_buff = external_targets_enable_ && external_targets_buff_enable_;
       buff_target_adapter_->setEnabled(enable_buff);
     }
     RCLCPP_INFO(get_logger(), "GimbalPipeline enabled (mode=%d)", mode);
   } else {
-    enable_ = false;
+    {
+      std::lock_guard<std::mutex> lock(sensor_state_mutex_);
+      enable_ = false;
+    }
     if (buff_target_adapter_) {
       buff_target_adapter_->setEnabled(false);
     }
     RCLCPP_INFO(get_logger(), "GimbalPipeline disabled (mode=%d)", mode);
   }
-}
-
-gimbal_controller::GimbalControlStrategy::SharedPtr GimbalPipelineNode::getGimbalStrategy(
-  const std::string &name) const {
-  auto it = gimbal_strategies_.find(name);
-  return (it != gimbal_strategies_.end()) ? it->second : nullptr;
 }
 
 }  // namespace fyt::auto_aim

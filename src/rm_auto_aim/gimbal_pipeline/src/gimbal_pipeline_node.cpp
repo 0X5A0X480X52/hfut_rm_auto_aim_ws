@@ -7,6 +7,7 @@
 // latency.
 
 #include "gimbal_pipeline/gimbal_pipeline_node.hpp"
+#include "gimbal_pipeline/adapters/pipeline_config_loader.hpp"
 
 #include <cv_bridge/cv_bridge.h>
 #include <tf2/LinearMath/Quaternion.h>
@@ -27,7 +28,6 @@
 #include "max_entropy_tracker/msg_converter.hpp"
 #include "max_entropy_tracker/trackers/norm4_baseline/tracker/norm4_tracker_baseline.hpp"
 #include "max_entropy_tracker/visualization.hpp"
-#include "rm_utils/logger/log.hpp"
 
 // Gimbal strategies
 #include "gimbal_controller/fire_advisor.hpp"
@@ -42,13 +42,6 @@ namespace fyt::auto_aim {
 GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
 : Node("gimbal_pipeline", options) {
   RCLCPP_INFO(get_logger(), "Initializing GimbalPipelineNode (unified pipeline)");
-
-  // Register loggers used by inlined target_selector code
-  try {
-    FYT_REGISTER_LOGGER("target_selector", "logs/gimbal_pipeline", INFO);
-  } catch (...) {
-    // Logger may already be registered
-  }
 
   // ── 1. Declare all parameters ──
   declareTrackerParameters();
@@ -71,6 +64,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   tracker_2d_image_debug_jpeg_quality_ = std::clamp(
     static_cast<int>(get_parameter("tracker.debug_2d_viz.jpeg_quality").as_int()), 20, 100);
   tracker_timeout_s_ = std::max(get_parameter("tracker_timeout").as_double(), 1e-3);
+  auto pipeline_config = pipeline::ros_adapter::PipelineConfigLoader::load(*this);
 
   tracker_config_ = UnifiedConfig::create_default();
   applyTrackerParamsToConfig();
@@ -144,13 +138,6 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
   external_targets_buff_enable_ = get_parameter("external_targets.buff.enable").as_bool();
   external_targets_buff_topic_ = get_parameter("external_targets.buff.topic").as_string();
   external_targets_buff_timeout_s_ = get_parameter("external_targets.buff.timeout_s").as_double();
-  allowed_ids_by_mode_.clear();
-  for (int mode = 0; mode <= 5; ++mode) {
-    const auto key = "external_targets.allowed_ids_by_mode.mode_" + std::to_string(mode);
-    const auto arr = get_parameter(key).as_string_array();
-    allowed_ids_by_mode_[mode] = std::unordered_set<std::string>(arr.begin(), arr.end());
-  }
-  refreshExternalTargetAllowlist(current_mode_);
 
   if (external_targets_enable_ && external_targets_buff_enable_) {
     adapters::BuffTargetAdapter::Config cfg;
@@ -178,28 +165,14 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
 
   RCLCPP_INFO(get_logger(), "Tracker initialized (predict_rate=%.1f Hz)", predict_rate_);
 
-  // ── 3. Target selector ──
-  selector_strategy_name_ = "priority_list";
-  selection_config_.reference_yaw = get_parameter("selector.reference_yaw").as_double();
-  selection_config_.max_yaw_deviation = get_parameter("selector.max_yaw_deviation").as_double();
-  selection_config_.max_distance = get_parameter("selector.max_distance").as_double();
-  selection_config_.min_confidence = get_parameter("selector.min_confidence").as_double();
-  selection_config_.priority_robot_ids =
-    get_parameter("selector.priority_robot_ids").as_string_array();
-  initSelectionStrategy();
-
-  RCLCPP_INFO(
-    get_logger(), "[GimbalPipelineNode] selector_strategy: %s", selector_strategy_name_.c_str());
-
   // ── 4. Gimbal controller ──
   bullet_speed_ = get_parameter("controller.bullet_speed").as_double();
   control_rate_ = get_parameter("controller.control_rate").as_double();
-  current_gimbal_strategy_name_ = "mpc";
 
   // TF2 buffer was already created above (shared with TFHandler & MessageFilter).
 
   initGimbalComponents();
-  initGimbalStrategies();
+  initGimbalControl();
 
   // Configure solver parameters
   double shooting_range_w = get_parameter("controller.solver.shooting_range_width").as_double();
@@ -600,11 +573,18 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
 
   RCLCPP_INFO(get_logger(),
               "GimbalPipelineNode initialized: target_frame=%s, control_rate=%.0f Hz, "
-              "selector_strategy=%s, gimbal_strategy=%s, ballistic_mode=local",
+              "selector=priority_list, controller=mpc, ballistic_mode=local",
               target_frame_.c_str(),
-              control_rate_,
-              selector_strategy_name_.c_str(),
-              current_gimbal_strategy_name_.c_str());
+              control_rate_);
+
+  auto_aim_pipeline_ = std::make_unique<pipeline::AutoAimPipeline>(
+    [this](const pipeline::ObservationFrame & frame) {
+      return processObservationFrame(frame);
+    },
+    std::move(pipeline_config),
+    [this](const pipeline::ControlRequest & request) {
+      return computeGimbalCommand(request);
+    });
 
   // ── 5. ROS2 external interfaces ──
   rclcpp::QoS sensor_qos(10);
@@ -721,7 +701,7 @@ GimbalPipelineNode::GimbalPipelineNode(const rclcpp::NodeOptions &options)
               "control_rate=%.0f Hz, strategy=%s, ballistic=local",
               target_frame_.c_str(),
               control_rate_,
-              current_gimbal_strategy_name_.c_str());
+              "mpc");
 }
 
 /* ================================================================ */

@@ -19,12 +19,15 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <iostream>
 #include <limits>
 #include <string>
 #include <utility>
 
 #include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
+#include "gimbal_controller/armor_position_calculator.hpp"
+#include "gimbal_controller/armor_selector.hpp"
+#include "gimbal_controller/fire_advisor.hpp"
+#include "gimbal_controller/local_trajectory_compensator.hpp"
 
 namespace gimbal_controller
 {
@@ -79,6 +82,40 @@ MpcControlStrategy::MpcControlStrategy()
 : dynamics_model_(0.01)
 {
   configureRmsWindows();
+}
+
+void MpcControlStrategy::setComponents(
+  std::shared_ptr<ArmorPositionCalculator> position_calculator,
+  std::shared_ptr<ArmorSelector> armor_selector,
+  std::shared_ptr<LocalTrajectoryCompensator> local_compensator,
+  std::shared_ptr<FireAdvisor> fire_advisor)
+{
+  position_calculator_ = std::move(position_calculator);
+  armor_selector_ = std::move(armor_selector);
+  local_compensator_ = std::move(local_compensator);
+  fire_advisor_ = std::move(fire_advisor);
+}
+
+rm_interfaces::msg::GimbalCmd MpcControlStrategy::createIdleCmd() const
+{
+  rm_interfaces::msg::GimbalCmd command;
+  command.mode = rm_interfaces::msg::GimbalCmd::MODE_NO_VALID_MEASUREMENT;
+  command.fire_advice = false;
+  return command;
+}
+
+void MpcControlStrategy::markDelayAuditInvalid(
+  const std::string & strategy_name, bool tracking)
+{
+  last_delay_audit_ = DelayAuditSnapshot{};
+  last_delay_audit_.strategy_name = strategy_name;
+  last_delay_audit_.tracking = tracking;
+}
+
+void MpcControlStrategy::markDelayAuditValid(const DelayAuditSnapshot & snapshot)
+{
+  last_delay_audit_ = snapshot;
+  last_delay_audit_.valid = true;
 }
 
 void MpcControlStrategy::setMpcParameters(
@@ -183,11 +220,6 @@ void MpcControlStrategy::setNumericalNormalizationParameters(
     normalization_mode_ = NormalizationMode::TYPICAL;
   } else {
     normalization_mode_ = NormalizationMode::RMS;
-    if (mode_lower != "rms") {
-      RCLCPP_WARN(
-        rclcpp::get_logger("MpcControlStrategy"),
-        "Unknown normalization mode '%s', fallback to 'rms'.", mode.c_str());
-    }
   }
 
   state_typical_ = state_typical.cwiseAbs().cwiseMax(Eigen::Vector4d::Constant(1e-12));
@@ -216,8 +248,8 @@ void MpcControlStrategy::setDiagnosticsParameters(
   bool low_cost_always,
   bool high_cost_enable,
   int high_cost_sample_every,
-  int log_every,
-  bool log_on_failure,
+  int /*log_every*/,
+  bool sample_on_failure,
   double active_tol,
   double rank_tol_rel)
 {
@@ -225,8 +257,7 @@ void MpcControlStrategy::setDiagnosticsParameters(
   diagnostics_low_cost_always_ = low_cost_always;
   diagnostics_high_cost_enable_ = high_cost_enable;
   diagnostics_high_cost_sample_every_ = std::max(1, high_cost_sample_every);
-  diagnostics_log_every_ = std::max(1, log_every);
-  diagnostics_log_on_failure_ = log_on_failure;
+  diagnostics_sample_on_failure_ = sample_on_failure;
   diagnostics_active_tol_ = std::max(active_tol, 1e-9);
   diagnostics_rank_tol_rel_ = std::max(rank_tol_rel, 1e-12);
 }
@@ -449,7 +480,7 @@ void MpcControlStrategy::applyHessianRegularization(Eigen::MatrixXd & H, double 
   H = 0.5 * (H + H.transpose());
 }
 
-void MpcControlStrategy::fillAndLogDiagnostics(
+void MpcControlStrategy::fillDiagnostics(
   bool maneuver_path,
   const Eigen::MatrixXd & H,
   const Eigen::MatrixXd & Q_eff,
@@ -500,7 +531,8 @@ void MpcControlStrategy::fillAndLogDiagnostics(
   const bool high_cost_by_sample =
     diagnostics_high_cost_enable_ &&
     (diagnostics_cycle_ % static_cast<uint64_t>(diagnostics_high_cost_sample_every_) == 0);
-  const bool should_compute_high = high_cost_by_sample || (diagnostics_log_on_failure_ && !result.success);
+  const bool should_compute_high =
+    high_cost_by_sample || (diagnostics_sample_on_failure_ && !result.success);
   if (should_compute_high) {
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig_solver(H);
     if (eig_solver.info() == Eigen::Success) {
@@ -522,46 +554,6 @@ void MpcControlStrategy::fillAndLogDiagnostics(
     }
   }
 
-  const bool should_log =
-    (diagnostics_cycle_ % static_cast<uint64_t>(diagnostics_log_every_) == 0) ||
-    (diagnostics_log_on_failure_ && !result.success);
-  if (!should_log) {
-    return;
-  }
-
-  auto logger = rclcpp::get_logger("MpcControlStrategy");
-  if (last_diagnostics_.high_cost_valid) {
-    RCLCPP_INFO(
-      logger,
-      "[MPC-NUM] cyc=%llu path=%s ok=%d it=%d act=%d(cost=%.3e) trQ/R=%.3e trS/R=%.3e BU/U=%.3e reg=%.3e cond=%.3e lmin=%.3e rank=%d",
-      static_cast<unsigned long long>(last_diagnostics_.cycle),
-      last_diagnostics_.maneuver_path ? "maneuver" : "normal",
-      last_diagnostics_.qp_success ? 1 : 0,
-      last_diagnostics_.qp_iterations,
-      last_diagnostics_.active_set_size,
-      last_diagnostics_.qp_cost,
-      last_diagnostics_.trace_q_over_r,
-      last_diagnostics_.trace_s_over_r,
-      last_diagnostics_.bu_over_u,
-      last_diagnostics_.regularization_eps,
-      last_diagnostics_.cond_h,
-      last_diagnostics_.lambda_min_h,
-      last_diagnostics_.rank_h);
-  } else {
-    RCLCPP_INFO(
-      logger,
-      "[MPC-NUM] cyc=%llu path=%s ok=%d it=%d act=%d cost=%.3e trQ/R=%.3e trS/R=%.3e BU/U=%.3e reg=%.3e",
-      static_cast<unsigned long long>(last_diagnostics_.cycle),
-      last_diagnostics_.maneuver_path ? "maneuver" : "normal",
-      last_diagnostics_.qp_success ? 1 : 0,
-      last_diagnostics_.qp_iterations,
-      last_diagnostics_.active_set_size,
-      last_diagnostics_.qp_cost,
-      last_diagnostics_.trace_q_over_r,
-      last_diagnostics_.trace_s_over_r,
-      last_diagnostics_.bu_over_u,
-      last_diagnostics_.regularization_eps);
-  }
 }
 
 void MpcControlStrategy::rebuildMatrices()
@@ -602,7 +594,7 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   //           << context.target_robot.yaw_velocity << " rad/s." << std::endl;
 
   if (!context.is_tracking && !context.is_temp_lost) {
-    markDelayAuditInvalid(getName(), false);
+    markDelayAuditInvalid("mpc", false);
     has_prev_state_ = false;
     U_prev_.resize(0);
     // 机动自适应状态重置：防止旧跟踪历史污染新跟踪
@@ -657,16 +649,8 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     uses_delayed_b_model_,
     allow_muzzle_compensation);
 
-  if (mpc_delay.double_compensation_risk && !warned_double_compensation_) {
-    RCLCPP_WARN(
-      rclcpp::get_logger("MpcControlStrategy"),
-      "Detected potential delay double-compensation: delayed B is active, so fire control delay "
-      "compensation has been disabled.");
-    warned_double_compensation_ = true;
-  }
-
   DelayAuditSnapshot audit;
-  audit.strategy_name = getName();
+  audit.strategy_name = "mpc";
   audit.tracking = context.is_tracking;
   audit.processing_delay_s = mpc_delay.processing_delay_s;
   audit.prediction_extra_s = std::max(prediction_delay_s_, 0.0);
@@ -815,11 +799,10 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
       }
     }
 
-    fillAndLogDiagnostics(
+    fillDiagnostics(
       true, H, Q_eff, R_eff, S_eff, lb, ub, result, applied_regularization);
 
     if (!result.success) {
-      std::cout << "MPC QP solve failed (maneuver-adapt), fallback to direct aim.  " << std::endl;
       return fallbackDirectAim(context, X_ref);
     }
 
@@ -920,12 +903,11 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
     }
   }
 
-  fillAndLogDiagnostics(
+  fillDiagnostics(
     false, H, Q_eff, R_eff, S_eff, lb, ub, result, applied_regularization);
 
   if (!result.success) {
     // QP 求解失败: 回退到弹道直瞄
-    std::cout << "MPC QP solve failed, fallback to direct aim.  " << std::endl;
     return fallbackDirectAim(context, X_ref);
   }
 
@@ -1040,8 +1022,6 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::fallbackDirectAim(
   const GimbalControlContext & context,
   const Eigen::VectorXd & X_ref)
 {
-  std::cout << "Falling back to direct aim with reference yaw=" << X_ref(0) << " rad, pitch=" << X_ref(1)
-            << " rad." << std::endl;
   const auto target_robot =
     fyt::auto_aim::robot_description::TrackedRobotUsage::normalizeState(context.target_robot);
 

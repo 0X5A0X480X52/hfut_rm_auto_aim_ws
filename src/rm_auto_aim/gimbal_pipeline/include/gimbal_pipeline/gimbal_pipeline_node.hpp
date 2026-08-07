@@ -10,12 +10,9 @@
 #include <memory>
 #include <mutex>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include <rclcpp/rclcpp.hpp>
-#include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
 #include <sensor_msgs/msg/image.hpp>
@@ -48,13 +45,11 @@
 #include "max_entropy_tracker/tracker_manager.hpp"
 #include "max_entropy_tracker/utils/output_smoother.hpp"
 
-// ─── target_selector internals ────────────────────────────────
-#include "target_selector/selection_strategy.hpp"
-#include "target_selector/strategies/priority_list_strategy.hpp"
-
 // ─── prediction logger ────────────────────────────────────────
 #include "gimbal_pipeline/prediction_logger.hpp"
 #include "gimbal_pipeline/adapters/buff_target_adapter.hpp"
+#include "gimbal_pipeline/core/auto_aim_pipeline.hpp"
+#include "gimbal_pipeline/core/pipeline_inbox.hpp"
 #include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
 
 // ─── gimbal_controller internals ──────────────────────────────
@@ -63,7 +58,6 @@
 #include "gimbal_controller/fire_advice_engine.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_controller/gimbal_control_core.hpp"
-#include "gimbal_controller/gimbal_control_strategy.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
 
 // ─── heartbeat 
@@ -91,15 +85,14 @@ class GimbalPipelineNode : public rclcpp::Node {
   /*  Tracker logic (from MaxEntropyTrackerNode)                      */
   /* ================================================================ */
   void armorsCallback(const rm_interfaces::msg::Armors::SharedPtr msg);
+  pipeline::RobotTrackSet processObservationFrame(
+      const pipeline::ObservationFrame &frame);
+  pipeline::RobotTrackSet collectExternalTargets(pipeline::TimestampNs now_ns);
+  pipeline::GimbalCommand computeGimbalCommand(
+      const pipeline::ControlRequest &request);
+  void publishPipelineTelemetry(const pipeline::PipelineCycleResult &result);
   rm_interfaces::msg::TrackedRobots buildTrackedRobotsMsg(
       const std_msgs::msg::Header &header);
-  void mergeExternalTargets(
-      rm_interfaces::msg::TrackedRobots & tracked_msg,
-      const std_msgs::msg::Header &header);
-  void refreshExternalTargetAllowlist(int mode);
-  rm_interfaces::msg::Target buildTargetMessage(
-      const std_msgs::msg::Header &header, const std::string &robot_id,
-      BaseTracker &tracker, const SmoothedOutput *smoothed = nullptr);
   rm_interfaces::msg::TrackedRobot buildTrackedRobotMessage(
       const std_msgs::msg::Header &header, const std::string &robot_id,
       BaseTracker &tracker, const SmoothedOutput *smoothed = nullptr,
@@ -108,21 +101,14 @@ class GimbalPipelineNode : public rclcpp::Node {
   /* ================================================================ */
   /*  Target selection logic (from TargetSelectorNode)                */
   /* ================================================================ */
-  void initSelectionStrategy();
-  SelectionResult selectTargetInternal(
-      const rm_interfaces::msg::TrackedRobots &robots);
-
   /* ================================================================ */
   /*  Gimbal controller logic (from GimbalControllerNode)             */
   /* ================================================================ */
   void initGimbalComponents();
-  void initGimbalStrategies();
+  void initGimbalControl();
   void jointStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg);
   void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg);
   void updateGimbalState();
-  void buildControlContextFromCache(
-      gimbal_controller::GimbalControlContext &context,
-      std::string &selected_id);
   void publishDelayAuditDebug(
       const gimbal_controller::GimbalControlContext &context,
       const gimbal_controller::DelayAuditSnapshot &audit,
@@ -135,15 +121,9 @@ class GimbalPipelineNode : public rclcpp::Node {
       const gimbal_controller::GimbalControlContext &context,
       const std::string &strategy_name);
   void timerCallback();
-  void applyPendingRuntimeUpdates();
   void setModeCallback(
       const std::shared_ptr<rm_interfaces::srv::SetMode::Request> request,
       std::shared_ptr<rm_interfaces::srv::SetMode::Response> response);
-  rcl_interfaces::msg::SetParametersResult onSetParameters(
-      const std::vector<rclcpp::Parameter> &params);
-  bool isValidGimbalStrategyName(const std::string &name) const;
-  gimbal_controller::GimbalControlStrategy::SharedPtr getGimbalStrategy(
-      const std::string &name) const;
 
   /* ================================================================ */
   /*  Debug visualization                                             */
@@ -187,24 +167,16 @@ class GimbalPipelineNode : public rclcpp::Node {
   std::unique_ptr<robot_description::RobotDescriptionFacade>
       robot_description_facade_;
   std::unique_ptr<adapters::BuffTargetAdapter> buff_target_adapter_;
+  pipeline::PipelineInbox pipeline_inbox_{10};
+  std::unique_ptr<pipeline::AutoAimPipeline> auto_aim_pipeline_;
 
   bool external_targets_enable_{false};
   bool external_targets_buff_enable_{false};
   std::string external_targets_buff_topic_{"auto_buff/tracked_robot"};
   double external_targets_buff_timeout_s_{0.3};
   int current_mode_{0};
-  std::unordered_map<int, std::unordered_set<std::string>> allowed_ids_by_mode_;
-  std::unordered_set<std::string> active_external_allowed_ids_;
 
   SmootherConfig smoother_config_;
-
-  /* ================================================================ */
-  /*  Target selector state (from TargetSelectorNode)                 */
-  /* ================================================================ */
-  SelectionStrategyPtr selection_strategy_;
-  SelectionConfig selection_config_;
-  std::string selector_strategy_name_;
-  std::string current_target_id_;
 
   /* ================================================================ */
   /*  Gimbal controller state (from GimbalControllerNode)             */
@@ -215,10 +187,6 @@ class GimbalPipelineNode : public rclcpp::Node {
   std::shared_ptr<gimbal_controller::FireAdvisor> fire_advisor_;
     std::shared_ptr<gimbal_controller::FireAdviceEngine> fire_advice_engine_;
     std::shared_ptr<gimbal_controller::GimbalControlCore> gimbal_control_core_;
-  std::unordered_map<std::string,
-                     gimbal_controller::GimbalControlStrategy::SharedPtr>
-      gimbal_strategies_;
-  std::string current_gimbal_strategy_name_{"current"};
 
   double current_yaw_{0.0};
   double current_pitch_{0.0};
@@ -239,14 +207,10 @@ class GimbalPipelineNode : public rclcpp::Node {
     bool virtual_auto_switch_enable_{false};
     double mpc_dt_debug_{0.01};
 
-  /* ================================================================ */
-  /*  Shared pipeline state (protected by mutex)                      */
-  /* ================================================================ */
-  std::mutex pipeline_mutex_;
-  rm_interfaces::msg::TrackedRobots::SharedPtr latest_tracked_robots_;
-  std::string latest_selected_target_id_;
-  double latest_selected_confidence_{0.0};
-  rclcpp::Time latest_update_time_{0, 0, RCL_ROS_TIME};  // local clock when data was cached
+  gimbal_controller::GimbalControlContext last_control_context_;
+  gimbal_controller::GimbalControlCoreOutput last_control_result_;
+  std::mutex sensor_state_mutex_;
+  std::mutex control_core_mutex_;
 
   /* ================================================================ */
   /*  ROS2 external interfaces (kept)                                 */
@@ -314,7 +278,6 @@ class GimbalPipelineNode : public rclcpp::Node {
   visualization_msgs::msg::Marker target_velocity_marker_;
   visualization_msgs::msg::Marker armors_marker_;
   visualization_msgs::msg::Marker selection_marker_;
-  visualization_msgs::msg::Marker predicted_marker_;
   visualization_msgs::msg::Marker trajectory_marker_;
     visualization_msgs::msg::Marker radial_allowed_arc_marker_;
     visualization_msgs::msg::Marker radial_allowed_bounds_marker_;
