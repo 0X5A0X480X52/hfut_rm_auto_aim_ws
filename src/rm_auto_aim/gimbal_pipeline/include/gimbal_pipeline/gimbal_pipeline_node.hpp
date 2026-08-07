@@ -82,6 +82,31 @@ class GimbalPipelineNode : public rclcpp::Node {
   void applyTrackerParamsToConfig();
 
   /* ================================================================ */
+  /*  Construction helpers — split the ctor into per-category steps   */
+  /*  so that the constructor stays short and readable.               */
+  /* ================================================================ */
+  /// Reads common / tracker params (frames, predict rate, debug flags, 2D viz) into members.
+  void loadCommonParameters();
+  /// Builds UnifiedConfig from ROS params (tracker_config_ = default + applyTrackerParamsToConfig).
+  void initTrackerConfig();
+  /// Creates the shared TF2 buffer + listener, TFHandler, and TrackerManager.
+  void initTf2AndTracker();
+  /// Creates RobotDescriptionFacade and applies projection-mode / full-SE3 policy.
+  void initRobotDescription();
+  /// Reads external-target params and (optionally) creates the BuffTargetAdapter.
+  void initExternalTargets();
+  /// Configures ArmorSelector (solver/radial/virtual-pose params, selection method).
+  void configureArmorSelector();
+  /// Configures FireAdvisor / FireAdviceEngine / GimbalControlCore / LocalTrajectoryCompensator.
+  void configureFireAdvisor();
+  /// Configures the GimbalCmd output protection filter on GimbalControlCore.
+  void configureOutputFilter();
+  /// Sets up subscriptions, publishers, service, and the control timer.
+  void initRosInterfaces();
+  /// Optionally creates the PredictionLogger.
+  void initPredictionLogger();
+
+  /* ================================================================ */
   /*  Tracker logic (from MaxEntropyTrackerNode)                      */
   /* ================================================================ */
   void armorsCallback(const rm_interfaces::msg::Armors::SharedPtr msg);
