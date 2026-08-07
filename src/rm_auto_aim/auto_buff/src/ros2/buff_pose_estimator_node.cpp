@@ -1,62 +1,42 @@
 #include <algorithm>
-#include <cmath>
-#include <limits>
 #include <array>
-#include <cstdint>
 #include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "configs.hpp"
-#include "targets.hpp"
-#include "types.hpp"
-#include "opencv2/calib3d.hpp"
-#include "opencv2/core.hpp"
+#include "auto_buff/transform_utils.hpp"
 #include "geometry_msgs/msg/point_stamped.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
+#include "opencv2/calib3d.hpp"
+#include "opencv2/core.hpp"
 #include "rclcpp/rclcpp.hpp"
-#include "rm_interfaces/msg/rune_target_array.hpp"
 #include "rm_interfaces/msg/rune_target.hpp"
+#include "rm_interfaces/msg/rune_target_array.hpp"
 #include "rm_interfaces/msg/serial_receive_data.hpp"
 #include "rm_interfaces/msg/tracked_robot.hpp"
 #include "rm_interfaces/srv/set_mode.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
-#include "visualization_msgs/msg/marker_array.hpp"
-#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include "tf2/LinearMath/Quaternion.h"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
-#include <Eigen/Geometry>
+#include "visualization_msgs/msg/marker_array.hpp"
 
-namespace fyt::auto_aim::auto_buff
-{
+namespace fyt::auto_aim::auto_buff {
 
-namespace
-{
-Eigen::Isometry3d transformToIsometry(const geometry_msgs::msg::Transform & t)
-{
-  Eigen::Isometry3d iso = Eigen::Isometry3d::Identity();
-  iso.translation() = Eigen::Vector3d(t.translation.x, t.translation.y, t.translation.z);
-  Eigen::Quaterniond q(t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z);
-  iso.linear() = q.toRotationMatrix();
-  return iso;
-}
-}  // namespace
-
-class BuffPoseEstimatorNode : public rclcpp::Node
-{
+class BuffPoseEstimatorNode : public rclcpp::Node {
 public:
   BuffPoseEstimatorNode()
-  : Node("buff_pose_estimator_node"),
-    tf_buffer_(this->get_clock()),
-    tf_listener_(tf_buffer_)
-  {
-    input_topic_ = declare_parameter<std::string>("input_topic", "/rune_target");
-    input_array_topic_ = declare_parameter<std::string>("input_array_topic", "/rune_targets");
-    output_topic_ = declare_parameter<std::string>("output_topic", "/auto_buff/tracked_robot");
-    camera_info_topic_ = declare_parameter<std::string>("camera_info_topic", "/camera_info");
-    serial_state_topic_ = declare_parameter<std::string>("serial_state_topic", "/serial_receive_data");
+  : Node("buff_pose_estimator_node"), tf_buffer_(this->get_clock()), tf_listener_(tf_buffer_) {
+    input_topic_ = declare_parameter<std::string>("input_topic", "rune_target");
+    input_array_topic_ = declare_parameter<std::string>("input_array_topic", "rune_targets");
+    output_topic_ = declare_parameter<std::string>("output_topic", "auto_buff/tracked_robot");
+    camera_info_topic_ = declare_parameter<std::string>("camera_info_topic", "camera_info");
+    serial_state_topic_ = declare_parameter<std::string>("serial_state_topic", "serial/receive");
     target_frame_ = declare_parameter<std::string>("target_frame", "odom");
     big_buff_id_ = declare_parameter<std::string>("big_buff_id", "big_buff");
     small_buff_id_ = declare_parameter<std::string>("small_buff_id", "small_buff");
@@ -69,101 +49,8 @@ public:
     small_rune_radius_m_ = declare_parameter<double>("small_rune_radius_m", rune_radius_m_);
     buff_blade_count_ = std::max<int>(1, declare_parameter<int>("buff_blade_count", 5));
     debug_markers_enable_ = declare_parameter<bool>("debug_markers_enable", false);
-    marker_topic_ = declare_parameter<std::string>("marker_topic", "/auto_buff/debug/markers");
+    marker_topic_ = declare_parameter<std::string>("marker_topic", "auto_buff/debug/markers");
     marker_publish_rate_hz_ = declare_parameter<double>("marker_publish_rate_hz", 10.0);
-    use_internal_tracker_bridge_ = declare_parameter<bool>("use_internal_tracker_bridge", true);
-    enable_rune_fallback_ = declare_parameter<bool>("enable_rune_fallback", true);
-    enable_small_buff_ = declare_parameter<bool>("enable_small_buff", true);
-    enable_big_buff_ = declare_parameter<bool>("enable_big_buff", true);
-    force_task_mode_ = declare_parameter<int>("force_task_mode", 0);
-
-    small_buff_config_.match_conf.max_match_distance_m =
-      declare_parameter<double>("small.match.max_match_distance_m", 1.0);
-    small_buff_config_.match_conf.max_match_roll_diff_degree =
-      declare_parameter<double>("small.match.max_match_roll_diff_degree", 30.0);
-    small_buff_config_.blade_conf.pixel_error.x =
-      declare_parameter<double>("small.blade.pixel_error_x", 5.0);
-    small_buff_config_.blade_conf.pixel_error.y =
-      declare_parameter<double>("small.blade.pixel_error_y", 5.0);
-    small_buff_config_.blade_conf.position_noise_m.x =
-      declare_parameter<double>("small.blade.position_noise_x", 0.03);
-    small_buff_config_.blade_conf.position_noise_m.y =
-      declare_parameter<double>("small.blade.position_noise_y", 0.03);
-    small_buff_config_.blade_conf.position_noise_m.z =
-      declare_parameter<double>("small.blade.position_noise_z", 0.03);
-    small_buff_config_.blade_conf.roll_noise_degree =
-      declare_parameter<double>("small.blade.roll_noise_degree", 2.0);
-    small_buff_config_.center_conf.position_consistency_noise_m.x =
-      declare_parameter<double>("small.center.position_consistency_noise_x", 0.01);
-    small_buff_config_.center_conf.position_consistency_noise_m.y =
-      declare_parameter<double>("small.center.position_consistency_noise_y", 0.01);
-    small_buff_config_.center_conf.position_consistency_noise_m.z =
-      declare_parameter<double>("small.center.position_consistency_noise_z", 0.01);
-    small_buff_config_.center_conf.roll_noise_degree =
-      declare_parameter<double>("small.center.roll_noise_degree", 3.0);
-    small_buff_config_.center_conf.vroll_noise_rad =
-      declare_parameter<double>("small.center.vroll_noise_rad", 0.10);
-    small_buff_config_.center_conf.position_prior_noise_m.x =
-      declare_parameter<double>("small.center.position_prior_noise_x", 0.10);
-    small_buff_config_.center_conf.position_prior_noise_m.y =
-      declare_parameter<double>("small.center.position_prior_noise_y", 0.10);
-    small_buff_config_.center_conf.position_prior_noise_m.z =
-      declare_parameter<double>("small.center.position_prior_noise_z", 0.10);
-    small_buff_config_.center_conf.roll_prior_noise_degree =
-      declare_parameter<double>("small.center.roll_prior_noise_degree", 30.0);
-    small_buff_config_.center_conf.vroll_prior_noise_rad =
-      declare_parameter<double>("small.center.vroll_prior_noise_rad", 6.0);
-    small_buff_config_.lost_threshold_sec =
-      declare_parameter<double>("small.lost_threshold_sec", 0.8);
-
-    big_buff_config_.fitter_conf.queue_upper_limit =
-      declare_parameter<int>("big.fitter.queue_upper_limit", 200);
-    big_buff_config_.fitter_conf.queue_lower_limit =
-      declare_parameter<int>("big.fitter.queue_lower_limit", 100);
-    big_buff_config_.fitter_conf.param_lower_bound_scale =
-      declare_parameter<double>("big.fitter.param_lower_bound_scale", 1.0);
-    big_buff_config_.fitter_conf.param_upper_bound_scale =
-      declare_parameter<double>("big.fitter.param_upper_bound_scale", 1.0);
-    big_buff_config_.fitter_conf.curve_fitting_interval_time_ms =
-      declare_parameter<int>("big.fitter.curve_fitting_interval_time_ms", 20);
-    big_buff_config_.match_conf.max_match_distance_m =
-      declare_parameter<double>("big.match.max_match_distance_m", 1.0);
-    big_buff_config_.match_conf.max_match_roll_diff_degree =
-      declare_parameter<double>("big.match.max_match_roll_diff_degree", 30.0);
-    big_buff_config_.blade_conf.pixel_error.x =
-      declare_parameter<double>("big.blade.pixel_error_x", 5.0);
-    big_buff_config_.blade_conf.pixel_error.y =
-      declare_parameter<double>("big.blade.pixel_error_y", 5.0);
-    big_buff_config_.blade_conf.position_noise_m.x =
-      declare_parameter<double>("big.blade.position_noise_x", 0.03);
-    big_buff_config_.blade_conf.position_noise_m.y =
-      declare_parameter<double>("big.blade.position_noise_y", 0.03);
-    big_buff_config_.blade_conf.position_noise_m.z =
-      declare_parameter<double>("big.blade.position_noise_z", 0.03);
-    big_buff_config_.blade_conf.roll_noise_degree =
-      declare_parameter<double>("big.blade.roll_noise_degree", 2.0);
-    big_buff_config_.center_conf.position_consistency_noise_m.x =
-      declare_parameter<double>("big.center.position_consistency_noise_x", 0.01);
-    big_buff_config_.center_conf.position_consistency_noise_m.y =
-      declare_parameter<double>("big.center.position_consistency_noise_y", 0.01);
-    big_buff_config_.center_conf.position_consistency_noise_m.z =
-      declare_parameter<double>("big.center.position_consistency_noise_z", 0.01);
-    big_buff_config_.center_conf.roll_noise_degree =
-      declare_parameter<double>("big.center.roll_noise_degree", 3.0);
-    big_buff_config_.center_conf.vroll_noise_rad =
-      declare_parameter<double>("big.center.vroll_noise_rad", 0.10);
-    big_buff_config_.center_conf.position_prior_noise_m.x =
-      declare_parameter<double>("big.center.position_prior_noise_x", 0.10);
-    big_buff_config_.center_conf.position_prior_noise_m.y =
-      declare_parameter<double>("big.center.position_prior_noise_y", 0.10);
-    big_buff_config_.center_conf.position_prior_noise_m.z =
-      declare_parameter<double>("big.center.position_prior_noise_z", 0.10);
-    big_buff_config_.center_conf.roll_prior_noise_degree =
-      declare_parameter<double>("big.center.roll_prior_noise_degree", 30.0);
-    big_buff_config_.center_conf.vroll_prior_noise_rad =
-      declare_parameter<double>("big.center.vroll_prior_noise_rad", 6.0);
-    big_buff_config_.lost_threshold_sec =
-      declare_parameter<double>("big.lost_threshold_sec", 1.0);
 
     object_points_ = {
       cv::Point3f(0.0f, 0.0f, 0.0f),
@@ -174,32 +61,37 @@ public:
     };
     hit_point_obj_ = cv::Point3f(0.0f, 0.0f, static_cast<float>(rune_radius_m_));
 
-    pub_ = create_publisher<rm_interfaces::msg::TrackedRobot>(output_topic_, rclcpp::SensorDataQoS());
-    marker_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
-      marker_topic_, rclcpp::SensorDataQoS());
+    pub_ =
+      create_publisher<rm_interfaces::msg::TrackedRobot>(output_topic_, rclcpp::SensorDataQoS());
+    marker_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(marker_topic_,
+                                                                         rclcpp::SensorDataQoS());
     marker_timer_ = create_wall_timer(
       std::chrono::milliseconds(static_cast<int>(1000.0 / std::max(1.0, marker_publish_rate_hz_))),
       std::bind(&BuffPoseEstimatorNode::onMarkerTimer, this));
     sub_ = create_subscription<rm_interfaces::msg::RuneTarget>(
-      input_topic_, rclcpp::SensorDataQoS(),
+      input_topic_,
+      rclcpp::SensorDataQoS(),
       std::bind(&BuffPoseEstimatorNode::onRuneTarget, this, std::placeholders::_1));
     sub_array_ = create_subscription<rm_interfaces::msg::RuneTargetArray>(
-      input_array_topic_, rclcpp::SensorDataQoS(),
+      input_array_topic_,
+      rclcpp::SensorDataQoS(),
       std::bind(&BuffPoseEstimatorNode::onRuneTargets, this, std::placeholders::_1));
     camera_info_sub_ = create_subscription<sensor_msgs::msg::CameraInfo>(
-      camera_info_topic_, rclcpp::SensorDataQoS(),
+      camera_info_topic_,
+      rclcpp::SensorDataQoS(),
       std::bind(&BuffPoseEstimatorNode::onCameraInfo, this, std::placeholders::_1));
     serial_state_sub_ = create_subscription<rm_interfaces::msg::SerialReceiveData>(
-      serial_state_topic_, rclcpp::SensorDataQoS(),
+      serial_state_topic_,
+      rclcpp::SensorDataQoS(),
       std::bind(&BuffPoseEstimatorNode::onSerialState, this, std::placeholders::_1));
     set_mode_srv_ = create_service<rm_interfaces::srv::SetMode>(
       "~/set_mode",
-      std::bind(&BuffPoseEstimatorNode::onSetMode, this, std::placeholders::_1, std::placeholders::_2));
+      std::bind(
+        &BuffPoseEstimatorNode::onSetMode, this, std::placeholders::_1, std::placeholders::_2));
   }
 
 private:
-  void onCameraInfo(const sensor_msgs::msg::CameraInfo::SharedPtr msg)
-  {
+  void onCameraInfo(const sensor_msgs::msg::CameraInfo::SharedPtr msg) {
     if (!msg || msg->k.size() != 9 || msg->d.empty()) {
       return;
     }
@@ -214,27 +106,16 @@ private:
     cam_matrix_ = K;
     dist_coeffs_ = D;
     has_camera_info_ = true;
-    if (!small_buff_target_ && enable_small_buff_) {
-      small_buff_target_ = std::make_unique<::auto_buff::SmallBuffTarget>(
-        get_logger(), small_buff_config_, cam_matrix_, dist_coeffs_);
-    }
-    if (!big_buff_target_ && enable_big_buff_) {
-      big_buff_target_ = std::make_unique<::auto_buff::BigBuffTarget>(
-        get_logger(), big_buff_config_, cam_matrix_, dist_coeffs_);
-    }
   }
 
-  void onSerialState(const rm_interfaces::msg::SerialReceiveData::SharedPtr msg)
-  {
+  void onSerialState(const rm_interfaces::msg::SerialReceiveData::SharedPtr msg) {
     if (msg) {
       last_mode_ = static_cast<int>(msg->mode);
     }
   }
 
-  void onSetMode(
-    const std::shared_ptr<rm_interfaces::srv::SetMode::Request> request,
-    std::shared_ptr<rm_interfaces::srv::SetMode::Response> response)
-  {
+  void onSetMode(const std::shared_ptr<rm_interfaces::srv::SetMode::Request> request,
+                 std::shared_ptr<rm_interfaces::srv::SetMode::Response> response) {
     response->success = true;
     if (!request) {
       response->success = false;
@@ -245,36 +126,39 @@ private:
     response->message = "mode cached for rune id resolution";
   }
 
-  bool solvePnPInCamera(
-    const rm_interfaces::msg::RuneTarget & msg,
-    cv::Point3d & hit_cam) const
-  {
+  bool solvePnPInCamera(const rm_interfaces::msg::RuneTarget &msg, cv::Point3d &hit_cam) const {
     if (!has_camera_info_ || msg.pts.size() != 5) {
       return false;
     }
     std::vector<cv::Point2f> image_points;
     image_points.reserve(5);
-    for (const auto & p : msg.pts) {
+    for (const auto &p : msg.pts) {
       image_points.emplace_back(static_cast<float>(p.x), static_cast<float>(p.y));
     }
 
     cv::Mat rvec, tvec;
-    const bool ok = cv::solvePnP(
-      object_points_, image_points, cam_matrix_, dist_coeffs_, rvec, tvec, false, cv::SOLVEPNP_ITERATIVE);
+    const bool ok = cv::solvePnP(object_points_,
+                                 image_points,
+                                 cam_matrix_,
+                                 dist_coeffs_,
+                                 rvec,
+                                 tvec,
+                                 false,
+                                 cv::SOLVEPNP_ITERATIVE);
     if (!ok || tvec.total() < 3) {
       return false;
     }
 
     cv::Mat R;
     cv::Rodrigues(rvec, R);
-    cv::Mat hit_obj = (cv::Mat_<double>(3, 1) << hit_point_obj_.x, hit_point_obj_.y, hit_point_obj_.z);
+    cv::Mat hit_obj =
+      (cv::Mat_<double>(3, 1) << hit_point_obj_.x, hit_point_obj_.y, hit_point_obj_.z);
     cv::Mat hit = R * hit_obj + tvec;
     hit_cam = cv::Point3d(hit.at<double>(0, 0), hit.at<double>(1, 0), hit.at<double>(2, 0));
     return std::isfinite(hit_cam.x) && std::isfinite(hit_cam.y) && std::isfinite(hit_cam.z);
   }
 
-  std::string resolveRuneIdFromMode(bool is_big_rune) const
-  {
+  std::string resolveRuneIdFromMode(bool is_big_rune) const {
     if (mode_override_enable_) {
       if (last_mode_ == 2 || last_mode_ == 3) return small_buff_id_;
       if (last_mode_ == 4 || last_mode_ == 5) return big_buff_id_;
@@ -282,8 +166,7 @@ private:
     return is_big_rune ? big_buff_id_ : small_buff_id_;
   }
 
-  void onRuneTarget(const rm_interfaces::msg::RuneTarget::SharedPtr msg)
-  {
+  void onRuneTarget(const rm_interfaces::msg::RuneTarget::SharedPtr msg) {
     if (!msg || msg->is_lost) {
       return;
     }
@@ -293,19 +176,16 @@ private:
     processRuneTargets(wrapped);
   }
 
-  void onRuneTargets(const rm_interfaces::msg::RuneTargetArray::SharedPtr msg)
-  {
+  void onRuneTargets(const rm_interfaces::msg::RuneTargetArray::SharedPtr msg) {
     if (!msg || msg->targets.empty()) {
       return;
     }
     processRuneTargets(*msg);
   }
 
-  bool runeToWorld(
-    const rm_interfaces::msg::RuneTarget & msg,
-    geometry_msgs::msg::PointStamped & center_world,
-    geometry_msgs::msg::PointStamped & hit_world)
-  {
+  bool runeToWorld(const rm_interfaces::msg::RuneTarget &msg,
+                   geometry_msgs::msg::PointStamped &center_world,
+                   geometry_msgs::msg::PointStamped &hit_world) {
     geometry_msgs::msg::PointStamped p_cam;
     p_cam.header = msg.header;
     geometry_msgs::msg::PointStamped center_cam = p_cam;
@@ -317,14 +197,20 @@ private:
       p_cam.point.z = hit_cam.z;
       std::vector<cv::Point2f> image_points;
       image_points.reserve(5);
-      for (const auto & p : msg.pts) {
+      for (const auto &p : msg.pts) {
         image_points.emplace_back(static_cast<float>(p.x), static_cast<float>(p.y));
       }
       cv::Mat rvec, tvec;
-      if (has_camera_info_ &&
-        cv::solvePnP(object_points_, image_points, cam_matrix_, dist_coeffs_, rvec, tvec, false, cv::SOLVEPNP_ITERATIVE))
-      {
-        center_cam_pnp = cv::Point3d(tvec.at<double>(0, 0), tvec.at<double>(1, 0), tvec.at<double>(2, 0));
+      if (has_camera_info_ && cv::solvePnP(object_points_,
+                                           image_points,
+                                           cam_matrix_,
+                                           dist_coeffs_,
+                                           rvec,
+                                           tvec,
+                                           false,
+                                           cv::SOLVEPNP_ITERATIVE)) {
+        center_cam_pnp =
+          cv::Point3d(tvec.at<double>(0, 0), tvec.at<double>(1, 0), tvec.at<double>(2, 0));
       } else {
         center_cam_pnp = hit_cam;
       }
@@ -333,7 +219,7 @@ private:
       center_cam.point.z = center_cam_pnp.z;
     } else {
       double u = 0.0, v = 0.0;
-      for (const auto & p : msg.pts) {
+      for (const auto &p : msg.pts) {
         u += p.x;
         v += p.y;
       }
@@ -350,18 +236,23 @@ private:
       center_cam.point = p_cam.point;
     }
 
-    try {
-      hit_world = tf_buffer_.transform(p_cam, target_frame_, tf2::durationFromSec(tf_timeout_s_));
-      center_world = tf_buffer_.transform(center_cam, target_frame_, tf2::durationFromSec(tf_timeout_s_));
-    } catch (const std::exception & e) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "buff pose tf failed: %s", e.what());
+    std::string transform_error;
+    if (!::auto_buff::transformPointPair(tf_buffer_,
+                                         p_cam,
+                                         center_cam,
+                                         target_frame_,
+                                         tf_timeout_s_,
+                                         hit_world,
+                                         center_world,
+                                         transform_error)) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 1000, "buff pose tf failed: %s", transform_error.c_str());
       return false;
     }
     return true;
   }
 
-  static geometry_msgs::msg::Quaternion quatFromRpy(double roll, double pitch, double yaw)
-  {
+  static geometry_msgs::msg::Quaternion quatFromRpy(double roll, double pitch, double yaw) {
     tf2::Quaternion q;
     q.setRPY(roll, pitch, yaw);
     q.normalize();
@@ -373,16 +264,13 @@ private:
     return out;
   }
 
-  double runeRadius(bool is_big_rune) const
-  {
+  double runeRadius(bool is_big_rune) const {
     return is_big_rune ? big_rune_radius_m_ : small_rune_radius_m_;
   }
 
-  double estimateCenterRoll(
-    const geometry_msgs::msg::Point & center,
-    const geometry_msgs::msg::Point & hit,
-    double radius) const
-  {
+  double estimateCenterRoll(const geometry_msgs::msg::Point &center,
+                            const geometry_msgs::msg::Point &hit,
+                            double radius) const {
     const double cx = center.x;
     const double cy = center.y;
     const double center_yaw = std::atan2(cy, cx);
@@ -399,10 +287,7 @@ private:
   }
 
   std::vector<geometry_msgs::msg::Pose> buildStructuredOffsets(
-    const geometry_msgs::msg::Point & center,
-    double center_roll,
-    bool is_big_rune) const
-  {
+    const geometry_msgs::msg::Point &center, double center_roll, bool is_big_rune) const {
     const double radius = runeRadius(is_big_rune);
     const double center_yaw = std::atan2(center.y, center.x);
     std::vector<geometry_msgs::msg::Pose> offsets;
@@ -423,8 +308,7 @@ private:
     return offsets;
   }
 
-  static int popcount32(uint32_t value)
-  {
+  static int popcount32(uint32_t value) {
     int count = 0;
     while (value != 0u) {
       value &= (value - 1u);
@@ -433,11 +317,9 @@ private:
     return count;
   }
 
-  double estimateBladeRollFromCenterHit(
-    const geometry_msgs::msg::Point & center,
-    const geometry_msgs::msg::Point & hit,
-    double radius) const
-  {
+  double estimateBladeRollFromCenterHit(const geometry_msgs::msg::Point &center,
+                                        const geometry_msgs::msg::Point &hit,
+                                        double radius) const {
     const double center_yaw = std::atan2(center.y, center.x);
     const double ux = -std::sin(center_yaw);
     const double uy = std::cos(center_yaw);
@@ -451,8 +333,7 @@ private:
     return std::atan2(-norm_proj, norm_dz);
   }
 
-  static double wrapToPi(double angle)
-  {
+  static double wrapToPi(double angle) {
     while (angle > 3.14159265358979323846) {
       angle -= 2.0 * 3.14159265358979323846;
     }
@@ -463,17 +344,16 @@ private:
   }
 
   uint32_t buildEngageableMaskFromObservedBlades(
-    const geometry_msgs::msg::Point & center,
-    const std::vector<geometry_msgs::msg::PointStamped> & hit_points,
-    bool is_big_rune) const
-  {
+    const geometry_msgs::msg::Point &center,
+    const std::vector<geometry_msgs::msg::PointStamped> &hit_points,
+    bool is_big_rune) const {
     if (hit_points.empty() || buff_blade_count_ <= 0) {
       return 0u;
     }
     const double radius = runeRadius(is_big_rune);
     const double step = 2.0 * 3.14159265358979323846 / static_cast<double>(buff_blade_count_);
     uint32_t mask = 0u;
-    for (const auto & hit : hit_points) {
+    for (const auto &hit : hit_points) {
       const double roll = estimateBladeRollFromCenterHit(center, hit.point, radius);
       int best_idx = 0;
       double best_err = std::numeric_limits<double>::max();
@@ -491,13 +371,12 @@ private:
   }
 
   uint32_t buildEngageableMaskFromSemanticTargets(
-    const std::vector<rm_interfaces::msg::RuneTarget> & targets) const
-  {
+    const std::vector<rm_interfaces::msg::RuneTarget> &targets) const {
     if (buff_blade_count_ <= 0) {
       return 0u;
     }
     uint32_t mask = 0u;
-    for (const auto & t : targets) {
+    for (const auto &t : targets) {
       if (t.is_lost) {
         continue;
       }
@@ -515,140 +394,14 @@ private:
     return mask;
   }
 
-  bool onSmallBuffTask() const
-  {
-    if (force_task_mode_ == 2 || force_task_mode_ == 3) return true;
-    if (force_task_mode_ != 0) return false;
-    return last_mode_ == 2 || last_mode_ == 3;
-  }
-
-  bool onBigBuffTask() const
-  {
-    if (force_task_mode_ == 4 || force_task_mode_ == 5) return true;
-    if (force_task_mode_ != 0) return false;
-    return last_mode_ == 4 || last_mode_ == 5;
-  }
-
-  bool tryPublishFromInternalTracker(const rm_interfaces::msg::RuneTargetArray & msg)
-  {
-    if (!use_internal_tracker_bridge_ || !has_camera_info_) {
-      return false;
-    }
-    if ((!small_buff_target_ && !big_buff_target_) || msg.targets.empty()) {
-      return false;
-    }
-
-    std::vector<::auto_buff::BuffBlade> blades;
-    blades.reserve(msg.targets.size());
-    for (const auto & t : msg.targets) {
-      if (t.is_lost) continue;
-      blades.emplace_back(t);
-    }
-    if (blades.empty()) {
-      return false;
-    }
-
-    Eigen::Isometry3d T_camera_to_odom = Eigen::Isometry3d::Identity();
-    try {
-      auto tf = tf_buffer_.lookupTransform(
-        target_frame_, msg.header.frame_id,
-        tf2::TimePoint(std::chrono::nanoseconds{
-            static_cast<int64_t>(msg.header.stamp.sec) * 1'000'000'000LL +
-            static_cast<int64_t>(msg.header.stamp.nanosec)}),
-        tf2::durationFromSec(tf_timeout_s_));
-      T_camera_to_odom = transformToIsometry(tf.transform);
-    } catch (const std::exception & e) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "buff tracker tf failed: %s", e.what());
-      return false;
-    }
-
-    auto stamp_chrono = std::chrono::system_clock::time_point{
-      std::chrono::nanoseconds{
-        static_cast<int64_t>(msg.header.stamp.sec) * 1'000'000'000LL +
-        static_cast<int64_t>(msg.header.stamp.nanosec)}};
-    if (onSmallBuffTask() && small_buff_target_) {
-      small_buff_target_->track(blades, stamp_chrono, T_camera_to_odom);
-    }
-    if (onBigBuffTask() && big_buff_target_) {
-      big_buff_target_->track(blades, stamp_chrono, T_camera_to_odom);
-    }
-
-    const bool small_active = onSmallBuffTask();
-    const bool big_active = onBigBuffTask();
-    const bool use_big = big_active;
-    const bool use_small = small_active && !big_active;
-    if (!use_big && !use_small) {
-      return false;
-    }
-
-    ::auto_buff::BuffState buff_state;
-    ::auto_buff::TrackState track_state;
-    if (use_big && big_buff_target_) {
-      std::tie(buff_state, track_state) = big_buff_target_->getTargetTrackState();
-    } else if (use_small && small_buff_target_) {
-      std::tie(buff_state, track_state) = small_buff_target_->getTargetTrackState();
-    } else {
-      return false;
-    }
-    if (track_state.state != ::auto_buff::TrackState::State::TRACKING) {
-      return false;
-    }
-
-    rm_interfaces::msg::TrackedRobot out;
-    out.header = msg.header;
-    out.header.frame_id = target_frame_;
-    out.robot_id = use_big ? big_buff_id_ : small_buff_id_;
-    out.robot_type = rm_interfaces::msg::TrackedRobot::UNKNOWN;
-    out.track_state = rm_interfaces::msg::TrackedRobot::TRACKING;
-    out.full_state_valid = true;
-    out.center_pose.position.x = buff_state.center_position.x();
-    out.center_pose.position.y = buff_state.center_position.y();
-    out.center_pose.position.z = buff_state.center_position.z();
-    out.center_pose.orientation = quatFromRpy(buff_state.center_roll, 0.0, 0.0);
-    out.center_position = out.center_pose.position;
-    out.center_velocity = geometry_msgs::msg::Vector3();
-    out.center_acceleration = geometry_msgs::msg::Vector3();
-    out.yaw = 0.0;
-    out.yaw_velocity = 0.0;
-    out.yaw_acceleration = 0.0;
-    out.representation_mode = rm_interfaces::msg::TrackedRobot::REP_STRUCTURED_ROBOT;
-    out.num_armors = 5;
-    out.confidence = 0.9;
-    out.is_visible = true;
-    out.visible_armor_count = 5;
-    out.armors_offset = buildStructuredOffsets(out.center_pose.position, buff_state.center_roll, use_big);
-
-    uint32_t mask = 0u;
-    for (int i = 0; i < 5; ++i) {
-      if (buff_state.inactivated_flag.at(i)) {
-        mask |= (1u << static_cast<uint32_t>(i));
-      }
-    }
-    out.engageable_mask = mask;
-    out.engageable_count = popcount32(mask);
-    pub_->publish(out);
-    last_debug_target_ = out;
-    has_last_debug_target_ = true;
-    publishDebugMarkers(last_debug_target_);
-    return true;
-  }
-
-  void processRuneTargets(const rm_interfaces::msg::RuneTargetArray & msg)
-  {
-    if (tryPublishFromInternalTracker(msg)) {
-      return;
-    }
-    if (use_internal_tracker_bridge_ && !enable_rune_fallback_) {
-      return;
-    }
-
+  void processRuneTargets(const rm_interfaces::msg::RuneTargetArray &msg) {
     std::vector<geometry_msgs::msg::PointStamped> hit_world_points;
     std::vector<geometry_msgs::msg::PointStamped> center_world_points;
     std::vector<rm_interfaces::msg::RuneTarget> valid_targets;
     hit_world_points.reserve(msg.targets.size());
     center_world_points.reserve(msg.targets.size());
     valid_targets.reserve(msg.targets.size());
-    for (const auto & t : msg.targets) {
+    for (const auto &t : msg.targets) {
       if (t.is_lost) {
         continue;
       }
@@ -669,20 +422,19 @@ private:
     if (last_stamp_.nanoseconds() > 0) {
       double best_dist = std::numeric_limits<double>::max();
       for (size_t i = 0; i < hit_world_points.size(); ++i) {
-        const auto & p = hit_world_points[i].point;
-        const double d2 =
-          (p.x - last_pos_.x) * (p.x - last_pos_.x) +
-          (p.y - last_pos_.y) * (p.y - last_pos_.y) +
-          (p.z - last_pos_.z) * (p.z - last_pos_.z);
+        const auto &p = hit_world_points[i].point;
+        const double d2 = (p.x - last_pos_.x) * (p.x - last_pos_.x) +
+                          (p.y - last_pos_.y) * (p.y - last_pos_.y) +
+                          (p.z - last_pos_.z) * (p.z - last_pos_.z);
         if (d2 < best_dist) {
           best_dist = d2;
           selected_idx = i;
         }
       }
     }
-    const auto & hit_world = hit_world_points[selected_idx];
-    const auto & center_world = center_world_points[selected_idx];
-    const auto & selected_target = valid_targets[selected_idx];
+    const auto &hit_world = hit_world_points[selected_idx];
+    const auto &center_world = center_world_points[selected_idx];
+    const auto &selected_target = valid_targets[selected_idx];
 
     rm_interfaces::msg::TrackedRobot out;
     out.header = msg.header;
@@ -700,7 +452,8 @@ private:
     out.center_accel.linear.z = 0.0;
 
     if (last_stamp_.nanoseconds() > 0 && (selected_target.is_big_rune == last_is_big_rune_)) {
-      const double dt = std::max(min_dt_s_, (rclcpp::Time(msg.header.stamp) - last_stamp_).seconds());
+      const double dt =
+        std::max(min_dt_s_, (rclcpp::Time(msg.header.stamp) - last_stamp_).seconds());
       out.center_twist.linear.x = (center_world.point.x - last_pos_.x) / dt;
       out.center_twist.linear.y = (center_world.point.y - last_pos_.y) / dt;
       out.center_twist.linear.z = (center_world.point.z - last_pos_.z) / dt;
@@ -720,14 +473,16 @@ private:
     out.confidence = 0.8;
     out.is_visible = true;
     out.visible_armor_count = static_cast<int32_t>(std::max<size_t>(1, hit_world_points.size()));
-    out.armors_offset = buildStructuredOffsets(center_world.point, center_roll, selected_target.is_big_rune);
+    out.armors_offset =
+      buildStructuredOffsets(center_world.point, center_roll, selected_target.is_big_rune);
     out.engageable_mask = buildEngageableMaskFromSemanticTargets(valid_targets);
     if (out.engageable_mask == 0u) {
       out.engageable_mask = buildEngageableMaskFromObservedBlades(
         center_world.point, hit_world_points, selected_target.is_big_rune);
     }
     if (out.engageable_mask == 0u) {
-      const int selected_blade_index = static_cast<int>(selected_idx % static_cast<size_t>(buff_blade_count_));
+      const int selected_blade_index =
+        static_cast<int>(selected_idx % static_cast<size_t>(buff_blade_count_));
       out.engageable_mask = (1u << static_cast<uint32_t>(selected_blade_index));
     }
     out.engageable_count = popcount32(out.engageable_mask);
@@ -743,8 +498,7 @@ private:
     last_is_big_rune_ = selected_target.is_big_rune;
   }
 
-  void publishDebugMarkers(const rm_interfaces::msg::TrackedRobot & out)
-  {
+  void publishDebugMarkers(const rm_interfaces::msg::TrackedRobot &out) {
     if (!debug_markers_enable_) {
       return;
     }
@@ -851,8 +605,7 @@ private:
     marker_pub_->publish(marker_array);
   }
 
-  void onMarkerTimer()
-  {
+  void onMarkerTimer() {
     if (!debug_markers_enable_ || !has_last_debug_target_) {
       return;
     }
@@ -879,11 +632,6 @@ private:
   bool debug_markers_enable_{false};
   std::string marker_topic_;
   double marker_publish_rate_hz_{10.0};
-  bool use_internal_tracker_bridge_{true};
-  bool enable_rune_fallback_{true};
-  bool enable_small_buff_{true};
-  bool enable_big_buff_{true};
-  int force_task_mode_{0};
 
   rclcpp::Subscription<rm_interfaces::msg::RuneTarget>::SharedPtr sub_;
   rclcpp::Subscription<rm_interfaces::msg::RuneTargetArray>::SharedPtr sub_array_;
@@ -909,16 +657,11 @@ private:
   bool has_last_debug_target_{false};
   std::vector<geometry_msgs::msg::PointStamped> last_world_points_;
   size_t last_selected_world_index_{0};
-  ::auto_buff::SmallBuffConfig small_buff_config_;
-  ::auto_buff::BigBuffConfig big_buff_config_;
-  std::unique_ptr<::auto_buff::SmallBuffTarget> small_buff_target_;
-  std::unique_ptr<::auto_buff::BigBuffTarget> big_buff_target_;
 };
 
 }  // namespace fyt::auto_aim::auto_buff
 
-int main(int argc, char ** argv)
-{
+int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
   rclcpp::spin(std::make_shared<fyt::auto_aim::auto_buff::BuffPoseEstimatorNode>());
   rclcpp::shutdown();

@@ -20,11 +20,8 @@
 #include <string_view>
 
 #include "rm_serial_driver/protocol.hpp"
-#include "rm_serial_driver/protocol/default_protocol.hpp"
 #include "rm_serial_driver/protocol/infantry_protocol.hpp"
-#include "rm_serial_driver/protocol/infantry_protocol_16.hpp"
 #include "rm_serial_driver/protocol/infantry_protocol_32.hpp"
-#include "rm_serial_driver/protocol/sentry_protocol.hpp"
 
 namespace fyt::serial_driver {
 
@@ -38,25 +35,13 @@ public:
     if (protocol_type == "infantry") {
       return std::make_unique<protocol::ProtocolInfantry>(port_name, enable_data_print);
     }
-    if (protocol_type == "infantry_16") {
-      return std::make_unique<protocol::ProtocolInfantry16>(port_name, enable_data_print);
-    }
     if (protocol_type == "infantry_32") {
       return std::make_unique<protocol::ProtocolInfantry32>(port_name, enable_data_print);
-    }
-    if (protocol_type == "hero") {
-      return std::make_unique<protocol::DefaultProtocol>(port_name, enable_data_print);
-    }
-    if (protocol_type == "air") {
-      return std::make_unique<protocol::DefaultProtocol>(port_name, enable_data_print);
-    }
-    if (protocol_type == "sentry") {
-      return std::make_unique<protocol::ProtocolSentry>(port_name, enable_data_print);
     }
 
     return nullptr;
   }
 };
 
-};      // namespace fyt::serial_driver
+}  // namespace fyt::serial_driver
 #endif  // SERIAL_DRIVER_PROTOCOL_FACTORY_HPP_

@@ -50,9 +50,7 @@
 
 // ─── target_selector internals ────────────────────────────────
 #include "target_selector/selection_strategy.hpp"
-#include "target_selector/strategies/min_yaw_deviation_strategy.hpp"
 #include "target_selector/strategies/priority_list_strategy.hpp"
-#include "target_selector/strategies/sticky_min_yaw_deviation_strategy.hpp"
 
 // ─── prediction logger ────────────────────────────────────────
 #include "gimbal_pipeline/prediction_logger.hpp"
@@ -62,7 +60,6 @@
 // ─── gimbal_controller internals ──────────────────────────────
 #include "gimbal_controller/armor_position_calculator.hpp"
 #include "gimbal_controller/armor_selector.hpp"
-#include "gimbal_controller/ballistic_solver_client.hpp"
 #include "gimbal_controller/fire_advice_engine.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_controller/gimbal_control_core.hpp"
@@ -193,7 +190,7 @@ class GimbalPipelineNode : public rclcpp::Node {
 
   bool external_targets_enable_{false};
   bool external_targets_buff_enable_{false};
-  std::string external_targets_buff_topic_{"/auto_buff/tracked_robot"};
+  std::string external_targets_buff_topic_{"auto_buff/tracked_robot"};
   double external_targets_buff_timeout_s_{0.3};
   int current_mode_{0};
   std::unordered_map<int, std::unordered_set<std::string>> allowed_ids_by_mode_;
@@ -214,7 +211,6 @@ class GimbalPipelineNode : public rclcpp::Node {
   /* ================================================================ */
   std::shared_ptr<gimbal_controller::ArmorPositionCalculator> position_calculator_;
   std::shared_ptr<gimbal_controller::ArmorSelector> armor_selector_;
-  std::shared_ptr<gimbal_controller::BallisticSolverClient> ballistic_client_;
   std::shared_ptr<gimbal_controller::LocalTrajectoryCompensator> local_compensator_;
   std::shared_ptr<gimbal_controller::FireAdvisor> fire_advisor_;
     std::shared_ptr<gimbal_controller::FireAdviceEngine> fire_advice_engine_;
@@ -228,7 +224,6 @@ class GimbalPipelineNode : public rclcpp::Node {
   double current_pitch_{0.0};
   double bullet_speed_{20.0};
   double control_rate_{250.0};
-  std::string ballistic_mode_{"service"};
   bool enable_{true};
     bool radial_selection_enabled_{false};
 

@@ -1,18 +1,17 @@
 <?xml version="1.0"?>
-<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>armor_pnp_refiner</name>
   <version>0.1.0</version>
-  <description>PnP refinement package for armor plate pose optimization</description>
+  <description>Single-frame xyz-yaw PnP refinement for armor poses.</description>
   <maintainer email="amatrix@example.com">amatrix</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
 
-  <depend>rclcpp</depend>
   <depend>OpenCV</depend>
   <depend>Eigen3</depend>
-  <depend>fmt</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

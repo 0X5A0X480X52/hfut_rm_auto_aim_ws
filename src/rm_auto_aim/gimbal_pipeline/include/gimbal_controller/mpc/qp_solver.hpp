@@ -90,6 +90,7 @@ public:
     const Eigen::VectorXd & ubA = Eigen::VectorXd(),
     const Eigen::VectorXd & U_warm = Eigen::VectorXd())
   {
+    (void)U_warm;
     QPResult result;
     const int n_vars = static_cast<int>(H.rows());
     const int n_constraints = static_cast<int>(A_con.rows());

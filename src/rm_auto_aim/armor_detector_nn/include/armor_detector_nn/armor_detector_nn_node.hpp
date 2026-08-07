@@ -1,7 +1,6 @@
 #ifndef ARMOR_DETECTOR_NN_ARMOR_DETECTOR_NN_NODE_HPP_
 #define ARMOR_DETECTOR_NN_ARMOR_DETECTOR_NN_NODE_HPP_
 
-#include <deque>
 #include <memory>
 #include <string>
 
@@ -23,7 +22,6 @@
 #include "armor_detector_nn/core/corner_refine/icorner_refiner.hpp"
 #include "armor_detector_nn/core/detection_types.hpp"
 #include "armor_detector_nn/core/detector_config.hpp"
-#include "armor_detector_nn/core/frame_scheduler.hpp"
 #include "armor_detector_nn/core/tracker/itracker_strategy.hpp"
 #include "armor_detector_nn/debug/debug_drawer.hpp"
 #include "armor_detector_nn/debug/profiler.hpp"
@@ -89,7 +87,6 @@ private:
 
   // Pipeline
   std::unique_ptr<ArmorDetectorNN> detector_;
-  std::unique_ptr<FrameScheduler> frame_scheduler_;
   std::unique_ptr<ArmorPoseEstimatorAdapter> pose_estimator_adapter_;
   std::unique_ptr<ArmorPoseEstimatorAdapter> pose_estimator_reference_adapter_;
   std::unique_ptr<DebugDrawer> debug_drawer_;
@@ -103,9 +100,6 @@ private:
 
   // Phase 3 — corner refiner
   std::shared_ptr<ICornerRefiner> corner_refiner_;
-
-  // Recent detections (for future async phases)
-  std::deque<FrameDetections> recent_detections_;
 
   // TF: target_frame (e.g. odom) -> camera frame rotation
   std::shared_ptr<tf2_ros::Buffer> tf2_buffer_;

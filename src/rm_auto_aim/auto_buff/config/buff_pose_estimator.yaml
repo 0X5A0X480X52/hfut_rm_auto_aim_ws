@@ -1,10 +1,10 @@
 /**:
   ros__parameters:
-    input_topic: "/rune_target"
-    input_array_topic: "/rune_targets"
-    output_topic: "/auto_buff/tracked_robot"
-    camera_info_topic: "/camera_info"
-    serial_state_topic: "/serial_receive_data"
+    input_topic: "rune_target"
+    input_array_topic: "rune_targets"
+    output_topic: "auto_buff/tracked_robot"
+    camera_info_topic: "camera_info"
+    serial_state_topic: "serial/receive"
     target_frame: "odom"
     big_buff_id: "big_buff"
     small_buff_id: "small_buff"
@@ -14,5 +14,5 @@
     mode_override_enable: true
     rune_radius_m: 0.7
     debug_markers_enable: true
-    marker_topic: "/auto_buff/debug/markers"
+    marker_topic: "auto_buff/debug/markers"
     marker_publish_rate_hz: 10.0

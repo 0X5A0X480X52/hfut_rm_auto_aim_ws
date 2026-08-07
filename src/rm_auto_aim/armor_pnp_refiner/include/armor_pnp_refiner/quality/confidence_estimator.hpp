@@ -10,7 +10,7 @@ class ConfidenceEstimator {
 public:
   ConfidenceEstimator() = default;
 
-  double compute(const PnpRefineOutput& output);
+  double compute(const PnpRefineOutput &output);
 
   // Individual components (exposed for logging).
   static double cReproj(double reproj_rms, double sigma_ref = 3.0);
@@ -19,7 +19,6 @@ public:
                            double bad_kappa = 1e7);
   static double cInlier(int num_inliers, int num_points);
   static double cImprovement(double cost_before, double cost_after);
-  static double cAssociation(bool has_external_track, double assoc_score = 1.0);
 };
 
 }  // namespace armor_pnp_refiner

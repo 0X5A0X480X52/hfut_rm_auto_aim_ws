@@ -6,25 +6,10 @@ armor_detector:
     publish_in_target_frame: false
 
     backend:
-      type: "openvino"
-      device: "CPU"
       precision: "fp16"
       model_path: "package://armor_detector_nn/model/RobotDetectionModel/0526.onnx"
-      engine_path: "package://armor_detector_nn/model/RobotDetectionModel/0526.onnx"
-      openvino_model_xml: ""
-      openvino_model_bin: ""
-      calibration_cache: ""
-      input_name: "images"
-      output_names: ["output"]
       warmup_iterations: 10
       num_threads: 2
-      allow_fallback: true
-      fallback_type: "onnxruntime"
-      openvino_use_native_preprocess: false
-      openvino_cache_dir: ""
-      openvino_hybrid_affinity: false
-      openvino_num_requests: 1
-      openvino_device_config: ""
 
     preprocess:
       input_width: 640
@@ -38,7 +23,6 @@ armor_detector:
       pad_value: 114.0
 
     postprocess:
-      strategy: "robotpilots_landmark"
       output_layout: "candidates_first"
       num_classes: 14
       num_keypoints: 4
@@ -58,13 +42,6 @@ armor_detector:
     label_map:
       path: "package://armor_detector_nn/config/label_map.yaml"
 
-    number_classifier:
-      enabled: false
-      model_path: ""
-      label_path: ""
-      threshold: 0.8
-      ignore_classes: ["negative"]
-
     pose:
       use_ba: true
       pnp_method: "ippe"
@@ -72,7 +49,7 @@ armor_detector:
       small_armor_height: 0.050
       large_armor_width: 0.225
       large_armor_height: 0.050
-      pose.force_pnp_rotate_180: true
+      force_pnp_rotate_180: true
 
       refiner:
         mode: "sliding_window"
@@ -107,7 +84,6 @@ armor_detector:
         require_finite: true
 
     tracker:
-      strategy: "internal_iou"
       iou_threshold: 0.30
       max_missed: 15
       min_hits: 2
@@ -124,22 +100,8 @@ armor_detector:
       max_aspect_ratio: 5.0
       min_aspect_ratio: 1.5
 
-    async:
-      enabled: false
-      max_wait_ms: 2.0
-      drop_if_busy: true
-      max_observation_age_ms: 100.0
-
     runtime:
       color_filter_source: "model"
       publish_empty: true
-      drop_frame_when_busy: true
       copy_policy: "copy_on_write_debug"
-      scheduling_mode: "sync"
-      frame_queue_size: 2
-      batch_min_size: 1
-      batch_max_size: 1
-      batch_timeout_ms: 2.0
-      max_observation_age_ms: 50.0
-      publish_out_of_order: false
       profile: true

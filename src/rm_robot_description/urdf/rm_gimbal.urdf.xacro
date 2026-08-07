@@ -8,7 +8,6 @@
 
   <link name="odom" />
 
-  <!-- Base link fixed to odom: provide the expected 'base_link' frame for other nodes -->
   <link name="base_link" />
   <joint name="odom_to_base_link" type="fixed">
     <parent link="odom" />
@@ -24,8 +23,6 @@
 
   <link name="camera_link" />
 
-  <!-- Attach the camera to base_link for the fixed test cameras. If you want the camera to be
-       mounted on the gimbal, change parent back to 'gimbal_link'. -->
   <joint name="camera_joint" type="fixed">
     <origin xyz="$(arg xyz)" rpy="$(arg rpy)" />
     <parent link="gimbal_link" />

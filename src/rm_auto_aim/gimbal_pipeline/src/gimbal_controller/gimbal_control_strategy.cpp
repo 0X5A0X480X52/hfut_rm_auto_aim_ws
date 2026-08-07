@@ -15,7 +15,6 @@
 #include "gimbal_controller/gimbal_control_strategy.hpp"
 #include "gimbal_controller/armor_position_calculator.hpp"
 #include "gimbal_controller/armor_selector.hpp"
-#include "gimbal_controller/ballistic_solver_client.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_controller/fire_advice_engine.hpp"
@@ -26,13 +25,11 @@ namespace gimbal_controller
 void GimbalControlStrategy::setComponents(
   std::shared_ptr<ArmorPositionCalculator> position_calculator,
   std::shared_ptr<ArmorSelector> armor_selector,
-  std::shared_ptr<BallisticSolverClient> ballistic_client,
   std::shared_ptr<LocalTrajectoryCompensator> local_compensator,
   std::shared_ptr<FireAdvisor> fire_advisor)
 {
   position_calculator_ = position_calculator;
   armor_selector_ = armor_selector;
-  ballistic_client_ = ballistic_client;
   local_compensator_ = local_compensator;
   fire_advisor_ = fire_advisor;
 }
@@ -41,11 +38,6 @@ void GimbalControlStrategy::setFireAdviceEngine(
   std::shared_ptr<FireAdviceEngine> fire_advice_engine)
 {
   fire_advice_engine_ = fire_advice_engine;
-}
-
-void GimbalControlStrategy::setBallisticMode(const std::string & mode)
-{
-  prefer_local_ballistic_ = (mode == "local");
 }
 
 rm_interfaces::msg::GimbalCmd GimbalControlStrategy::createIdleCmd() const
@@ -61,52 +53,6 @@ rm_interfaces::msg::GimbalCmd GimbalControlStrategy::createIdleCmd() const
   cmd.fire_advice = false;
   cmd.mode = rm_interfaces::msg::GimbalCmd::MODE_NO_VALID_MEASUREMENT;
   return cmd;
-}
-
-bool GimbalControlStrategy::computeBallistic(
-  const Eigen::Vector3d & target_position,
-  const Eigen::Vector3d & target_velocity,
-  double bullet_speed,
-  double & pitch,
-  double & yaw,
-  double & flight_time) const
-{
-  // service 模式: 优先使用 ballistic_solver 服务
-  // local 模式: 完全跳过 service，避免 timeout 告警。
-  if (!prefer_local_ballistic_) {
-    if (ballistic_client_ && ballistic_client_->isServiceAvailable()) {
-      auto result = ballistic_client_->solve(target_position, target_velocity, bullet_speed);
-      if (result.success) {
-        pitch = result.pitch;
-        yaw = result.yaw;
-        flight_time = result.flight_time;
-        return true;
-      }
-    }
-  }
-
-  // Fallback: 使用本地弹道补偿器
-  if (local_compensator_) {
-    local_compensator_->setBulletSpeed(bullet_speed);
-    auto result = local_compensator_->compensate(target_position);
-    if (result.success) {
-      pitch = result.pitch;
-      yaw = result.yaw;
-      flight_time = result.flight_time;
-      return true;
-    }
-  }
-
-  // 最后的 fallback: 直接计算角度
-  double distance_xy = std::sqrt(
-    target_position.x() * target_position.x() +
-    target_position.y() * target_position.y());
-
-  yaw = std::atan2(target_position.y(), target_position.x());
-  pitch = std::atan2(target_position.z(), distance_xy);
-  flight_time = distance_xy / bullet_speed;
-
-  return true;
 }
 
 void GimbalControlStrategy::markDelayAuditInvalid(

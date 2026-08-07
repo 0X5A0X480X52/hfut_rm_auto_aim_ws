@@ -19,27 +19,24 @@
 #include <cmath>
 #include <vector>
 
-namespace gimbal_controller
-{
+namespace gimbal_controller {
 
 /**
  * @brief 本地弹道补偿结果
  */
-struct TrajectoryCompensationResult
-{
-  double pitch;           // 补偿后的pitch角 (弧度)
-  double yaw;             // yaw角 (弧度)
-  double flight_time;     // 飞行时间 (秒)
-  bool success;           // 是否成功
+struct TrajectoryCompensationResult {
+  double pitch;        // 补偿后的pitch角 (弧度)
+  double yaw;          // yaw角 (弧度)
+  double flight_time;  // 飞行时间 (秒)
+  bool success;        // 是否成功
 };
 
 /**
  * @brief 本地弹道补偿器
- * 
- * 当 ballistic_solver 服务不可用时，使用本地计算作为 fallback
+ *
+ * 主控制管线使用的本地弹道计算实现
  */
-class LocalTrajectoryCompensator
-{
+class LocalTrajectoryCompensator {
 public:
   LocalTrajectoryCompensator() = default;
   ~LocalTrajectoryCompensator() = default;
@@ -51,25 +48,24 @@ public:
    * @param resistance 空气阻力系数
    * @param iteration_times 迭代次数
    */
-  void setParameters(
-    double bullet_speed,
-    double gravity = 9.8,
-    double resistance = 0.001,
-    int iteration_times = 20);
+  void setParameters(double bullet_speed,
+                     double gravity = 9.8,
+                     double resistance = 0.001,
+                     int iteration_times = 20);
 
   /**
    * @brief 计算弹道补偿
    * @param target_position 目标位置
    * @return 补偿结果
    */
-  TrajectoryCompensationResult compensate(const Eigen::Vector3d & target_position) const;
+  TrajectoryCompensationResult compensate(const Eigen::Vector3d &target_position) const;
 
   /**
    * @brief 获取飞行时间
    * @param target_position 目标位置
    * @return 飞行时间 (秒)
    */
-  double getFlyingTime(const Eigen::Vector3d & target_position) const;
+  double getFlyingTime(const Eigen::Vector3d &target_position) const;
 
   /**
    * @brief 获取弹道轨迹点 (用于可视化)

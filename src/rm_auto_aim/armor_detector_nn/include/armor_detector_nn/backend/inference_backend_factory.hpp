@@ -11,11 +11,6 @@ namespace fyt::auto_aim {
 class InferenceBackendFactory {
 public:
   static std::unique_ptr<IInferenceBackend> create(const BackendConfig& config);
-  static bool isAvailable(BackendType type);
-
-private:
-  static std::unique_ptr<IInferenceBackend> createOne(BackendType type,
-                                                       const BackendConfig& config);
 };
 
 }  // namespace fyt::auto_aim

@@ -13,7 +13,7 @@
   ros__parameters:
     camera_name: hik_camera
     camera_sn: ""  # 留空则使用第一个检测到的相机，或者填入序列号指定特定相机
-    camera_info_url: "package://rm_bringup/config/uav/camera_info.yaml"
+    camera_info_url: "package://rm_bringup/config/video_test/camera_info.yaml"
 
     # Image resolution (图像分辨率)
     # Set to 0 to use camera default resolution (设置为0则使用相机默认分辨率)

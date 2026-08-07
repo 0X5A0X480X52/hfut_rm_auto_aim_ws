@@ -74,10 +74,6 @@ struct MaxEntropyParameters {
 };
 
 struct TrackerParameters {
-  // Tracker implementation for non-outpost robots:
-  // "adaptive" | "norm4" | "norm4_v2"
-  std::string implementation = "adaptive";
-
   int tracking_thres = 2;
   int lost_thres = 8;
   int temp_lost_thres = 3;
@@ -131,14 +127,6 @@ struct PanelMismatchParameters {
 };
 
 struct OutpostParameters {
-  // Outpost tracker implementation switch.
-  // false: legacy OutpostArmorTracker
-  // true : OutpostTrackerV2 (mode-aware pipeline)
-  bool use_tracker_v2 = false;
-  // If true, use OutpostTrackerV3 (hypothesis + InEKF pipeline).
-  // Priority: use_tracker_v3 > use_tracker_v2 > legacy.
-  bool use_tracker_v3 = false;
-
   // Outpost-specific tracker state machine thresholds
   int tracking_thres = 2;
   int lost_thres = 40;
@@ -245,53 +233,6 @@ struct OutpostParameters {
   double v2_warmup_ratio_min = 1.55;
   double v2_warmup_ratio_max = 2.45;
   double v2_warmup_min_large_diff = 0.06;
-
-  // ── Outpost V3 config ──
-  int v3_topk = 3;
-  double v3_min_top1_confidence = 0.5;
-  double v3_min_top1_top2_margin = 1.0;
-  double v3_max_reconstruction_pos_error = 0.3;
-
-  double v3_gate_single_total_nis = 11.34;
-  double v3_gate_single_pos_chi2 = 9.0;
-
-  double v3_posterior_max_center_jump = 0.5;
-  double v3_posterior_max_yaw_jump = 0.5;
-  double v3_posterior_max_yaw_rate = 15.0;
-  double v3_posterior_max_yaw_acc = 30.0;
-
-  double v3_mode_p_enter_structured = 0.7;
-  double v3_mode_m_enter_structured = 1.5;
-  int v3_mode_stable_frames = 5;
-  double v3_mode_p_exit_structured = 0.4;
-  double v3_mode_m_exit_structured = 0.5;
-  int v3_mode_degraded_frames = 10;
-
-  double v3_prior_panel_switch_penalty = 0.5;
-
-  double v3_initial_p_pos = 0.01;
-  double v3_initial_p_vel = 1.0;
-  double v3_initial_p_acc = 10.0;
-  double v3_initial_p_yaw = 0.1;
-  double v3_initial_p_yaw_rate = 1.0;
-  double v3_initial_p_yaw_acc = 5.0;
-
-  double v3_process_noise_acc = 2.0;
-  double v3_process_noise_yaw_acc = 3.0;
-
-  double v3_observation_sigma_pos_xy = 0.02;
-  double v3_observation_sigma_pos_z = 0.03;
-
-  bool v3_warmup_enable = true;
-  int v3_warmup_frames = 8;
-  int v3_warmup_min_settle_frames = 3;
-  double v3_warmup_min_margin_to_commit = 1.2;
-  double v3_warmup_min_confidence_to_commit = 0.65;
-
-  bool v3_phase_audit_enable = true;
-  double v3_phase_audit_min_jump = 0.015;
-  double v3_phase_audit_dz_gate = 0.035;
-  int v3_phase_audit_confirm_frames = 2;
 
   // ModeFSM (OutpostTrackerV2)
   int mode_enter_confirm_frames = 3;
@@ -625,7 +566,7 @@ struct MeasurementNoiseConfig {
 // ── Norm4 V3 Backend / Selector ──
 
 struct Norm4V3BackendConfig {
-  std::string backend_type = "ukf_v1";       // "ukf_v1" | "ukf_v2" | "inekf"
+  std::string backend_type = "ukf_v1";       // "ukf_v1" | "inekf"
   std::string motion_profile = "default";
   std::string noise_profile = "default";
   std::string structure_profile = "slow";
@@ -694,7 +635,6 @@ struct Norm4V3Config {
   PhaseMemoryConfig phase_memory;
 
   Norm4V3UkfConfig ukf_v1;
-  Norm4V3UkfConfig ukf_v2;
   Norm4V3UkfConfig inekf;
   Norm4V3SlowStructureConfig slow_structure;
   Norm4V3SelectorConfig hypothesis_selector;
@@ -723,7 +663,6 @@ struct UnifiedConfig {
   PanelMismatchParameters panel_mismatch;
   OutpostParameters outpost;
   BinderConfig binder;
-  Norm4V2Config norm4_v2;
   Norm4V3Config norm4_v3;
 
   static UnifiedConfig create_default() { return UnifiedConfig{}; }

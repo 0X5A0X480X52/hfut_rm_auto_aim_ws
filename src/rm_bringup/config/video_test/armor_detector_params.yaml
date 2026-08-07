@@ -32,7 +32,7 @@ armor_detector_node:
     use_ba: true
     use_pnp_refiner: true
     pnp_refiner:
-      mode: 'single_xyz_yaw'   # none | single_yaw | single_xyz_yaw | sliding_window
+      mode: 'single_xyz_yaw'
     target_frame: 'odom'
 
     # Debug

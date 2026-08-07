@@ -1,28 +1,11 @@
 video_player:
   ros__parameters:
-    # Path to the video file (required)
-    # Example: "/path/to/your/video.mp4"
-    video_path: "./test_video/output.avi"
-    
-    # Whether to loop the video playback
+    video_path: "package://rm_bringup/config/video_test/input.mp4"
     loop_playback: true
-    
-    # Playback frame rate (fps)
     fps: 30.0
-    
-    # Camera name for camera info manager
-    # Note: frame_id will be camera_name + "_optical_frame", must match URDF definition
-    camera_name: "camera"
-    
-    # Flip image (both horizontal and vertical)
+    camera_name: camera
+    frame_id: camera_optical_frame
     flip_image: false
-    
-    # Image topic name (the actual topic will be /video_player/image_topic/...)
-    image_topic: "image_raw"
-    
-    # Use sensor data QoS profile for image topic
+    image_topic: image_raw
     use_sensor_data_qos: false
-    
-    # Camera info URL (optional)
-    # Example: "package://video_player/config/camera_info.yaml"
-    camera_info_url: "package://rm_bringup/config/camera_info.yaml"
+    camera_info_url: "package://rm_bringup/config/uav/camera_info.yaml"

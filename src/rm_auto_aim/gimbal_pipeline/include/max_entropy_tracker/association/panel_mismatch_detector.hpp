@@ -75,6 +75,7 @@ class PanelMismatchDetector {
   Result update(int panel_id, double z_obs, double z_mean, double dza,
                 const std::string &armor_layer, bool dza_converged,
                 double z_innov) {
+    (void)z_innov;
     if (!enabled_) return {};
 
     // Suppressed if dza not converged: J_current ≈ J_flipped → high false-positive risk

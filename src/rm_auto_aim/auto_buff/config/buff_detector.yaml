@@ -1,10 +1,10 @@
 /**:
   ros__parameters:
-    image_topic: "/image_raw"
-    rune_topic: "/rune_target"
-    runes_topic: "/rune_targets"
-    result_img_topic: "/auto_buff/debug/result_img"
-    result_img_compressed_topic: "/auto_buff/debug/result_img/compressed"
+    image_topic: "image_raw"
+    rune_topic: "rune_target"
+    runes_topic: "rune_targets"
+    result_img_topic: "auto_buff/debug/result_img"
+    result_img_compressed_topic: "auto_buff/debug/result_img/compressed"
     is_big_rune: true
     debug_view: false
     debug_jpeg_quality: 70

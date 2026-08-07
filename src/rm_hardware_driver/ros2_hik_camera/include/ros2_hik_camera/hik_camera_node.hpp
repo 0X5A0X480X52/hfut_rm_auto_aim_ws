@@ -26,42 +26,35 @@
 #include <thread>
 #include <vector>
 
-namespace ros2_hik_camera
-{
+namespace ros2_hik_camera {
 
-class RawStreamRecorder;
-
-class HikCameraNode : public rclcpp::Node
-{
+class HikCameraNode : public rclcpp::Node {
 public:
-  explicit HikCameraNode(const rclcpp::NodeOptions & options);
+  explicit HikCameraNode(const rclcpp::NodeOptions &options);
   ~HikCameraNode() override;
 
 private:
   // Initialization
   void declareParameters();
   bool initCamera();
-  
+
   // Camera control
   void startGrabbing();
   void stopGrabbing();
 
-  void stopRawStreamRecorder();
-  void recordRawFrame(const MV_FRAME_OUT_INFO_EX & frame_info);
-  
   // Parameter callback
   rcl_interfaces::msg::SetParametersResult parametersCallback(
-    const std::vector<rclcpp::Parameter> & parameters);
+    const std::vector<rclcpp::Parameter> &parameters);
 
   // HIKVision SDK handles and structures
-  void * camera_handle_ = nullptr;
+  void *camera_handle_ = nullptr;
   MV_CC_DEVICE_INFO_LIST device_list_;
   MV_FRAME_OUT frame_out_;
-  
+
   // Image buffers
-  unsigned char * bgr_buffer_ = nullptr;
+  unsigned char *bgr_buffer_ = nullptr;
   unsigned int bgr_buffer_size_ = 0;
-  unsigned char * frame_buffer_ = nullptr;
+  unsigned char *frame_buffer_ = nullptr;
 
   // ROS2 publishers
   image_transport::CameraPublisher camera_pub_;
@@ -77,7 +70,7 @@ private:
   // Capture thread
   std::thread capture_thread_;
   std::atomic<bool> capturing_;
-  
+
   // Parameters
   bool flip_image_;
   int image_width_;
@@ -85,11 +78,6 @@ private:
   std::string frame_id_;
   int fail_count_ = 0;
   double frame_rate_ = 30.0;
-  bool raw_stream_enabled_ = false;
-  std::string raw_stream_path_;
-  int raw_stream_interval_ = 1;
-  int64_t raw_frame_counter_ = 0;
-  std::unique_ptr<RawStreamRecorder> raw_stream_recorder_;
 
   // Parameter callback handle
   OnSetParametersCallbackHandle::SharedPtr params_callback_handle_;

@@ -1,0 +1,11 @@
+profile:
+  image_source: hik
+  serial_mode: real
+  detector_type: armor_detector
+  composition: standalone
+  auto_buff: "off"
+  debug: "on"
+  namespace: ""
+  odom2camera:
+    xyz: "0.151 0.000 0.040"
+    rpy: "0.000 0.000 0.000"

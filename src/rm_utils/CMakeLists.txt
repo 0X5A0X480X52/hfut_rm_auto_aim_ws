@@ -17,9 +17,8 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(eigen3_cmake_module REQUIRED)
 find_package(Eigen3 REQUIRED)
-find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(OpenCV 4 REQUIRED)
-find_package(Ceres REQUIRED)
 find_package(rcpputils REQUIRED)
 find_package(fmt REQUIRED)
 
@@ -38,9 +37,6 @@ ament_target_dependencies(fytlogger fmt)
 add_library(${PROJECT_NAME} SHARED
   src/math/utils.cpp
   src/math/pnp_solver.cpp
-  src/math/trajectory_compensator.cpp
-  src/math/manual_compensator.cpp
-  src/math/extended_kalman_filter.cpp
   src/url_resolver.cpp
   src/heartbeat.cpp
 )
@@ -50,16 +46,14 @@ set(dependencies
   rcpputils
   Eigen3
   eigen3_cmake_module
-  geometry_msgs
-  Ceres
+  std_msgs
   OpenCV
 )
 
 ament_target_dependencies(${PROJECT_NAME} ${dependencies})
-target_include_directories(${PROJECT_NAME} PUBLIC ${OpenCV_INCLUDE_DIRS} ${CERES_INCLUDE_DIRS})
+target_include_directories(${PROJECT_NAME} PUBLIC ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME}
   ${OpenCV_LIBS}
-  ${CERES_LIBRARIES}
 )
 # Install include directories
 install(DIRECTORY include/

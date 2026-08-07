@@ -18,6 +18,10 @@
 
 #include <fmt/format.h>
 
+#include <exception>
+#include <string>
+#include <string_view>
+
 namespace fyt::logger {
 class LoggerNotFoundError : public std::exception {
 public:
@@ -27,7 +31,7 @@ public:
   const char *what() const noexcept override { return msg.data(); }
 
 private:
-  std::string_view msg;
+  std::string msg;
 };
 
 class WriteError : public std::exception {
@@ -36,8 +40,8 @@ public:
   const char *what() const noexcept override { return msg.data(); }
 
 private:
-  std::string_view msg;
+  std::string msg;
 };
 
 }  // namespace fyt::logger
-#endif // RM_UTILS_LOGGER_EXCEPTION_HPP_
+#endif  // RM_UTILS_LOGGER_EXCEPTION_HPP_

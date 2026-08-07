@@ -1,29 +1,26 @@
 #pragma once
 
-#include <string>
 #include <memory>
+#include <string>
 
 #include "rclcpp/rclcpp.hpp"
 #include "rm_interfaces/msg/rune_target.hpp"
 #include "rm_interfaces/msg/rune_target_array.hpp"
 #include "rm_interfaces/srv/set_mode.hpp"
-#include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
+#include "sensor_msgs/msg/image.hpp"
 #include "yolo.hpp"
 
-namespace auto_buff
-{
+namespace auto_buff {
 
-class DetectorNode : public rclcpp::Node
-{
+class DetectorNode : public rclcpp::Node {
 public:
   DetectorNode();
 
 private:
   void imageCallback(const sensor_msgs::msg::Image::SharedPtr msg);
-  void onSetMode(
-    const std::shared_ptr<rm_interfaces::srv::SetMode::Request> request,
-    std::shared_ptr<rm_interfaces::srv::SetMode::Response> response);
+  void onSetMode(const std::shared_ptr<rm_interfaces::srv::SetMode::Request> request,
+                 std::shared_ptr<rm_interfaces::srv::SetMode::Response> response);
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;
   rclcpp::Publisher<rm_interfaces::msg::RuneTarget>::SharedPtr rune_pub_;

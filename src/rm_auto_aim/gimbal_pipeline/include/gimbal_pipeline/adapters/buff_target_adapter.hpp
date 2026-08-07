@@ -18,7 +18,7 @@ public:
   struct Config
   {
     bool enable{false};
-    std::string topic{"/auto_buff/tracked_robot"};
+    std::string topic{"auto_buff/tracked_robot"};
     double timeout_s{0.3};
     std::string target_frame{"odom"};
   };

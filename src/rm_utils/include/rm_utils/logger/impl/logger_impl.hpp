@@ -40,6 +40,10 @@ public:
 
   template <typename... Args>
   void log(LogLevel level, const std::string &format, Args... args) {
+    if (level < level_) {
+      return;
+    }
+
     std::string log_info = fmt::format(format, args...);
     std::string level_prefix = fmt::format("[{}] ", LogNameTable[static_cast<std::uint8_t>(level)]);
     std::string name_prefix = fmt::format("[{}] ", name_);
@@ -47,11 +51,10 @@ public:
     std::string message =
       fmt::format("{} {} {}: {}", level_prefix, name_prefix, log_time, log_info);
 
-    if (level >= this->level_) {
-      std::string colored_message =
-        fmt::format(LogColorTable[static_cast<std::uint8_t>(level)], message);
-      writer_->write(colored_message);
-    }
+    std::string colored_message =
+      fmt::format(LogColorTable[static_cast<std::uint8_t>(level)], message);
+    writer_->write(colored_message);
+
     std::lock_guard<std::mutex> lock(consle_mutex_);
     fmt::print(fg(LogFmtColorTable[static_cast<std::uint8_t>(level)]), "{}\n", message);
   }

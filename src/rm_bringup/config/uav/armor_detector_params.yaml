@@ -2,11 +2,12 @@
   ros__parameters:
     debug: true
     target_frame: odom
-    detect_color: 1
     binary_thres: 80
 
     use_pca: true # 使用PCA算法矫正灯条的角点
     use_ba: true # 使用BA优化算法求解装甲板的Yaw角 
+    use_pnp_refiner: false
+    pnp_refiner.mode: none
 
     light.min_ratio: 0.01
     light.max_ratio: 1.0
@@ -21,8 +22,3 @@
 
     classifier_threshold: 0.6
     ignore_classes: ["negative"]
-
-    armor_detector.binary_img.enable_pub_plugins: ["image_transport/raw", "image_transport/compressed"]
-    armor_detector.number_img.enable_pub_plugins: ["image_transport/raw", "image_transport/compressed"]
-    armor_detector.result_img.enable_pub_plugins: ["image_transport/raw", "image_transport/compressed"]
-

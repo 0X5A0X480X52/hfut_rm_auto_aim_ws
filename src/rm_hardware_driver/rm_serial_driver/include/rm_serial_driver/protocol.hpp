@@ -21,10 +21,8 @@
 #include <string>
 #include <string_view>
 // ros2
-#include <geometry_msgs/msg/twist.hpp>
 #include <rclcpp/rclcpp.hpp>
 // project
-#include "rm_interfaces/msg/chassis_cmd.hpp"
 #include "rm_interfaces/msg/gimbal_cmd.hpp"
 #include "rm_interfaces/msg/serial_receive_data.hpp"
 #include "rm_interfaces/srv/set_mode.hpp"

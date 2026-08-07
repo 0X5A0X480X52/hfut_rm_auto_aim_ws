@@ -25,13 +25,14 @@
 // Eigen
 #include <Eigen/Dense>
 // ros2
+#include <tf2_ros/buffer.h>
+
 #include <geometry_msgs/msg/pose.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
-#include <tf2_ros/buffer.h>
 // project
-#include "armor_pnp_refiner/core/armor_pnp_refiner.hpp"
 #include "armor_detector/ba_solver.hpp"
+#include "armor_pnp_refiner/core/armor_pnp_refiner.hpp"
 #include "rm_interfaces/msg/armor.hpp"
 #include "rm_utils/math/pnp_solver.hpp"
 
@@ -41,15 +42,15 @@ public:
   explicit ArmorPoseEstimator(sensor_msgs::msg::CameraInfo::SharedPtr camera_info);
 
   std::vector<rm_interfaces::msg::Armor> extractArmorPoses(const std::vector<Armor> &armors,
-                                               Eigen::Matrix3d R_imu_camera,
-                                               double stamp_sec = 0.0);
+                                                           Eigen::Matrix3d R_imu_camera);
 
   void enableBA(bool enable) { use_ba_ = enable; }
   void configurePnpRefiner(bool enable, const std::string &mode);
 
 private:
   // Select the best PnP solution according to the armor's direction in image, only available for SOLVEPNP_IPPE
-  void sortPnPResult(const Armor &armor, std::vector<cv::Mat> &rvecs,
+  void sortPnPResult(const Armor &armor,
+                     std::vector<cv::Mat> &rvecs,
                      std::vector<cv::Mat> &tvecs) const;
 
   // Convert a rotation matrix to RPY
@@ -67,5 +68,5 @@ private:
   cv::Mat camera_matrix_;
   cv::Mat dist_coeffs_;
 };
-} // namespace fyt::auto_aim
-#endif // ARMOR_POSE_ESTIMATOR_HPP_
+}  // namespace fyt::auto_aim
+#endif  // ARMOR_POSE_ESTIMATOR_HPP_

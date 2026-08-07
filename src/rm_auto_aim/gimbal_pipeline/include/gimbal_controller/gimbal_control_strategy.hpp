@@ -31,7 +31,6 @@ namespace gimbal_controller
 // 前向声明组件
 class ArmorPositionCalculator;
 class ArmorSelector;
-class BallisticSolverClient;
 class LocalTrajectoryCompensator;
 class FireAdvisor;
 class FireAdviceEngine;
@@ -110,49 +109,21 @@ public:
   void setComponents(
     std::shared_ptr<ArmorPositionCalculator> position_calculator,
     std::shared_ptr<ArmorSelector> armor_selector,
-    std::shared_ptr<BallisticSolverClient> ballistic_client,
     std::shared_ptr<LocalTrajectoryCompensator> local_compensator,
     std::shared_ptr<FireAdvisor> fire_advisor);
 
   void setFireAdviceEngine(std::shared_ptr<FireAdviceEngine> fire_advice_engine);
 
-  /**
-   * @brief 设置弹道求解模式
-   * @param mode "service" 或 "local"（其他值按 service 处理）
-   */
-  void setBallisticMode(const std::string & mode);
-
 protected:
   std::shared_ptr<ArmorPositionCalculator> position_calculator_;
   std::shared_ptr<ArmorSelector> armor_selector_;
-  std::shared_ptr<BallisticSolverClient> ballistic_client_;
   std::shared_ptr<LocalTrajectoryCompensator> local_compensator_;
   std::shared_ptr<FireAdvisor> fire_advisor_;
   std::shared_ptr<FireAdviceEngine> fire_advice_engine_;
-  bool prefer_local_ballistic_{false};
-
   /**
    * @brief 创建空闲状态的控制命令
    */
   rm_interfaces::msg::GimbalCmd createIdleCmd() const;
-
-  /**
-   * @brief 计算弹道补偿
-   * @param target_position 目标位置
-   * @param target_velocity 目标速度
-   * @param bullet_speed 子弹速度
-   * @param[out] pitch 补偿后的pitch角
-   * @param[out] yaw yaw角
-   * @param[out] flight_time 飞行时间
-   * @return 是否成功
-   */
-  bool computeBallistic(
-    const Eigen::Vector3d & target_position,
-    const Eigen::Vector3d & target_velocity,
-    double bullet_speed,
-    double & pitch,
-    double & yaw,
-    double & flight_time) const;
 
   void markDelayAuditInvalid(const std::string & strategy_name, bool tracking);
   void markDelayAuditValid(const DelayAuditSnapshot & snapshot);

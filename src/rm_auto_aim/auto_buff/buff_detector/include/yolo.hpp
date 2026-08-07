@@ -1,10 +1,10 @@
 #pragma once
 
-#include "types.hpp"
-
-#include <openvino/openvino.hpp>
 #include <opencv2/core/matx.hpp>
+#include <openvino/openvino.hpp>
 #include <vector>
+
+#include "types.hpp"
 
 namespace auto_buff {
 struct YoloParams {
@@ -27,7 +27,7 @@ public:
 
 class YOLO : public YOLOBase {
 public:
-  explicit YOLO(const YoloParams & params);
+  explicit YOLO(const YoloParams &params);
   ~YOLO();
   // NOTE: 返回的tensor是浅拷贝的，并发场景要自己深拷贝下保证生命周期
   ov::Tensor preProcess(const cv::Mat &image) override;
@@ -36,13 +36,10 @@ public:
   std::vector<RuneObject> postProcess(const ov::Tensor &output_tensor) override;
 
 private:
-  void generateProposals(
-    std::vector<RuneObject> &output_objs,
-     const cv::Mat &output_buffer) const;
+  void generateProposals(std::vector<RuneObject> &output_objs, const cv::Mat &output_buffer) const;
 
-  void nmsMergeSortedBboxes(std::vector<RuneObject> &rune_objects,
-                            std::vector<int> &indices) const;
-  
+  void nmsMergeSortedBboxes(std::vector<RuneObject> &rune_objects, std::vector<int> &indices) const;
+
   void getTransformMatrix(float half_h, float half_w, float scale);
   void generateGridsAndStride();
   float intersectionArea(const RuneObject &a, const RuneObject &b) const;
@@ -53,7 +50,7 @@ private:
   static constexpr int yolo_class_number = 2;
   static constexpr int yolo_color_number = 2;
   static constexpr int yolo_point_number = 5;
-  
+
   ov::Core core_;
   ov::CompiledModel compiled_model_;
 
@@ -62,4 +59,4 @@ private:
   cv::Size input_image_size_;
   std::vector<GridAndStride> grid_strides_;
 };
-}
+}  // namespace auto_buff

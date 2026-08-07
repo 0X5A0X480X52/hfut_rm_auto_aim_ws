@@ -1,747 +1,178 @@
 gimbal_pipeline:
   ros__parameters:
-    # ═══════════════════════════════════════════════════════════════
-    # Tracker parameters (from max_entropy_tracker)
-    # ═══════════════════════════════════════════════════════════════
-    target_frame: "odom"
-    source_frame: "camera_optical_frame"
-    predict_rate: 100.0
-    default_r1: 0.15
-    default_r2: 0.20
+    binder:
+      enable_soft_fusion: false
+      soft_fusion_w_topology: 0.15
+    controller:
+      bullet_speed: 20.0
+      delay:
+        control_latency_s: 0.0
+        prediction_extra_s: 0.0
+        trigger_to_muzzle_s: 0.0
+      fire:
+        facing_filter_opening_angle_deg: 60.0
+        probability:
+          ballistic_growth_x: 0.03
+          ballistic_growth_y: 0.06
+          ballistic_growth_z: 0.08
+          ballistic_sigma_x0: 0.01
+          ballistic_sigma_y0: 0.015
+          ballistic_sigma_z0: 0.015
+          burst:
+            burst_bullet_count: 5
+          commit:
+            min_fire_ms: 20.0
+          enable: true
+          evidence:
+            log_clip: 2.0
+            reference_probability_p0: 0.6
+            window_ms: 50.0
+          future_step_ms: 0.5
+          future_window_ms: 1.0
+          gate:
+            alpha: 0.1
+            fire_off_th: 0.45
+            fire_on_th: 0.85
+            strategy: legacy
+          normal_velocity_gate:
+            front_epsilon: 0.0001
+            max_complement_angle_deg: 45.0
+          normal_velocity_weight:
+            enable: true
+            v_ref: 15.0
+          sigma_point:
+            sigma_v0: 1.0
+          temperature:
+            theta_reset_cold: 0.0
+            theta_reset_hot: 0.0
+            value: 0.5
+          use_tracker_covariance: true
+          window_fusion: softmax
+        use_gimbal_kinematics: true
+        visualization:
+          image_debug:
+            enable: true
+      mpc:
+        N: 5
+        diagnostics:
+          enable: true
+        dt: 0.01
+        max_accel: 18.0
+        q_pitch: 1000.0
+        q_pitch_vel: 2.0
+        q_yaw: 1000.0
+        q_yaw_vel: 90.0
+        r_pitch: 0.015
+        r_yaw: 0.008
+        s_pitch: 0.01
+        s_yaw: 0.05
+        vel_clamp:
+          max_linear_speed: 1.5
+          max_v_yaw: 10.0
+        weighting:
+          enable: true
+      output_filter:
+        enable_clamping: true
+        enable_outlier_rejection: true
+        enable_rate_limiter: true
+        max_pitch_diff: 10.0
+        max_pitch_rate: 3.0
+        outlier_threshold_pitch: 5.0
+      solver:
+        facing_enter_angle: 20.0
+        facing_exit_angle: 30.0
+        selection_method: facing_or_virtual_pose
+        shooting_range_height: 0.1
+        shooting_range_width: 0.1
+        side_angle: 25.0
+        virtual_pose:
+          auto_switch:
+            enable: false
+            enter_vyaw: 1.0
+            exit_vyaw: 16.0
+            selection_method: virtual_fixed_id
     default_dza: 0.0
-    tracker_timeout: 0.50
-    debug_mode: true
-    enable_oscillation_detection: false
-    visualization_frame: "odom"
-
-    # UKF tuning
-    ukf.alpha: 0.001
-    ukf.beta: 2.0
-    ukf.kappa: 0.0
-    ukf.obs_noise_pos: 0.001
-    ukf.obs_noise_yaw: 0.05
-    ukf.dual_obs_noise_pos: 0.001
-    ukf.dual_obs_noise_yaw: 0.03
-    ukf.dual_obs_geometry_noise_scale: 0.02
-    ukf.single_obs_update_weight_pos: 5.0
-    ukf.enable_innovation_gating: false
-    ukf.innovation_gate_chi2_threshold: 9.49
-
-    # Motion model
-    motion.translation_model: "Singer"  # "CV" | "Singer"
-    motion.cv_process_noise_vel: 1.00
-    motion.ca_process_noise_acc: 0.01
-    motion.singer_alpha: 0.5
-    motion.singer_sigma: 0.50
-    motion.process_noise_r: 0.002
-    motion.process_noise_dz: 0.00005
-
-    # Spin model
-    spin.spin_process_noise_yaw_rate: 1.0
-    spin.spin_process_noise_yaw_acc: 10.0
-    spin.spin_process_noise_delta_rate: 1.0
-    spin.spin_process_noise_delta_acc: 30.0
-
-  #$
-    # Entropy
-    entropy.temperature: 2.0
-    entropy.use_adaptive: true
-    entropy.k_prior_weight: 0.7
-
-    # Tracker logic
-    tracker.tracking_thres: 2
-    tracker.lost_thres: 8
-    tracker.temp_lost_thres: 3
-    tracker.max_match_distance: 5.0
-    tracker.max_match_yaw_diff: 5.0
-    tracker.n_panels: 4
-    tracker.panel_angle_step: 1.5707963267948966
-
-    # Constraints
-    constraints.min_radius: 0.12
-    constraints.max_radius: 0.3
-    constraints.min_dz: -1.0
-    constraints.max_dz: 1.0
-    
-    # Outpost tracker (known 3-armor geometry + max-entropy mode switch)
-    outpost.use_tracker_v2: true
-    outpost.translation_model: "CA"   # "CV" | "CA" | "Singer"
-    outpost.rotation_model: "CA"      # "CV" | "CA"
-    # Outpost state machine thresholds (independent from tracker.* used by adaptive)
-    outpost.tracking_thres: 2
-    outpost.lost_thres: 90
-    outpost.temp_lost_thres: 3
-    outpost.max_match_distance: 2.0
-    outpost.max_match_yaw_diff: 1.0
-    outpost.singer_alpha: 0.001          # <=0: fallback to motion.singer_alpha
-    outpost.singer_sigma: 0.001          # <=0: fallback to motion.singer_sigma
-    outpost.spin_process_noise_theta_rate: 1.0  # <=0: fallback to spin.spin_process_noise_delta_rate
-    outpost.spin_process_noise_theta_acc: 0.01   # <=0: fallback to spin.spin_process_noise_delta_acc
-    outpost.radius: 0.275
-    # 语义约定:
-    #   id0=最高, id1=中间, id2=最低
-    # 俯视顺时针角序:
-    #   0deg(id0) -> 120deg(id2) -> 240deg(id1)
-    outpost.z_offset_0: 0.102
-    outpost.z_offset_1: 0.00
-    outpost.z_offset_2: -0.102
-    outpost.panel_angle_step: 2.0943951023931953
-    outpost.softmax_temperature: 1.5
-    outpost.weight_yaw: 1.0
-    outpost.weight_z_state: 6.0
-    outpost.weight_z_history: 2.0
-    outpost.weight_xy_residual: 2.5
-    outpost.weight_switch_penalty: 0.05
-    outpost.entropy_enter: 0.75
-    outpost.entropy_exit: 0.60
-    outpost.max_prob_enter: 0.60
-    outpost.max_prob_exit: 0.75
-    outpost.stable_frames: 4
-    outpost.z_history_window: 15
-    outpost.single_mode_confidence_scale: 0.70
-    outpost.binding_enable_multi_obs: true
-    outpost.binding_transition_confirm_frames: 3
-    outpost.binding_same_panel_yaw_gate: 0.35
-    outpost.binding_same_panel_z_gate: 0.08
-    outpost.binding_same_panel_xy_gate: 0.18
-    outpost.binding_min_candidate_prob: 0.40
-    outpost.binding_min_candidate_margin: 0.12
-    outpost.binding_switch_strong_score: 0.60
-    outpost.binding_period_window: 12
-    outpost.binding_period_weight: 0.60
-    outpost.binding_period_min_spin_rate: 0.8
-    outpost.binding_period_update_min_confidence: 0.55
-    outpost.binding_period_update_min_jump: 0.015
-    outpost.binding_dz_ema_alpha: 0.20
-    outpost.binding_confidence_floor: 0.15
-    outpost.alpha_pos: 0.65
-    outpost.beta_vel: 0.30
-    outpost.alpha_yaw: 0.60
-    outpost.beta_yaw_rate: 0.25
-    outpost.assume_static_center: true
-    outpost.linear_velocity_damping: 0.90
-    outpost.yaw_rate_damping: 0.98
-    outpost.max_center_speed: 1.00
-    outpost.max_yaw_rate: 12.0
-
-    # Panel mismatch detection
-    panel_mismatch.enable: true
-    panel_mismatch.window_size: 8
-    panel_mismatch.threshold_t1: 0.0000009
-    panel_mismatch.confirm_count: 3
-    panel_mismatch.reinit_count: 5
-  #$
-
-    # Output smoother (1-Euro filter + Robbins-Monro)
-    smoother.enable: true
-    smoother.enable_position_smooth: true
-    smoother.enable_yaw_smooth: false
-    smoother.enable_velocity_smooth: true
-    smoother.enable_structural_convergence: true
-    smoother.pos_min_cutoff: 1.0
-    smoother.pos_beta: 0.01
-    smoother.pos_d_cutoff: 1.0
-    smoother.yaw_min_cutoff: 1.0
-    smoother.yaw_beta: 0.005
-    smoother.yaw_d_cutoff: 1.0
-    smoother.vel_min_cutoff: 0.10
-    smoother.vel_beta: 0.01
-    smoother.vel_d_cutoff: 1.0
-    smoother.rm_initial_step: 0.5
-    smoother.rm_gamma: 0.75
-    smoother.rm_n0: 5
-    smoother.rm_dual_obs_boost: 3.0
-    smoother.rm_min_radius: 0.12
-    smoother.rm_max_radius: 0.5
-    smoother.rm_min_dz: -1.0
-    smoother.rm_max_dz: 1.0
-    smoother.rm_convergence_eps: 0.0001
-    smoother.default_freq: 30.0
-
-    # ---- Outlier filter (pre-smoother, independent of smoother.enable) ----
-    # When an outlier is detected the last valid SmoothedOutput is held
-    # (held-frame strategy) so One-Euro filter state is not corrupted.
-    smoother.enable_outlier_filter: true
-    smoother.outlier_method: "mad"        # "mad" | "iqr" | "mahalanobis"
-    smoother.outlier_window_size: 10      # rolling window length
-    smoother.outlier_min_samples: 5       # start filtering after N samples
-    smoother.outlier_mad_k: 3.5           # MAD: |val - median| > k * MAD
-    smoother.outlier_iqr_k: 1.5           # IQR: |val - median| > k * IQR
-    smoother.outlier_mahal_threshold: 9.21  # Mahalanobis: d2 > threshold
-
-    # ═══════════════════════════════════════════════════════════════
-    # Target selector parameters
-    # ═══════════════════════════════════════════════════════════════
-    selector.strategy: "priority_list"
-    # selector.strategy options:
-    #   "min_yaw_deviation"            - select by smallest yaw deviation
-    #   "priority_list"                - select by selector.priority_robot_ids order
-    #   "sticky_min_yaw_deviation"     - min_yaw + preferred-id locking
-    selector.reference_yaw: 0.0
-    selector.max_yaw_deviation: 3.14159
-    selector.max_distance: 10.0
-    selector.min_confidence: 0.15
-    selector.hysteresis_threshold: 0.1
-    # selector.priority_robot_ids: ["1", "2", "3", "4", "5", "sentry", "outpost", "base"]
-    selector.priority_robot_ids: ["1", "2", "3", "4", "5", "sentry", "outpost", "base"]
-    selector.sticky_lock_frames: 3
-    selector.sticky_lost_frames: 3
-
-    # ═══════════════════════════════════════════════════════════════
-    # Gimbal controller parameters
-    # ═══════════════════════════════════════════════════════════════
-    controller.bullet_speed: 20.0
-    controller.control_rate: 250.0
-    controller.strategy: "mpc"    # "current" | "predicted" | "mpc" | "state_machine"
-    controller.ballistic_mode: "local"  # "service" | "local"
-
-    controller.solver.max_tracking_v_yaw: 12.0
-    controller.solver.transfer_thresh: 5
-    controller.solver.gravity: 9.8
-    controller.solver.resistance: 0.001
-    controller.solver.iteration_times: 20
-    controller.solver.pitch_offset: -0.30
-    controller.solver.yaw_offset: 0.0
-
-    # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
-    # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
-    # 若启用自适应 delay（adaptive_delay.enable=true），本值作为 delay 初始值。
-    controller.solver.controller_delay: 0.00
-
-    controller.solver.resistance: 0.001
-    ontroller.solver.iteration_times: 20
-    controller.solver.pitch_offset: -0.30
-    controller.solver.yaw_offset: 0.0
-
-    # controller_delay: 在 TRACKING_ARMOR 状态下，额外叠加此延迟作为云台控制目标 (秒)
-    # 设为 0 禁用（默认）。等价于 armor_solver 原版 controller_delay 机制。
-    # 若启用自适应 delay（adaptive_delay.enable=true），本值作为 delay 初始值。
-    #controller.solver.controller_delay: 0.00
-
-    # 自适应 controller_delay（AIMD）
-    # controller.solver.adaptive_delay.enable: true
-    # controller.solver.adaptive_delay.fire_wait_threshold: 10
-    # controller.solver.adaptive_delay.mul_factor: 1.2
-    # controller.solver.adaptive_delay.add_step: 0.005
-    # controller.solver.adaptive_delay.max_delay: 0.10
-    # controller.solver.adaptive_delay.min_delay: 0.0
-    # controller.solver.adaptive_delay.max_linear_speed: 3.0
-    # controller.solver.adaptive_delay.max_angular_speed: 10.0
-
-    # 选板算法参数
-    # selection_method: 选板算法
-    #   min_movement_with_facing  — 最小运动量 + 正面朝向 Hysteresis 过滤（默认）
-    #   min_movement_with_radial  — 过滤后按机器人中心径向夹角最小选板
-    #   min_movement              — 纯最小运动量，无朝向过滤
-    #   decision_angle            — 传统决策角算法（与 armor_solver 原版一致）
-    #   virtual_pose              — 虚拟姿态选板
-    #   virtual_fixed_id          — 固定 ID 虚拟姿态选板
-    #   facing_or_virtual_pose    — 真实可打板优先；无可打板时退回 virtual_pose
-    #   facing_or_virtual_fixed_id — 固定 ID 真实可打时输出真实板，否则退回虚拟板
-    controller.solver.selection_method: "facing_or_virtual_pose"
-    # controller.solver.virtual_pose.fixed_id: 2
-
-    # controller.solver.selection_method: "virtual_pose"
-    # controller.solver.selection_method: "virtual_fixed_id"
-    controller.solver.virtual_pose.auto_switch.enable: false
-    controller.solver.virtual_pose.auto_switch.enter_vyaw: 1.0
-    controller.solver.virtual_pose.auto_switch.exit_vyaw: 16.0
-    controller.solver.virtual_pose.auto_switch.selection_method: "virtual_fixed_id"
-    controller.solver.virtual_pose.auto_switch.fixed_id: 0
-
-    # 面向选板状态机参数
-    controller.solver.facing_enter_angle: 20.0
-    controller.solver.facing_exit_angle: 30.0
-
-    # 径向选板动态阈值（仅对 min_movement_with_radial 生效）
-    controller.solver.radial_dynamic.enable: false
-    controller.solver.radial_dynamic.v_yaw_ref: 15.0
-    controller.solver.radial_dynamic.shrink_ratio: 60.0
-    controller.solver.radial_dynamic.min_angle_deg: 5.0
-    controller.solver.radial_dynamic.bias_gain_deg: 60.0
-    controller.solver.radial_dynamic.max_bias_deg: 50.0
-
-    # ── Fire Advice（开火建议）统一参数 ───────────────────────────────
-    # 这些参数由 gimbal_pipeline_node 读取，并传入 FireAdviceEngine / ProbabilityEngine。
-    # 建议调参顺序：
-    #   1) 先调 decision_policy + delay（保证几何开火稳定）
-    #   2) 再开 probability.enable（先看 debug，不直接追求激进开火）
-    #   3) 最后调 gate 与 sigma-point（控制抖动与响应速度）
-
-    # 几何判定策略：
-    #   axis_threshold: 轴对齐矩形门限（更直观）
-    #   ellipse:        椭圆门限（边缘更平滑）
-    controller.fire.decision_policy: "axis_threshold"
-
-    # 开火可见性策略：
-    #   facing_only: 仅对“朝向可打”的装甲板出 fire（推荐）
-    #   legacy_all:  兼容旧行为，不做朝向过滤
-    controller.fire.target_visibility_policy: "facing_only"
-
-    # 朝向过滤开口角（度）：
-    # 180 表示不过滤；值越小越保守，建议 110~170 起步。
-    controller.fire.facing_filter_opening_angle_deg: 60.0
-
-    # 是否在出膛时刻预测云台姿态（考虑角速度/角加速度）：
-    # true 更贴近真实时序；false 更稳但偏保守。
-    controller.fire.use_gimbal_kinematics: true
-
-    # 候选飞行时间迭代次数（影响精度与耗时）：
-    # 1=快，2=推荐，3=高精度但更耗时。
-    controller.fire.flight_time_iters: 2
-
-    # 触发到出膛延迟（秒）：
-    # 建议用实测值；过大容易“追未来过度”，过小容易“晚点火”。
-    controller.fire.trigger_to_muzzle_s: 0.00
-
-    # ── 概率开火主开关 ───────────────────────────────────────────────
-    # false: 仅几何判定；true: 使用概率窗口 + gate 输出 fire_advice。
-    controller.fire.probability.enable: true
-
-    # 未来候选发射窗口（毫秒）与采样步长（毫秒）：
-    # window 越大，前瞻越多但计算更重；step 越小，分辨率更高但更耗时。
-    # 120FPS 场景建议从 50ms / 10ms 起步。
-    controller.fire.probability.future_window_ms: 1.0
-    controller.fire.probability.future_step_ms: 0.50
-
-    # 窗口融合：
-    #   max:     取窗口内最优开火时刻（激进）
-    #   softmax: 平滑融合（更稳）
-    controller.fire.probability.window_fusion: "softmax"
-    # softmax 温度，越大越接近 max；仅 window_fusion=softmax 时生效。
-    controller.fire.probability.softmax_beta: 20.0
-
-    # tracker 协方差使用策略：
-    # use_tracker_covariance=false 时使用 fallback_sigma_*。
-    # strict_covariance=true 时协方差非法将直接判 invalid（更严格）。
-    controller.fire.probability.use_tracker_covariance: true
-    controller.fire.probability.strict_covariance: false
-    controller.fire.probability.fallback_sigma_x: 0.020
-    controller.fire.probability.fallback_sigma_y: 0.020
-    controller.fire.probability.fallback_sigma_z: 0.030
-
-    # 弹道不确定性基线与随时间增长（用于 Sigma_bullet）：
-    # 数值越大，P_hit 越保守；建议小步调参，优先调 growth_*。
-    controller.fire.probability.ballistic_sigma_x0: 0.010
-    controller.fire.probability.ballistic_sigma_y0: 0.015
-    controller.fire.probability.ballistic_sigma_z0: 0.015
-    controller.fire.probability.ballistic_growth_x: 0.030
-    controller.fire.probability.ballistic_growth_y: 0.060
-    controller.fire.probability.ballistic_growth_z: 0.080
-
-    # 法向速度权重（软约束，可选）：
-    # 仅在通过法向速度硬门控后生效。用于降低擦边/斜入射样本的 p_hit。
-    controller.fire.probability.normal_velocity_weight.enable: true
-    controller.fire.probability.normal_velocity_weight.v_ref: 15.0
-    controller.fire.probability.normal_velocity_weight.w_min: 0.5
-
-    # 法向速度门控（硬约束，推荐开启）：
-    # 1) require_front_face=true 时，只有 front-hit（弹速与法向成钝角）才允许开火样本
-    #    进一步可用 max_complement_angle_deg 限制“与 -n 的夹角”上限（越小越严格）
-    # 2) v_n < v_activate_min 时直接拒绝（模拟装甲板最小激发速度）
-    # 3) front_epsilon 为 front-hit 数值判定容差
-    controller.fire.probability.normal_velocity_gate.enable: true
-    controller.fire.probability.normal_velocity_gate.require_front_face: true
-    controller.fire.probability.normal_velocity_gate.max_complement_angle_deg: 45.0
-    controller.fire.probability.normal_velocity_gate.v_activate_min: 8.0
-    controller.fire.probability.normal_velocity_gate.front_epsilon: 0.0001
-
-    # ── Sigma-Point（UT）扩展 ───────────────────────────────────────
-    # 用于传播 [弹速误差, 发射延时误差] 对 e_uv 的影响。
-    controller.fire.probability.sigma_point.enable: true
-    # method: unscented(推荐) | fixed(轻量近似)
-    controller.fire.probability.sigma_point.method: "unscented"
-    controller.fire.probability.sigma_point.sigma_v0: 1.0
-    controller.fire.probability.sigma_point.sigma_delay: 0.005
-    controller.fire.probability.sigma_point.rho: 0.0
-    controller.fire.probability.sigma_point.alpha: 0.7
-    controller.fire.probability.sigma_point.beta: 2.0
-    controller.fire.probability.sigma_point.kappa: 0.0
-
-    # ── Fire Gate（P_window -> fire_advice）────────────────────────
-    # mode:
-    #   lowpass:    响应快，调参直观
-    #   integrator: 抗抖更强，适合噪声大场景
-    controller.fire.probability.gate.mode: "lowpass"
-    # lowpass 系数（0~1）：越大越平滑但响应更慢。
-    controller.fire.probability.gate.alpha: 0.1
-    # 滞回阈值：on 必须大于 off，差值越大抗抖越强但触发更慢。
-    controller.fire.probability.gate.fire_on_th: 0.85
-    controller.fire.probability.gate.fire_off_th: 0.45
-    # integrator 参数（仅 mode=integrator 生效）：
-    controller.fire.probability.gate.integrator_base_probability: 0.45
-    controller.fire.probability.gate.integrator_rise: 8.0
-    controller.fire.probability.gate.integrator_fall: 6.0
-
-    # ── 概率可视化（RViz marker）───────────────────────────────────
-    # 说明：原 controller.fire.visualization 已升级为分层配置，使用 *.enable。
-    controller.fire.visualization.enable: true
-    # 椭圆离散点数：越高越圆滑但更耗 CPU，建议 32~96。
-    controller.fire.visualization.ellipse_samples: 64
-    # 点云最大点数：越大越细腻但更耗带宽/渲染。
-    controller.fire.visualization.max_impact_points: 120
-
-    # ── 概率可视化（OpenCV 图像调试）───────────────────────────────
-    # 输出两个调试图：
-    #   ~/fire_debug/armor_plane : 装甲板平面投影误差 / 椭圆 / tau 样本
-    #   ~/fire_debug/normal_view : 法向入射示意 / 法向速度 / gate 状态
-    controller.fire.visualization.image_debug.enable: true
-    # 图像发布限频（Hz），建议 5~15，避免占用过高
-    controller.fire.visualization.image_debug.publish_rate_hz: 10.0
-    # 图像尺寸（像素）
-    controller.fire.visualization.image_debug.width: 960
-    controller.fire.visualization.image_debug.height: 540
-    # 是否叠加文字调试信息
-    controller.fire.visualization.image_debug.show_text: true
-    # 是否在平面图绘制 1σ/2σ 椭圆
-    controller.fire.visualization.image_debug.show_sigma_ellipse: true
-    # 是否在法向图绘制速度扇形示意
-    controller.fire.visualization.image_debug.show_velocity_fan: true
-
-    # ── GimbalCmd 输出端保护滤波器 ──────────────────────────────────
-    # 在 gimbal_cmd 发布前对 yaw_diff / pitch_diff 执行多级可配置保护：
-    #   0. Clamping        — 绝对限幅，防止极端控制量
-    #   1. Outlier Reject  — 帧间突变外点检测，hold 上帧或强制接受
-    #   2. Rate Limiter    — 限制每帧变化量上限
-    #   3. Moving Average  — 滑动窗口均值，抑制高频震荡
-    #   4. EMA             — 指数移动平均平滑（默认关闭，会引入延迟）
-    #   5. 1-Euro Filter   — 速度自适应低通（默认关闭，运动快时自动减弱平滑）
-    # 各级独立开关；目标切换或从 idle 恢复时自动重置滤波器历史。
-
-    # # 0. Clamping
-    # controller.output_filter.enable_clamping: true
-    # controller.output_filter.enable_clamping: true
-    # controller.output_filter.max_yaw_diff: 15.0      # 度，yaw_diff 绝对上限
-    # controller.output_filter.max_pitch_diff: 10.0    # 度，pitch_diff 绝对上限
-
-    # # 1. 外点检测
-    # controller.output_filter.enable_outlier_rejection: true
-    # controller.output_filter.outlier_threshold_yaw: 8.0    # 帧间跳变判定阈值 (度)
-    # controller.output_filter.outlier_threshold_pitch: 5.0  # 帧间跳变判定阈值 (度)
-    # controller.output_filter.max_outlier_count: 3          # 连续外点超此数后强制 accept
-
-    # # 2. Rate Limiter
-    # controller.output_filter.enable_rate_limiter: true
-    # controller.output_filter.max_yaw_rate: 5.0     # 每帧最大变化量 (度/帧 @ 250Hz)
-    # controller.output_filter.max_pitch_rate: 3.0   # 每帧最大变化量 (度/帧 @ 250Hz)
-
-    # # 3. 滑动窗口均值（默认关闭；窗口越大越平滑但延迟更大）
-    # controller.output_filter.enable_moving_average: true
-    # controller.output_filter.moving_average_window_size: 10  # 采样帧数，>=1
-
-    # # 4. EMA 平滑（默认关闭；开启会引入 1~2 帧延迟）
-    # controller.output_filter.enable_ema: true
-    # controller.output_filter.ema_alpha: 0.6         # (0,1]，越大越跟随，越小越平滑
-
-    # # 5. 1-Euro 自适应低通滤波（默认关闭；运动快时自动减弱平滑，适合高速目标）
-    # controller.output_filter.enable_one_euro: true
-    # controller.output_filter.one_euro_freq: 250.0        # Hz，应与 control_rate 一致
-    # controller.output_filter.one_euro_min_cutoff: 0.05    # 最小截止频率 (Hz)
-    # controller.output_filter.one_euro_beta: 0.1        # 速度灵敏度（越大高速时截止频率越高）
-    # controller.output_filter.one_euro_d_cutoff: 0.01      # 导数截止频率 (Hz)
-
-
-    # controller.state_machine.facing_enter_angle: 40.0
-    # controller.state_machine.facing_exit_angle: 55.0
-    # controller.state_machine.spin_v_yaw_thresh: 4.0
-    # controller.state_machine.calm_v_yaw_thresh: 2.0
-    # controller.state_machine.spin_enter_count: 5
-    # controller.state_machine.spin_exit_count: 5
-    # controller.state_machine.side_angle: 15.0
-    # controller.state_machine.prediction_delay: 0.0
-    # controller.state_machine.max_prediction_time: 0.5
-
-    # MPC 控制策略参数（controller.strategy: "mpc" 时生效）
-    # controller.mpc.N: 50
-    # controller.mpc.dt: 0.02
-    # controller.mpc.control_delay_s: 0.0
-    # controller.mpc.max_accel: 30.0
-    # controller.mpc.q_yaw: 100.0
-    # controller.mpc.q_pitch: 100.0
-    # controller.mpc.q_yaw_vel: 10.0
-    # controller.mpc.q_pitch_vel: 10.0
-    # controller.mpc.r_yaw: 0.001
-    # controller.mpc.r_pitch: 0.001
-    # controller.mpc.s_yaw: 0.001
-    # controller.mpc.s_pitch: 0.001
-    
-    controller.mpc.N: 5
-    controller.mpc.dt: 0.010
-    controller.mpc.control_delay_s: 0.0
-    controller.mpc.max_accel: 18.0
-    controller.mpc.q_yaw: 1000.0 #追踪权重
-    controller.mpc.q_pitch: 1000.0
-    controller.mpc.q_yaw_vel: 90.0 #角速度跟踪权重
-    controller.mpc.q_pitch_vel: 2.0
-    controller.mpc.r_yaw: 0.008 #控制惩罚越大越柔和
-    controller.mpc.r_pitch: 0.015
-    controller.mpc.s_yaw: 0.050  #末端轨迹
-    controller.mpc.s_pitch: 0.010
-
-    # MPC 命中概率权重加权（仅缩放 Q，默认关闭）
-    # controller.mpc.weighting.enable: false
-    # controller.mpc.weighting.alpha: 3.0 # 误差与命中概率的权衡参数，越大越重视误差小的轨迹
-    # controller.mpc.weighting.k_omega: 0.5 # 角速度衰减权重，越大越明显地降低快速转动时的权重
-    # controller.mpc.weighting.sigma_min: 0.05 # 最小角度不确定性 (rad)，防止过度自信导致权重过大
-    # controller.mpc.weighting.sigma_max: 0.5 # 最大角度不确定性 (rad)，防止过度不确定导致权重过小
-    # controller.mpc.weighting.sigma_sys: 0.02 # 系统误差引起的角度不确定性 (rad)，与目标距离成正比
-    # controller.mpc.weighting.target_size: 0.135 # 目标尺寸 (m)，用于将线速度转换为角度不确定性
-    # controller.mpc.weighting.delay_s: 0.0 # 额外预测延迟 (秒)，叠加在 controller.mpc.control_delay_s 之上，用于模拟更长的系统延迟对权重的影响
-    # controller.mpc.weighting.max_w: 6.0 # 权重上限，防止过大权重导致优化数值问题
-    # controller.mpc.weighting.smooth_alpha: 0.7 # 权重平滑系数，越大越平滑，范围 [0,1]
-    # controller.mpc.weighting.min_distance: 0.1 # 最小距离 (m)，用于权重计算中的距离归一化，防止过近时权重过大
-    # controller.mpc.weighting.sigma_beta: 0.3 # 角速度引起的不确定性增量权重，越大越明显地降低快速转动时的权重
-    # controller.mpc.weighting.gamma: 0.5 # 快速转动时权重衰减调整因子，越大衰减越激烈
-
-    # MPC 轨迹生成前速度 clamp
-    # 在轨迹生成之前对目标速度进行限幅，防止极端高速状态导致参考轨迹发散:
-    #   center_velocity: 保持方向不变，对速度标量 clamp 到 max_linear_speed
-    #   yaw_velocity:    直接 clamp 到 [-max_v_yaw, +max_v_yaw]
-    # enable: false 时不做任何处理，行为与原版完全一致
-    controller.mpc.vel_clamp.enable: true
-    controller.mpc.vel_clamp.max_linear_speed: 1.50   # 线速度标量上限 (m/s)
-    controller.mpc.vel_clamp.max_v_yaw: 10.0         # yaw 角速度上限 (rad/s)
-
-    # MPC 延时补偿: 启用后参考轨迹生成考虑 processing_delay + controller_delay + prediction_delay
-    # 并对每步迭代补偿子弹飞行时间、选板时考虑延迟后的云台姿态
-    # enable_delay_compensation: false 时行为与原版完全一致
-    controller.mpc.enable_delay_compensation: true
-    controller.mpc.prediction_delay_s: 0.0      # 额外预测延迟 (秒), 叠加在 processing_delay 之上
-    controller.mpc.flight_time_iters: 2          # 飞行时间迭代补偿次数
-    controller.mpc.max_processing_delay_s: 0.3   # 最大处理延迟 clamp 上限 (秒)
-    # yaw 速度前馈等效前瞻时间 (秒): yaw_ff ≈ target_yaw_velocity * k_s
-    # k_s=0.0 时禁用，推荐从 0.02~0.08 逐步调参
-    # controller.mpc.yaw_feedforward_k_s: 0.000
-
-    # ═══════════════════════════════════════════════════════════════
-    # Prediction Logger — 预测准确率记录（可选）
-    # ═══════════════════════════════════════════════════════════════
-    # 启用后会将观测值与 Tracker 后验状态写入 CSV 文件，
-    # 供 scripts/analyze_prediction.py 离线分析预测误差。
-    logging.enable: false
-    logging.output_dir: "/tmp/prediction_logs"
-    logging.robot_id_filter: ""      # 只记录指定 robot_id；为空则记录全部
-    logging.flush_every_n: 50        # 每 N 行落盘一次，减少 I/O 阻塞
-
-    # ═══════════════════════════════════════════════════════════════
-    # Maneuver Detection — 机动检测（基于 UKF NIS + 新息范数）
-    # ═══════════════════════════════════════════════════════════════
-    # 分 update_type 的组合阈值规则（FPR≤10% 离线分析结果）：
-    #   单观测(update_type=1): nis > nis_threshold_single AND innov_norm > innov_norm_threshold_single
-    # #   双观测(update_type=2): nis > nis_threshold_dual   AND innov_norm > innov_norm_threshold_dual
-    # maneuver.enable: true
-    # # maneuver.nis_threshold_single: 238.807
-    # # maneuver.nis_threshold_dual: 4132.110
-    # # maneuver.innov_norm_threshold_single: 0.1279
-    # # maneuver.innov_norm_threshold_dual: 0.0613
-
-    # maneuver.nis_threshold_single: 300.0
-    # maneuver.nis_threshold_dual: 4500.0
-    # maneuver.innov_norm_threshold_single: 0.15
-    # maneuver.innov_norm_threshold_dual: 0.10
-
-    # ================================================================
-    # 全量参数参考（注释版）
-    # 下面为代码中声明的所有可配置项参考（含默认值），以注释形式列出并附中文说明。
-    # 方便工程调参：把对应行取消注释并修改值即可覆盖默认参数。
-    # ================================================================
-
-    # Tracker / TF / 基本设置
-    # target_frame: 坐标目标参考框架 (默认: "odom")
-    # source_frame: 相机输入帧 (默认: "camera_optical_frame")
-    # predict_rate: Tracker 预测频率 (Hz)
-    # default_r1 / default_r2: 装甲板半径初始值 (m)
-    # default_dza: 装甲板 Z 偏移初始值 (m)
-    # tracker_timeout: 检测超时 (s)
-    # debug_mode: 启用调试话题与日志
-    # enable_oscillation_detection: 启用跟踪抖动检测
-    # visualization_frame: 可视化 marker 使用的 frame
-
-    # UKF 参数（估计器）
-    # ukf.alpha: UKF 采样参数 alpha (小值更稳定)
-    # ukf.beta: UKF beta
-    # ukf.kappa: UKF kappa
-    # ukf.obs_noise_pos: 位置观测噪声方差 (m^2)
-    # ukf.obs_noise_yaw: yaw 观测噪声 (rad)
-    # ukf.dual_obs_noise_pos: 双观测模式下位置噪声
-    # ukf.dual_obs_noise_yaw: 双观测模式下 yaw 噪声
-    # ukf.dual_obs_geometry_noise_scale: 双观测几何噪声缩放
-    # ukf.single_obs_update_weight_pos: 单观测时位置更新权重
-    # ukf.enable_innovation_gating: 启用创新门限过滤
-    # ukf.innovation_gate_chi2_threshold: 创新门限卡方阈值
-
-    # 运动模型
-    # motion.translation_model: "CV" | "CA" | "Singer" 等
-    # motion.cv_process_noise_vel: CV 模型过程噪声 (速度)
-    # motion.ca_process_noise_acc: CA 模型过程噪声 (加速度)
-    # motion.singer_alpha: Singer 模型 alpha
-    # motion.singer_sigma: Singer 模型 sigma
-    # motion.process_noise_r: 位置过程噪声
-    # motion.process_noise_dz: 高度过程噪声
-
-    # Spin / 旋转模型相关过程噪声
-    # spin.spin_process_noise_yaw_rate
-    # spin.spin_process_noise_yaw_acc
-    # spin.spin_process_noise_delta_rate
-    # spin.spin_process_noise_delta_acc
-
-    # 熵与多目标相关
-    # entropy.temperature: 选择器温度参数 (softmax 温度)
-    # entropy.use_adaptive: 是否启用自适应温度
-    # entropy.k_prior_weight: 先验权重
-
-    # Tracker 行为阈值
-    # tracker.tracking_thres: 跟踪阈值（计数）
-    # tracker.lost_thres: 丢失阈值（计数）
-    # tracker.temp_lost_thres: 临时丢失阈值
-    # tracker.max_match_distance: 匹配最大距离 (m)
-    # tracker.max_match_yaw_diff: 匹配最大 yaw 差 (rad)
-    # tracker.n_panels: 装甲板数
-    # tracker.panel_angle_step: 装甲板角度步长 (rad)
-
-    # Constraints / 约束
-    # constraints.min_radius / max_radius: 目标半径限制 (m)
-    # constraints.min_dz / max_dz: 高度差限制 (m)
-
-    # Panel mismatch 检测
-    # panel_mismatch.enable: 启用板匹配不一致检测
-    # panel_mismatch.window_size: 滑动窗口大小
-    # panel_mismatch.threshold_t1: 阈值 t1
-    # panel_mismatch.confirm_count: 确认次数
-    # panel_mismatch.reinit_count: 重新初始化次数
-
-    # 输出平滑器（Smoother）参数
-    # smoother.enable: 总开关
-    # smoother.enable_position_smooth: 位置平滑开关
-    # smoother.enable_yaw_smooth: yaw 平滑开关
-    # smoother.enable_velocity_smooth: 速度平滑开关
-    # smoother.enable_structural_convergence: 结构收敛开关
-    # smoother.pos_min_cutoff / pos_beta / pos_d_cutoff: 位置 One-Euro 参数
-    # smoother.yaw_min_cutoff / yaw_beta / yaw_d_cutoff: yaw One-Euro 参数
-    # smoother.vel_min_cutoff / vel_beta / vel_d_cutoff: 速度 One-Euro 参数
-    # smoother.rm_initial_step / rm_gamma / rm_n0: Robbins-Monro 参数
-    # smoother.rm_dual_obs_boost: 双观测时的增益
-    # smoother.rm_min_radius / rm_max_radius: RM 作用的半径范围
-    # smoother.rm_min_dz / rm_max_dz: RM 作用的高度范围
-    # smoother.rm_convergence_eps: RM 收敛阈值
-    # smoother.default_freq: 平滑器默认频率 (Hz)
-    # smoother.enable_outlier_filter: 是否启用外点检测
-    # smoother.outlier_method: mad | iqr | mahalanobis
-    # smoother.outlier_window_size: 外点检测窗口
-    # smoother.outlier_min_samples: 最小样本数
-    # smoother.outlier_mad_k / outlier_iqr_k / outlier_mahal_threshold: 外点阈值
-
-    # Target selector 选择策略参数
-    # selector.strategy: 选择策略名称
-    # selector.reference_yaw: 参考 yaw
-    # selector.max_yaw_deviation: 最大偏差
-    # selector.max_distance: 最大考虑距离
-    # selector.min_confidence: 最低置信度
-    # selector.hysteresis_threshold: 选择滞后阈值
-    # selector.priority_robot_ids: 优先 robot id 列表
-    # selector.sticky_lock_frames / sticky_lost_frames: sticky 策略帧数
-
-    # 控制器通用设置
-    # controller.bullet_speed: 子弹速度 (m/s)
-    # controller.control_rate: 控制频率 (Hz)
-    # controller.strategy: 控制策略 (current | predicted | mpc | state_machine)
-    # controller.ballistic_mode: 弹道求解方式 (service | local)
-
-    # Solver / 目标选择与弹道解算相关参数
-    # controller.solver.shooting_range_width/height: 允许射击的误差范围 (rad)
-    # controller.solver.side_angle: 侧面角阈值 (deg)
-    # controller.solver.min_switching_v_yaw: 切换最小 yaw 速度阈值
-    # controller.solver.prediction_delay: 预测延迟 (s)
-    # controller.solver.max_prediction_time: 预测最大时间 (s)
-    # controller.solver.max_tracking_v_yaw: 最大跟踪 yaw 速度 (rad/s)
-    # controller.solver.transfer_thresh: 切换阈值
-    # controller.solver.gravity: 重力加速度 (m/s^2)
-    # controller.solver.resistance: 阻力系数
-    # controller.solver.iteration_times: 迭代次数
-    # controller.solver.pitch_offset / yaw_offset: 云台偏移补偿 (rad)
-    # controller.solver.facing_enter_angle / facing_exit_angle: 朝向判定角 (deg)
-    # controller.solver.radial_dynamic.*: 径向动态选板参数
-    # controller.solver.controller_delay: 额外 controller delay (s)
-    # controller.solver.selection_method: 选板方法名称
-
-    # Controller adaptive delay (AIMD)
-    # controller.solver.adaptive_delay.enable
-    # controller.solver.adaptive_delay.fire_wait_threshold
-    # controller.solver.adaptive_delay.mul_factor
-    # controller.solver.adaptive_delay.add_step
-    # controller.solver.adaptive_delay.max_delay / min_delay
-    # controller.solver.adaptive_delay.max_linear_speed / max_angular_speed
-
-    # State machine 参数
-    # controller.state_machine.facing_enter_angle / facing_exit_angle
-    # controller.state_machine.spin_v_yaw_thresh / calm_v_yaw_thresh
-    # controller.state_machine.spin_enter_count / spin_exit_count
-    # controller.state_machine.side_angle
-    # controller.state_machine.prediction_delay / max_prediction_time
-
-    # MPC 相关参数
-    # controller.mpc.N: 预测步数
-    # controller.mpc.dt: 时间步长 (s)
-    # controller.mpc.control_delay_s: 控制延时 (s)
-    # controller.mpc.max_accel: 最大角加速度 (rad/s^2)
-    # controller.mpc.q_* / r_* / s_*: Q,R,S 矩阵基准值
-    # controller.mpc.enable_delay_compensation: 启用延迟补偿参考轨迹
-    # controller.mpc.prediction_delay_s: 额外预测延迟
-    # controller.mpc.flight_time_iters: 子弹飞行时间迭代次数
-    # controller.mpc.max_processing_delay_s: processing_delay 上限
-    # controller.mpc.yaw_feedforward_k_s: yaw 前馈等效时间 (s)
-
-    # Maneuver-adaptive MPC
-    # controller.mpc.maneuver_adapt.enable
-    # controller.mpc.maneuver_adapt.a_max
-    # controller.mpc.maneuver_adapt.eta
-    # controller.mpc.maneuver_adapt.tau
-    # controller.mpc.maneuver_adapt.r_scale
-
-    # MPC 权重加权（命中概率引导, 仅缩放 Q）
-    # controller.mpc.weighting.enable: 是否启用
-    # controller.mpc.weighting.alpha: 缩放幅度 α
-    # controller.mpc.weighting.k_omega: 角速度惩罚系数
-    # controller.mpc.weighting.sigma_min / sigma_max / sigma_sys
-    # controller.mpc.weighting.target_size: 装甲板尺寸参考 (m)
-    # controller.mpc.weighting.delay_s: 备用延时参数（已建议不重复使用）
-    # controller.mpc.weighting.max_w: 权重上限
-    # controller.mpc.weighting.smooth_alpha: 权重 EMA 平滑系数
-    # controller.mpc.weighting.min_distance: 最小距离截断
-    # controller.mpc.weighting.sigma_beta: sigma 随 ω 收缩因子
-    # controller.mpc.weighting.gamma: r_k 幂次 (增强区分度)
-
-    # MPC 轨迹前速度 clamp
-    # controller.mpc.vel_clamp.enable
-    # controller.mpc.vel_clamp.max_linear_speed
-    # controller.mpc.vel_clamp.max_v_yaw
-
-    # MPC FOV 软约束
-    # controller.mpc.fov_constraint.enable
-    # controller.mpc.fov_constraint.margin
-    # controller.mpc.fov_constraint.slack_weight
-    # controller.mpc.fov_constraint.constraint_steps
-    # controller.mpc.fov_constraint.dynamic_margin.enable
-    # controller.mpc.fov_constraint.dynamic_margin.vel_scale
-    # controller.mpc.fov_constraint.fallback_fov_yaw / fallback_fov_pitch
-
-    # 输出保护滤波器（GimbalCmd 端）
-    # controller.output_filter.enable_clamping
-    # controller.output_filter.max_yaw_diff / max_pitch_diff
-    # controller.output_filter.enable_outlier_rejection
-    # controller.output_filter.outlier_threshold_yaw / outlier_threshold_pitch
-    # controller.output_filter.max_outlier_count
-    # controller.output_filter.enable_rate_limiter
-    # controller.output_filter.max_yaw_rate / max_pitch_rate
-    # controller.output_filter.enable_moving_average
-    # controller.output_filter.moving_average_window_size
-    # controller.output_filter.enable_ema / controller.output_filter.ema_alpha
-    # controller.output_filter.enable_one_euro / one_euro_* params
-
-    # Prediction logging
-    # logging.enable
-    # logging.output_dir
-    # logging.robot_id_filter
-    # logging.flush_every_n
-
-    # 注意：要修改参数请在此文件中对应键下修改数值（或取消注释并覆盖）。
+    logging:
+      enable: false
+    motion:
+      ca_process_noise_acc: 0.01
+      cv_process_noise_vel: 1.0
+      singer_alpha: 0.5
+      singer_sigma: 0.5
+    norm4_v3:
+      backend_config:
+        backend_type: ukf_v1
+        noise_profile: package://gimbal_pipeline/config/norm4_v3/profiles/noise/default.yaml
+      hypothesis_selector:
+        evidence_prior_enable: false
+        min_top1_confidence: 0.55
+      inekf:
+        single_update:
+          structural_gain_dza: 0.0
+          structural_gain_r: 0.0
+      inekf_runtime:
+        motion_profile: ca
+        noise_profile: package://gimbal_pipeline/config/norm4_v3/profiles/noise/ypd_ba_low_weight.yaml
+        translation_model: CA
+      slow_structure:
+        alpha_dza_dual: 0.02
+        alpha_dza_single: 0.0
+        alpha_r1_dual: 0.05
+        alpha_r1_single: 0.0
+        alpha_r2_dual: 0.05
+        alpha_r2_single: 0.0
+        prior_pull_gain: 0.002
+        prior_sigma_dza: 0.06
+        prior_sigma_r: 0.06
+        q_theta_dza: 5.0e-07
+        q_theta_r1: 1.0e-06
+        q_theta_r2: 1.0e-06
+      warmup:
+        min_confidence_to_commit: 0.7
+        min_margin_to_commit: 1.5
+    outpost:
+      binding_enable_multi_obs: true
+      lost_thres: 90
+      max_match_distance: 2.0
+      max_match_yaw_diff: 1.0
+      singer_alpha: 0.001
+      singer_sigma: 0.001
+      spin_process_noise_theta_acc: 0.01
+      spin_process_noise_theta_rate: 1.0
+      temp_lost_thres: 3
+      weight_z_history: 2.0
+    panel_mismatch:
+      threshold_t1: 9.0e-07
+    predict_rate: 100.0
+    selector:
+      priority_robot_ids:
+      - '1'
+      - '2'
+      - '3'
+      - '4'
+      - '5'
+      - sentry
+      - outpost
+      - base
+    smoother:
+      enable_outlier_filter: true
+      enable_position_smooth: true
+      vel_beta: 0.01
+      vel_min_cutoff: 0.1
+    spin:
+      spin_process_noise_delta_acc: 30.0
+      spin_process_noise_delta_rate: 1.0
+      spin_process_noise_yaw_acc: 10.0
+      spin_process_noise_yaw_rate: 1.0
+    tracker:
+      degraded_single_obs_enable: true
+      jump_binding_enable: true
+      lost_thres: 8
+      max_match_distance: 5.0
+      max_match_yaw_diff: 5.0
+    tracker_timeout: 0.5
+    ukf:
+      dual_obs_noise_pos: 0.001
+      enable_ypd_observation_noise: false
+      obs_noise_pos: 0.001
+      obs_noise_yaw: 0.05

@@ -22,24 +22,19 @@
 #include "max_entropy_tracker/trackers/norm4_v3/backends/norm4_single_armor_imm_bundle.hpp"
 #include "max_entropy_tracker/trackers/norm4_v3/models/norm4_structure_provider.hpp"
 #include "max_entropy_tracker/trackers/norm4_v3/backends/norm4_ukf_backend_v1_adapter.hpp"
-#include "max_entropy_tracker/trackers/norm4_v3/backends/norm4_ukf_backend_v2.hpp"
 
 namespace fyt::auto_aim::norm4_v3 {
 
-enum class BackendType { UKF_V1, UKF_V2, INEKF };
+enum class BackendType { UKF_V1, INEKF };
 
 inline BackendType backend_type_from_string(const std::string &s) {
   if (s == "ukf_v1") return BackendType::UKF_V1;
-  if (s == "ukf_v2") return BackendType::UKF_V2;
   if (s == "inekf") return BackendType::INEKF;
   throw std::invalid_argument("Unknown backend type: " + s);
 }
 
 inline const Norm4V3UkfConfig &select_ukf_config(const UnifiedConfig &config,
                                                   BackendType type) {
-  if (type == BackendType::UKF_V2 && config.norm4_v3.ukf_v2.enabled) {
-    return config.norm4_v3.ukf_v2;
-  }
   if (type == BackendType::INEKF && config.norm4_v3.inekf.enabled) {
     return config.norm4_v3.inekf;
   }
@@ -303,38 +298,6 @@ inline std::unique_ptr<IMeasurementNoiseModel> create_noise_model(
   return std::make_unique<FixedCartesianNoiseModel>(ukf_cfg);
 }
 
-inline std::shared_ptr<CompositeProcessModel> create_v2_process_model_by_profile(
-    const UnifiedConfig &cfg, const std::string &profile) {
-  TranslationConfig tc;
-  tc.cv_process_noise_vel = cfg.motion.cv_process_noise_vel;
-  tc.ca_process_noise_acc = cfg.motion.ca_process_noise_acc;
-  tc.singer_alpha = cfg.motion.singer_alpha;
-  tc.singer_sigma = cfg.motion.singer_sigma;
-
-  RotationConfig rc;
-  rc.cv_process_noise_rate = cfg.spin.spin_process_noise_delta_rate;
-  rc.ca_process_noise_acc = cfg.spin.spin_process_noise_delta_acc;
-
-  StructuralConfig sc;
-  sc.process_noise_r = cfg.motion.process_noise_r;
-  sc.process_noise_dz = cfg.motion.process_noise_dz;
-
-  TranslationModel translation = cfg.motion.translation_model;
-  RotationModel rotation = RotationModel::CV;
-  if (profile == "cv") {
-    translation = TranslationModel::CV;
-  } else if (profile == "ca") {
-    translation = TranslationModel::CA;
-  } else if (profile == "singer") {
-    translation = TranslationModel::SINGER;
-  } else if (profile == "yaw_ca") {
-    rotation = RotationModel::CA;
-  } else if (profile != "default") {
-    throw std::invalid_argument("Unsupported motion_profile: " + profile);
-  }
-  return create_default_process_model(translation, rotation, tc, rc, sc, 3);
-}
-
 inline UnifiedConfig apply_inekf_motion_overrides(const UnifiedConfig &config) {
   UnifiedConfig local = config;
   const auto &o = config.norm4_v3.inekf_runtime;
@@ -365,23 +328,6 @@ inline std::unique_ptr<IStructuredBackend> create_backend(
           base_ukf_cfg, config.norm4_v3.backend_config.noise_profile);
       (void)ukf_cfg;
       return std::make_unique<UkfBackendV1Adapter>(config, dt);
-    }
-    case BackendType::UKF_V2: {
-      const std::string &motion_profile = config.norm4_v3.backend_config.motion_profile;
-      const std::string &noise_profile = config.norm4_v3.backend_config.noise_profile;
-      Norm4V3UkfConfig ukf_cfg =
-          load_noise_profile_or_default(base_ukf_cfg, noise_profile);
-      std::unique_ptr<IMotionModelBundle> motion;
-      if (is_profile_file(motion_profile)) {
-        motion = create_motion_bundle_from_file(config, motion_profile);
-      } else {
-        auto proc_model = create_v2_process_model_by_profile(config, motion_profile);
-        motion = std::make_unique<NativeProcessModelBundle>(proc_model);
-      }
-      auto noise = create_noise_model(ukf_cfg, noise_profile);
-      return std::make_unique<UkfBackendV2>(std::move(motion),
-                                            std::move(noise), ukf_cfg, config,
-                                            dt);
     }
     case BackendType::INEKF: {
       UnifiedConfig local_cfg = apply_inekf_motion_overrides(config);

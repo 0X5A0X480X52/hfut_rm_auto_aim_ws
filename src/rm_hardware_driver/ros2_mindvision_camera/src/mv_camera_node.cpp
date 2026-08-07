@@ -13,152 +13,14 @@
 #include <sensor_msgs/msg/image.hpp>
 
 // C++ system
+#include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstdint>
 #include <cstring>
-#include <deque>
-#include <fstream>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
-
-// #include "rm_utils/heartbeat.hpp"
-
-namespace
-{
-
-class RawStreamRecorder
-{
-public:
-  RawStreamRecorder() = default;
-  ~RawStreamRecorder()
-  {
-    stop();
-  }
-
-  bool start(const std::string & path, int width, int height, uint32_t media_type, double fps, int interval)
-  {
-    stop();
-    file_.open(path, std::ios::binary);
-    if (!file_) {
-      return false;
-    }
-
-    file_ << "YAWFMT\n";
-    file_ << "WIDTH " << width << "\n";
-    file_ << "HEIGHT " << height << "\n";
-    file_ << "MEDIATYPE " << media_type << "\n";
-    file_ << "FPS " << fps << "\n";
-    file_ << "INTERVAL " << interval << "\n";
-    file_ << "===DATA===\n";
-    file_.flush();
-
-    running_ = true;
-    stop_requested_ = false;
-    recorded_frames_ = 0;
-    worker_thread_ = std::thread(&RawStreamRecorder::worker, this);
-    return true;
-  }
-
-  void stop()
-  {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (!running_) {
-        return;
-      }
-      stop_requested_ = true;
-    }
-    cond_.notify_one();
-    if (worker_thread_.joinable()) {
-      worker_thread_.join();
-    }
-
-    if (file_) {
-      file_ << "===META===\nFRAMES " << recorded_frames_ << "\n";
-      file_.flush();
-      file_.close();
-    }
-    running_ = false;
-    stop_requested_ = false;
-    queue_.clear();
-  }
-
-  bool isRunning() const
-  {
-    return running_;
-  }
-
-  bool enqueue(const void * data, size_t length)
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!running_ || stop_requested_ || queue_.size() >= kMaxQueueSize) {
-      return false;
-    }
-
-    FrameItem item;
-    item.buffer.resize(length);
-    std::memcpy(item.buffer.data(), data, length);
-    item.timestamp_us = static_cast<uint64_t>(
-      std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::system_clock::now().time_since_epoch())
-        .count());
-    queue_.push_back(std::move(item));
-    cond_.notify_one();
-    return true;
-  }
-
-private:
-  void worker()
-  {
-    while (true) {
-      FrameItem item;
-      {
-        std::unique_lock<std::mutex> lock(mutex_);
-        cond_.wait(lock, [this]() { return stop_requested_ || !queue_.empty(); });
-        if (queue_.empty()) {
-          if (stop_requested_) {
-            break;
-          }
-          continue;
-        }
-        item = std::move(queue_.front());
-        queue_.pop_front();
-      }
-
-      if (!file_) {
-        continue;
-      }
-
-      file_.write(reinterpret_cast<const char *>(&item.timestamp_us), sizeof(item.timestamp_us));
-      uint32_t len = static_cast<uint32_t>(item.buffer.size());
-      file_.write(reinterpret_cast<const char *>(&len), sizeof(len));
-      file_.write(reinterpret_cast<const char *>(item.buffer.data()), len);
-      recorded_frames_++;
-    }
-  }
-
-  struct FrameItem
-  {
-    std::vector<uint8_t> buffer;
-    uint64_t timestamp_us = 0;
-  };
-
-  static constexpr size_t kMaxQueueSize = 256;
-  mutable std::mutex mutex_;
-  std::condition_variable cond_;
-  std::deque<FrameItem> queue_;
-  std::thread worker_thread_;
-  std::ofstream file_;
-  bool running_ = false;
-  bool stop_requested_ = false;
-  size_t recorded_frames_ = 0;
-};
-
-}  // namespace
 
 namespace mindvision_camera
 {
@@ -187,26 +49,28 @@ public:
 
     // 获取序列号参数（如果指定）
     std::string camera_sn = this->declare_parameter("camera_sn", "");
-    
+
     // 选择要初始化的相机
-    tSdkCameraDevInfo* selected_camera = nullptr;
+    tSdkCameraDevInfo * selected_camera = nullptr;
     if (camera_sn.empty()) {
       // 如果没有指定序列号，使用第一个相机
       selected_camera = &t_camera_enum_list[0];
-      RCLCPP_INFO(this->get_logger(), "No camera_sn specified, using first camera: %s (SN: %s)", 
-                  selected_camera->acFriendlyName, selected_camera->acSn);
+      RCLCPP_INFO(
+        this->get_logger(), "No camera_sn specified, using first camera: %s (SN: %s)",
+        selected_camera->acFriendlyName, selected_camera->acSn);
     } else {
       // 根据序列号查找相机
       for (int i = 0; i < i_camera_counts; i++) {
-        RCLCPP_INFO(this->get_logger(), "Camera %d: %s (SN: %s)", 
-                    i, t_camera_enum_list[i].acFriendlyName, t_camera_enum_list[i].acSn);
+        RCLCPP_INFO(
+          this->get_logger(), "Camera %d: %s (SN: %s)", i, t_camera_enum_list[i].acFriendlyName,
+          t_camera_enum_list[i].acSn);
         if (std::string(t_camera_enum_list[i].acSn) == camera_sn) {
           selected_camera = &t_camera_enum_list[i];
           RCLCPP_INFO(this->get_logger(), "Found camera with SN: %s", camera_sn.c_str());
           break;
         }
       }
-      
+
       if (selected_camera == nullptr) {
         RCLCPP_ERROR(this->get_logger(), "Camera with SN '%s' not found!", camera_sn.c_str());
         return;
@@ -226,8 +90,8 @@ public:
     // 获得相机的特性描述结构体。该结构体中包含了相机可设置的各种参数的范围信息。决定了相关函数的参数
     CameraGetCapability(h_camera_, &t_capability_);
 
-    // 直接使用vector的内存作为相机输出buffer
-    image_msg_.data.reserve(
+    // Allocate the SDK output buffer before CameraImageProcess writes into it.
+    image_msg_.data.resize(
       t_capability_.sResolutionRange.iHeightMax * t_capability_.sResolutionRange.iWidthMax * 3);
 
     // 设置手动曝光
@@ -277,15 +141,13 @@ public:
       RCLCPP_INFO(this->get_logger(), "Publishing image!");
 
       image_msg_.header.frame_id = frame_id_;
-      RCLCPP_DEBUG(this->get_logger(), "Image frame_id set to: %s", image_msg_.header.frame_id.c_str());
+      RCLCPP_DEBUG(
+        this->get_logger(), "Image frame_id set to: %s", image_msg_.header.frame_id.c_str());
       image_msg_.encoding = "rgb8";
 
-      while (rclcpp::ok()) {
+      while (rclcpp::ok() && capturing_) {
         int status = CameraGetImageBuffer(h_camera_, &s_frame_info_, &pby_buffer_, 1000);
         if (status == CAMERA_STATUS_SUCCESS) {
-          // Record raw frame before processing
-          recordRawFrame(s_frame_info_, pby_buffer_);
-          
           CameraImageProcess(h_camera_, pby_buffer_, image_msg_.data.data(), &s_frame_info_);
           if (flip_image_) {
             CameraFlipFrameBuffer(image_msg_.data.data(), &s_frame_info_, 3);
@@ -320,12 +182,11 @@ public:
 
   ~MVCameraNode() override
   {
+    capturing_ = false;
     if (capture_thread_.joinable()) {
       capture_thread_.join();
     }
-    
-    stopRawStreamRecorder();
-    
+
     CameraUnInit(h_camera_);
 
     RCLCPP_INFO(this->get_logger(), "Camera node destroyed!");
@@ -397,33 +258,29 @@ public:
     CameraSetGamma(h_camera_, gamma);
     RCLCPP_INFO(this->get_logger(), "Gamma = %d", gamma);
 
-    // Frame Rate (帧率控制)
-    // 优先尝试使用 CameraSetFrameRate (网口相机支持)
-    // 如果不支持，则回退到 CameraSetFrameSpeed (USB相机支持)
-    param_desc.description = "Frame rate in Hz (<=0 for maximum, recommend 10-30 for dual cameras)";
+    param_desc.description = "Frame rate in Hz (<=0 for maximum)";
     param_desc.integer_range[0].from_value = 0;
     param_desc.integer_range[0].to_value = 200;
     int frame_rate = this->declare_parameter("frame_rate", 10, param_desc);
-    
+
+    param_desc.description = "Frame speed mode (0=Low, 1=Normal, 2=High, 3=Super)";
+    param_desc.integer_range[0].from_value = 0;
+    param_desc.integer_range[0].to_value = t_capability_.iFrameSpeedDesc - 1;
+    int frame_speed = this->declare_parameter("frame_speed", 0, param_desc);
+
     int status_fr = CameraSetFrameRate(h_camera_, frame_rate);
     if (status_fr == CAMERA_STATUS_SUCCESS) {
       RCLCPP_INFO(this->get_logger(), "Frame rate = %d fps", frame_rate);
     } else if (status_fr == -4) {  // CAMERA_STATUS_NOT_SUPPORTED
-      // 网口相机的帧率设置不支持，尝试使用帧速度模式（USB相机）
-      RCLCPP_INFO(this->get_logger(), "CameraSetFrameRate not supported, using CameraSetFrameSpeed instead");
-      
-      // Frame Speed (帧速度模式): 0=Low, 1=Normal, 2=High, 3=Super
-      // 对于双相机场景，建议使用 Low 模式以降低USB带宽
-      param_desc.description = "Frame speed mode (0=Low, 1=Normal, 2=High, 3=Super)";
-      param_desc.integer_range[0].from_value = 0;
-      param_desc.integer_range[0].to_value = t_capability_.iFrameSpeedDesc - 1;
-      int frame_speed = this->declare_parameter("frame_speed", 0, param_desc);  // 默认Low模式
-      
+      RCLCPP_INFO(
+        this->get_logger(), "CameraSetFrameRate not supported, using CameraSetFrameSpeed instead");
+
       int status_fs = CameraSetFrameSpeed(h_camera_, frame_speed);
       if (status_fs == CAMERA_STATUS_SUCCESS) {
-        const char* speed_names[] = {"Low", "Normal", "High", "Super"};
-        RCLCPP_INFO(this->get_logger(), "Frame speed = %d (%s)", frame_speed,
-                    frame_speed < 4 ? speed_names[frame_speed] : "Unknown");
+        const char * speed_names[] = {"Low", "Normal", "High", "Super"};
+        RCLCPP_INFO(
+          this->get_logger(), "Frame speed = %d (%s)", frame_speed,
+          frame_speed < 4 ? speed_names[frame_speed] : "Unknown");
       } else {
         RCLCPP_WARN(this->get_logger(), "Failed to set frame speed, status = %d", status_fs);
       }
@@ -437,17 +294,17 @@ public:
     param_desc.integer_range[0].from_value = 0;
     param_desc.integer_range[0].to_value = t_capability_.sResolutionRange.iWidthMax;
     image_width_ = this->declare_parameter("image_width", 0, param_desc);
-    
+
     param_desc.description = "Image height (0 for camera default)";
     param_desc.integer_range[0].from_value = 0;
     param_desc.integer_range[0].to_value = t_capability_.sResolutionRange.iHeightMax;
     image_height_ = this->declare_parameter("image_height", 0, param_desc);
-    
+
     // 如果用户指定了分辨率（非0），则设置分辨率
     if (image_width_ > 0 && image_height_ > 0) {
       tSdkImageResolution resolution;
       memset(&resolution, 0, sizeof(tSdkImageResolution));
-      
+
       // 设置用户指定的宽度和高度
       resolution.iIndex = 0xFF;  // 自定义分辨率
       resolution.iWidth = image_width_;
@@ -458,23 +315,29 @@ public:
       resolution.iVOffsetFOV = 0;
       resolution.iWidthZoomSw = 0;
       resolution.iHeightZoomSw = 0;
-      
+
       int status_res = CameraSetImageResolution(h_camera_, &resolution);
       if (status_res == CAMERA_STATUS_SUCCESS) {
-        RCLCPP_INFO(this->get_logger(), "Image resolution set to %dx%d", image_width_, image_height_);
-        
+        RCLCPP_INFO(
+          this->get_logger(), "Image resolution set to %dx%d", image_width_, image_height_);
+
         // 验证设置是否生效
         tSdkImageResolution current_res;
         CameraGetImageResolution(h_camera_, &current_res);
-        RCLCPP_INFO(this->get_logger(), "Current resolution: %dx%d (FOV: %dx%d)", 
-                    current_res.iWidth, current_res.iHeight,
-                    current_res.iWidthFOV, current_res.iHeightFOV);
+        RCLCPP_INFO(
+          this->get_logger(), "Current resolution: %dx%d (FOV: %dx%d)", current_res.iWidth,
+          current_res.iHeight, current_res.iWidthFOV, current_res.iHeightFOV);
       } else {
-        RCLCPP_WARN(this->get_logger(), "Failed to set image resolution to %dx%d, status = %d. Using camera default.",
-                    image_width_, image_height_, status_res);
+        RCLCPP_WARN(
+          this->get_logger(),
+          "Failed to set image resolution to %dx%d, status = %d. Using camera default.",
+          image_width_, image_height_, status_res);
       }
     } else if (image_width_ > 0 || image_height_ > 0) {
-      RCLCPP_WARN(this->get_logger(), "Both image_width and image_height must be set (non-zero) to change resolution. Using camera default.");
+      RCLCPP_WARN(
+        this->get_logger(),
+        "Both image_width and image_height must be set (non-zero) to change resolution. Using "
+        "camera default.");
     } else {
       RCLCPP_INFO(this->get_logger(), "Using camera default resolution");
     }
@@ -484,19 +347,6 @@ public:
     // Frame id for published image/camera_info
     frame_id_ = this->declare_parameter("frame_id", std::string("camera_optical_frame"));
     RCLCPP_INFO(this->get_logger(), "frame_id = %s", frame_id_.c_str());
-
-    // Raw stream parameters
-    rcl_interfaces::msg::ParameterDescriptor raw_desc;
-    raw_desc.integer_range.resize(1);
-    raw_desc.integer_range[0].step = 1;
-    raw_desc.integer_range[0].from_value = 1;
-    raw_desc.integer_range[0].to_value = 1000;
-    raw_stream_enabled_ = this->declare_parameter<bool>("raw_stream.enabled", false);
-    raw_stream_path_ = this->declare_parameter<std::string>("raw_stream.path", "/tmp/mv_camera.yaw");
-    raw_stream_interval_ = this->declare_parameter("raw_stream.interval", 1, raw_desc);
-    if (raw_stream_interval_ < 1) {
-      raw_stream_interval_ = 1;
-    }
   }
 
   rcl_interfaces::msg::SetParametersResult parametersCallback(
@@ -567,9 +417,10 @@ public:
           result.successful = false;
           result.reason = "Failed to set frame speed, status = " + std::to_string(status);
         } else {
-          const char* speed_names[] = {"Low", "Normal", "High", "Super"};
-          RCLCPP_INFO(this->get_logger(), "Frame speed changed to %d (%s)", frame_speed,
-                      frame_speed < 4 ? speed_names[frame_speed] : "Unknown");
+          const char * speed_names[] = {"Low", "Normal", "High", "Super"};
+          RCLCPP_INFO(
+            this->get_logger(), "Frame speed changed to %d (%s)", frame_speed,
+            frame_speed < 4 ? speed_names[frame_speed] : "Unknown");
         }
       } else if (param.get_name() == "image_width") {
         image_width_ = param.as_int();
@@ -586,13 +437,14 @@ public:
           resolution.iVOffsetFOV = 0;
           resolution.iWidthZoomSw = 0;
           resolution.iHeightZoomSw = 0;
-          
+
           int status = CameraSetImageResolution(h_camera_, &resolution);
           if (status != CAMERA_STATUS_SUCCESS) {
             result.successful = false;
             result.reason = "Failed to set image resolution, status = " + std::to_string(status);
           } else {
-            RCLCPP_INFO(this->get_logger(), "Image resolution changed to %dx%d", image_width_, image_height_);
+            RCLCPP_INFO(
+              this->get_logger(), "Image resolution changed to %dx%d", image_width_, image_height_);
           }
         }
       } else if (param.get_name() == "image_height") {
@@ -610,36 +462,21 @@ public:
           resolution.iVOffsetFOV = 0;
           resolution.iWidthZoomSw = 0;
           resolution.iHeightZoomSw = 0;
-          
+
           int status = CameraSetImageResolution(h_camera_, &resolution);
           if (status != CAMERA_STATUS_SUCCESS) {
             result.successful = false;
             result.reason = "Failed to set image resolution, status = " + std::to_string(status);
           } else {
-            RCLCPP_INFO(this->get_logger(), "Image resolution changed to %dx%d", image_width_, image_height_);
+            RCLCPP_INFO(
+              this->get_logger(), "Image resolution changed to %dx%d", image_width_, image_height_);
           }
         }
-        } else if (param.get_name() == "frame_id") {
-          frame_id_ = param.as_string();
-          camera_info_msg_.header.frame_id = frame_id_;
-        } else if (param.get_name() == "flip_image") {
-          flip_image_ = param.as_bool();
-        } else if (param.get_name() == "raw_stream.enabled") {
-          raw_stream_enabled_ = param.as_bool();
-          if (!raw_stream_enabled_) {
-            stopRawStreamRecorder();
-          }
-        } else if (param.get_name() == "raw_stream.path") {
-          raw_stream_path_ = param.as_string();
-          if (raw_stream_recorder_) {
-            stopRawStreamRecorder();
-          }
-        } else if (param.get_name() == "raw_stream.interval") {
-          int interval = param.as_int();
-          if (interval < 1) {
-            interval = 1;
-          }
-          raw_stream_interval_ = interval;
+      } else if (param.get_name() == "frame_id") {
+        frame_id_ = param.as_string();
+        camera_info_msg_.header.frame_id = frame_id_;
+      } else if (param.get_name() == "flip_image") {
+        flip_image_ = param.as_bool();
       } else {
         result.successful = false;
         result.reason = "Unknown parameter: " + param.get_name();
@@ -674,61 +511,8 @@ public:
 
   int fail_conut_ = 0;
   std::thread capture_thread_;
+  std::atomic_bool capturing_{true};
   std::string frame_id_;
-
-  // Raw stream recording
-  bool raw_stream_enabled_ = false;
-  std::string raw_stream_path_;
-  int raw_stream_interval_ = 1;
-  int64_t raw_frame_counter_ = 0;
-  std::unique_ptr<RawStreamRecorder> raw_stream_recorder_;
-
-  void recordRawFrame(const tSdkFrameHead & frame_info, const uint8_t * frame_buffer)
-  {
-    if (!raw_stream_enabled_ || frame_buffer == nullptr || frame_info.uBytes == 0) {
-      return;
-    }
-
-    if (!raw_stream_recorder_) {
-      raw_stream_recorder_ = std::make_unique<RawStreamRecorder>();
-    }
-
-    if (!raw_stream_recorder_->isRunning()) {
-      if (raw_stream_path_.empty()) {
-        RCLCPP_WARN(this->get_logger(), "raw_stream.path is empty, skipping raw recording");
-        return;
-      }
-      // Estimate FPS from frame rate parameter or use default
-      double fps = 30.0;  // Default, actual FPS controlled by camera parameters
-      if (!raw_stream_recorder_->start(raw_stream_path_, frame_info.iWidth, frame_info.iHeight,
-                                       frame_info.uiMediaType, fps, raw_stream_interval_)) {
-        RCLCPP_ERROR(this->get_logger(), "Failed to start raw stream recorder for %s", raw_stream_path_.c_str());
-        raw_stream_recorder_.reset();
-        return;
-      }
-      raw_frame_counter_ = 0;
-    }
-
-    if (raw_stream_recorder_->isRunning()) {
-      if ((raw_frame_counter_ % raw_stream_interval_) == 0) {
-        if (!raw_stream_recorder_->enqueue(frame_buffer, frame_info.uBytes)) {
-          if ((raw_frame_counter_ % 60) == 0) {
-            RCLCPP_WARN(this->get_logger(), "Raw stream queue full, dropping frames for %s", raw_stream_path_.c_str());
-          }
-        }
-      }
-      raw_frame_counter_++;
-    }
-  }
-
-  void stopRawStreamRecorder()
-  {
-    if (raw_stream_recorder_) {
-      raw_stream_recorder_->stop();
-      raw_stream_recorder_.reset();
-    }
-    raw_frame_counter_ = 0;
-  }
 
   OnSetParametersCallbackHandle::SharedPtr params_callback_handle_;
 };

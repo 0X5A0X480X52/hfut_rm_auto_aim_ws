@@ -9,17 +9,12 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <iostream>
 
 #include "max_entropy_tracker/core/config.hpp"
 #include "max_entropy_tracker/core/observation.hpp"
 #include "max_entropy_tracker/trackers/base_tracker.hpp"
-#include "max_entropy_tracker/trackers/adaptive_armor_tracker.hpp"
-#include "max_entropy_tracker/trackers/norm_4armor_tracker.hpp"
 #include "max_entropy_tracker/trackers/norm4_v3/tracker/norm4_tracker_v2.hpp"
-#include "max_entropy_tracker/trackers/outpost_armor_tracker.hpp"
 #include "max_entropy_tracker/trackers/outpost_tracker_v2.hpp"
-#include "max_entropy_tracker/trackers/outpost_v3/outpost_tracker_v3.hpp"
 #include "max_entropy_tracker/utils/observation_outlier_filter.hpp"
 #include "max_entropy_tracker/utils/output_smoother.hpp"
 
@@ -179,21 +174,9 @@ class TrackerManager {
 
     std::unique_ptr<BaseTracker> t;
     if (robot_id == "outpost") {
-      if (config_.outpost.use_tracker_v3) {
-        t = std::make_unique<OutpostTrackerV3>(config_, dt_, enable_osc_);
-      } else if (config_.outpost.use_tracker_v2) {
-        t = std::make_unique<OutpostTrackerV2>(config_, dt_, enable_osc_);
-      } else {
-        t = std::make_unique<OutpostArmorTracker>(config_, dt_, enable_osc_);
-      }
+      t = std::make_unique<OutpostTrackerV2>(config_, dt_, enable_osc_);
     } else {
-      if (config_.tracker.implementation == "norm4") {
-        t = std::make_unique<Norm4ArmorTracker>(config_, dt_, enable_osc_);
-      } else if (config_.tracker.implementation == "norm4_v2") {
-        t = std::make_unique<Norm4ArmorTrackerV2>(config_, dt_, enable_osc_);
-      } else {
-        t = std::make_unique<AdaptiveArmorTracker>(config_, dt_, enable_osc_);
-      }
+      t = std::make_unique<Norm4ArmorTrackerV2>(config_, dt_, enable_osc_);
     }
     t->initialize(initial_obs, default_r1_, default_r2_, default_dza_);
 
@@ -210,14 +193,10 @@ class TrackerManager {
   bool update(const std::string &robot_id,
               const std::vector<ObservationData> &obs,
               double current_time) {
-    std::cout << "Updating tracker for robot_id=" << robot_id
-              << " with obs_count=" << obs.size() << std::endl;
     if (obs.empty()) return false;
     double t = current_time;
     auto it = trackers_.find(robot_id);
     if (it == trackers_.end()) {
-      std::cout << "No existing tracker for robot_id=" << robot_id
-                << ", creating new one." << std::endl;
       return get_or_create(robot_id, obs, current_time) != nullptr;
     }
 
@@ -225,14 +204,7 @@ class TrackerManager {
     if (ok) {
       it->second.last_update_time = t;
       it->second.observation_count += static_cast<int>(obs.size());
-      std::cout << "Updated tracker for robot_id=" << robot_id
-                << ", total_obs_count=" << it->second.observation_count
-                << std::endl;
     }
-
-    std::cout << "Tracker state for robot_id=" << robot_id
-              << " is now " << (it->second.tracker->is_tracking() ? "TRACKING" : "OTHER")
-              << std::endl;
     return ok;
   }
 
@@ -244,9 +216,6 @@ class TrackerManager {
       if (observed_ids.count(id) == 0 && entry.tracker->is_initialized()) {
         // Call update with empty observations to trigger handle_observation_loss
         entry.tracker->update({});
-        std::cout << "[TrackerManager] notify_missing: robot_id=" << id
-                  << " state=" << tracker_state_to_string(entry.tracker->state())
-                  << " lost_count=" << entry.tracker->lost_count() << std::endl;
       }
     }
   }
@@ -256,7 +225,6 @@ class TrackerManager {
     std::vector<std::string> removed;
     for (auto it = trackers_.begin(); it != trackers_.end();) {
       if (it->second.tracker->is_lost()) {
-        std::cout << "[TrackerManager] Removing LOST tracker: robot_id=" << it->first << std::endl;
         removed.push_back(it->first);
         erase_runtime_cache(it->first);
         it = trackers_.erase(it);
@@ -281,10 +249,6 @@ class TrackerManager {
     std::vector<std::string> removed;
     for (auto it = trackers_.begin(); it != trackers_.end();) {
       if (t - it->second.last_update_time > timeout_) {
-        std::cout << "Removing stale tracker for robot_id=" << it->first
-                  << ", last_update_time=" << it->second.last_update_time
-                  << ", current_time=" << t << std::endl;
-        std::cout << "delay=" << (t - it->second.last_update_time) << "s exceeds timeout=" << timeout_ << "s" << std::endl;
         removed.push_back(it->first);
         erase_runtime_cache(it->first);
         it = trackers_.erase(it);

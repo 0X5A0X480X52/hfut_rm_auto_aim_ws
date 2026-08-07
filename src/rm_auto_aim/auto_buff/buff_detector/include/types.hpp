@@ -1,8 +1,8 @@
 #pragma once
-#include "opencv2/core/types.hpp"
-
-#include <string>
 #include <chrono>
+#include <string>
+
+#include "opencv2/core/types.hpp"
 
 namespace auto_buff {
 enum class EnemyColor {
@@ -26,7 +26,7 @@ struct RunePoints {
   std::vector<cv::Point> toVector2i() const {
     return {center, bottom_left, top_left, top_right, bottom_right};
   }
-  
+
   cv::Point2f center;
   cv::Point2f bottom_right;
   cv::Point2f top_right;
@@ -54,4 +54,4 @@ struct GridAndStride {
   int stride;
 };
 
-}
+}  // namespace auto_buff

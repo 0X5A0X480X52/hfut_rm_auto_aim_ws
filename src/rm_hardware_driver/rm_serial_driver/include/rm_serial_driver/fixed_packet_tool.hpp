@@ -49,7 +49,6 @@ public:
     if (!transporter) {
       throw std::invalid_argument("transporter is nullptr");
     }
-    FYT_REGISTER_LOGGER("serial_driver", "~/fyt2024-log", INFO);
   }
 
   ~FixedPacketTool() { enbaleRealtimeSend(false); }

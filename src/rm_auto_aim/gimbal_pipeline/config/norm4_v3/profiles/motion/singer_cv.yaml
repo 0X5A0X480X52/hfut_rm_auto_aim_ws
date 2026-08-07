@@ -1,8 +1,0 @@
-motion:
-  type: native
-  native:
-    translation_model: singer
-    rotation_model: cv
-    translation:
-      singer_alpha: 0.5
-      singer_sigma: 2.0

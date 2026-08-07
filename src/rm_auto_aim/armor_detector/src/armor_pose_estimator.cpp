@@ -16,22 +16,20 @@
 
 #include <algorithm>
 #include <array>
+#include <stdexcept>
 
 #include "armor_detector/types.hpp"
 #include "rm_utils/logger/log.hpp"
 #include "rm_utils/math/utils.hpp"
 
 namespace fyt::auto_aim {
-ArmorPoseEstimator::ArmorPoseEstimator(
-    sensor_msgs::msg::CameraInfo::SharedPtr camera_info) {
+ArmorPoseEstimator::ArmorPoseEstimator(sensor_msgs::msg::CameraInfo::SharedPtr camera_info) {
   // Setup pnp solver
   pnp_solver_ = std::make_unique<PnPSolver>(camera_info->k, camera_info->d);
   pnp_solver_->setObjectPoints(
-      "small", Armor::buildObjectPoints<cv::Point3f>(SMALL_ARMOR_WIDTH,
-                                                     SMALL_ARMOR_HEIGHT));
+    "small", Armor::buildObjectPoints<cv::Point3f>(SMALL_ARMOR_WIDTH, SMALL_ARMOR_HEIGHT));
   pnp_solver_->setObjectPoints(
-      "large", Armor::buildObjectPoints<cv::Point3f>(LARGE_ARMOR_WIDTH,
-                                                     LARGE_ARMOR_HEIGHT));
+    "large", Armor::buildObjectPoints<cv::Point3f>(LARGE_ARMOR_WIDTH, LARGE_ARMOR_HEIGHT));
   // BA solver
   ba_solver_ = std::make_unique<BaSolver>(camera_info->k, camera_info->d);
   camera_matrix_ = cv::Mat(3, 3, CV_64F);
@@ -40,8 +38,7 @@ ArmorPoseEstimator::ArmorPoseEstimator(
       camera_matrix_.at<double>(r, c) = camera_info->k[r * 3 + c];
     }
   }
-  dist_coeffs_ =
-      cv::Mat(static_cast<int>(camera_info->d.size()), 1, CV_64F);
+  dist_coeffs_ = cv::Mat(static_cast<int>(camera_info->d.size()), 1, CV_64F);
   for (size_t i = 0; i < camera_info->d.size(); ++i) {
     dist_coeffs_.at<double>(static_cast<int>(i), 0) = camera_info->d[i];
   }
@@ -57,18 +54,17 @@ void ArmorPoseEstimator::configurePnpRefiner(bool enable, const std::string &mod
     pnp_refiner_.reset();
     return;
   }
+  if (pnp_refiner_mode_ != "single_xyz_yaw") {
+    throw std::invalid_argument("pnp_refiner.mode must be 'none' or 'single_xyz_yaw'");
+  }
 
   armor_pnp_refiner::PnpRefinerConfig cfg;
   cfg.mode = pnp_refiner_mode_;
-  // Keep Phase0 behavior as close to legacy detector BA as possible.
-  cfg.prefer_legacy_single_yaw = true;
   pnp_refiner_ = std::make_unique<armor_pnp_refiner::ArmorPnpRefiner>(cfg);
 }
 
-std::vector<rm_interfaces::msg::Armor>
-ArmorPoseEstimator::extractArmorPoses(const std::vector<Armor> &armors,
-                                   Eigen::Matrix3d R_imu_camera,
-                                   double stamp_sec) {
+std::vector<rm_interfaces::msg::Armor> ArmorPoseEstimator::extractArmorPoses(
+  const std::vector<Armor> &armors, Eigen::Matrix3d R_imu_camera) {
   std::vector<rm_interfaces::msg::Armor> armors_msg;
 
   for (const auto &armor : armors) {
@@ -76,8 +72,7 @@ ArmorPoseEstimator::extractArmorPoses(const std::vector<Armor> &armors,
 
     // Use PnP to get the initial pose information
     if (pnp_solver_->solvePnPGeneric(
-            armor.landmarks(), rvecs, tvecs,
-            (armor.type == ArmorType::SMALL ? "small" : "large"))) {
+          armor.landmarks(), rvecs, tvecs, (armor.type == ArmorType::SMALL ? "small" : "large"))) {
       sortPnPResult(armor, rvecs, tvecs);
       cv::Mat rmat;
       cv::Rodrigues(rvecs[0], rmat);
@@ -85,19 +80,16 @@ ArmorPoseEstimator::extractArmorPoses(const std::vector<Armor> &armors,
       Eigen::Matrix3d R = utils::cvToEigen(rmat);
       Eigen::Vector3d t = utils::cvToEigen(tvecs[0]);
 
-      double armor_roll =
-          rotationMatrixToRPY(R_gimbal_camera_ * R)[0] * 180 / M_PI;
+      double armor_roll = rotationMatrixToRPY(R_gimbal_camera_ * R)[0] * 180 / M_PI;
 
-      const bool use_legacy_single_yaw =
-          use_pnp_refiner_ && pnp_refiner_mode_ == "single_yaw";
-      if ((use_ba_ || use_legacy_single_yaw) && armor_roll < 15) {
+      if (use_ba_ && armor_roll < 15) {
         // Use BA alogorithm to optimize the pose from PnP
         // solveBa() will modify the rotation_matrix
         R = ba_solver_->solveBa(armor, t, R, R_imu_camera);
       }
 
       std::optional<armor_pnp_refiner::PnpRefineOutput> refined_opt;
-      if (use_pnp_refiner_ && pnp_refiner_ != nullptr && pnp_refiner_mode_ != "single_yaw") {
+      if (use_pnp_refiner_ && pnp_refiner_ != nullptr) {
         armor_pnp_refiner::PnpRefineInput input;
         input.t_camera_armor = t;
         input.q_camera_armor = Eigen::Quaterniond(R);
@@ -105,25 +97,13 @@ ArmorPoseEstimator::extractArmorPoses(const std::vector<Armor> &armors,
         input.roll_rad = rpy[0];
         input.pitch_rad = rpy[1];
         input.yaw_rad = rpy[2];
-        input.rvec = rvecs[0];
-        input.tvec = tvecs[0];
         input.image_points = armor.landmarks();
         input.object_points =
-            (armor.type == ArmorType::SMALL)
-                ? Armor::buildObjectPoints<cv::Point3f>(SMALL_ARMOR_WIDTH,
-                                                        SMALL_ARMOR_HEIGHT)
-                : Armor::buildObjectPoints<cv::Point3f>(LARGE_ARMOR_WIDTH,
-                                                        LARGE_ARMOR_HEIGHT);
+          (armor.type == ArmorType::SMALL)
+            ? Armor::buildObjectPoints<cv::Point3f>(SMALL_ARMOR_WIDTH, SMALL_ARMOR_HEIGHT)
+            : Armor::buildObjectPoints<cv::Point3f>(LARGE_ARMOR_WIDTH, LARGE_ARMOR_HEIGHT);
         input.camera_matrix = camera_matrix_;
         input.dist_coeffs = dist_coeffs_;
-        input.stamp_sec = stamp_sec;
-        input.armor_number = armor.number;
-        input.armor_type = (armor.number == "outpost")
-                               ? armor_pnp_refiner::ArmorSizeType::OUTPOST
-                               : (armor.type == ArmorType::SMALL
-                                      ? armor_pnp_refiner::ArmorSizeType::SMALL
-                                      : armor_pnp_refiner::ArmorSizeType::LARGE);
-        input.R_imu_camera = R_imu_camera;
         input.use_fixed_pitch_roll = false;
 
         const auto refined = pnp_refiner_->refine(input);
@@ -152,15 +132,15 @@ ArmorPoseEstimator::extractArmorPoses(const std::vector<Armor> &armors,
       armor_msg.pose.orientation.w = q.w();
 
       // Fill the distance to image center
-      armor_msg.distance_to_image_center =
-          pnp_solver_->calculateDistanceToCenter(armor.center);
+      armor_msg.distance_to_image_center = pnp_solver_->calculateDistanceToCenter(armor.center);
 
       // Fill optional 2D image geometry for downstream 2D evidence pipeline.
       armor_msg.detection_confidence = armor.confidence;
       armor_msg.has_image_geometry = true;
-      const auto corners = std::array<cv::Point2f, 4>{
-          armor.left_light.bottom, armor.left_light.top,
-          armor.right_light.top, armor.right_light.bottom};
+      const auto corners = std::array<cv::Point2f, 4>{armor.left_light.bottom,
+                                                      armor.left_light.top,
+                                                      armor.right_light.top,
+                                                      armor.right_light.bottom};
       float min_x = corners[0].x;
       float min_y = corners[0].y;
       float max_x = corners[0].x;
@@ -196,8 +176,7 @@ ArmorPoseEstimator::extractArmorPoses(const std::vector<Armor> &armors,
         armor_msg.pose_covariance_valid = ref.covariance_valid;
         for (int r = 0; r < 4; ++r) {
           for (int c = 0; c < 4; ++c) {
-            armor_msg.pose_covariance_xyz_yaw[r * 4 + c] =
-                ref.covariance_xyz_yaw(r, c);
+            armor_msg.pose_covariance_xyz_yaw[r * 4 + c] = ref.covariance_xyz_yaw(r, c);
           }
         }
       }
@@ -222,8 +201,8 @@ Eigen::Vector3d ArmorPoseEstimator::rotationMatrixToRPY(const Eigen::Matrix3d &R
 }
 
 void ArmorPoseEstimator::sortPnPResult(const Armor &armor,
-                                    std::vector<cv::Mat> &rvecs,
-                                    std::vector<cv::Mat> &tvecs) const {
+                                       std::vector<cv::Mat> &rvecs,
+                                       std::vector<cv::Mat> &tvecs) const {
   constexpr float PROJECT_ERR_THRES = 3.0;
 
   // 获取这两个解
@@ -245,12 +224,11 @@ void ArmorPoseEstimator::sortPnPResult(const Armor &armor,
   auto rpy1 = rotationMatrixToRPY(R_gimbal_camera_ * R1);
   auto rpy2 = rotationMatrixToRPY(R_gimbal_camera_ * R2);
 
-  std::string coord_frame_name =
-      (armor.type == ArmorType::SMALL ? "small" : "large");
-  double error1 = pnp_solver_->calculateReprojectionError(
-      armor.landmarks(), rvec1, tvec1, coord_frame_name);
-  double error2 = pnp_solver_->calculateReprojectionError(
-      armor.landmarks(), rvec2, tvec2, coord_frame_name);
+  std::string coord_frame_name = (armor.type == ArmorType::SMALL ? "small" : "large");
+  double error1 =
+    pnp_solver_->calculateReprojectionError(armor.landmarks(), rvec1, tvec1, coord_frame_name);
+  double error2 =
+    pnp_solver_->calculateReprojectionError(armor.landmarks(), rvec2, tvec2, coord_frame_name);
 
   // 两个解的重投影误差差距较大或者roll角度较大时，不做选择
   if ((error2 / error1 > PROJECT_ERR_THRES) || (rpy1[0] > 10 * 180 / M_PI) ||
@@ -259,11 +237,8 @@ void ArmorPoseEstimator::sortPnPResult(const Armor &armor,
   }
 
   // 计算灯条在图像中的倾斜角度
-  double l_angle =
-      std::atan2(armor.left_light.axis.y, armor.left_light.axis.x) * 180 / M_PI;
-  double r_angle =
-      std::atan2(armor.right_light.axis.y, armor.right_light.axis.x) * 180 /
-      M_PI;
+  double l_angle = std::atan2(armor.left_light.axis.y, armor.left_light.axis.x) * 180 / M_PI;
+  double r_angle = std::atan2(armor.right_light.axis.y, armor.right_light.axis.x) * 180 / M_PI;
   double angle = (l_angle + r_angle) / 2;
   angle += 90.0;
 
@@ -272,12 +247,11 @@ void ArmorPoseEstimator::sortPnPResult(const Armor &armor,
   // 根据倾斜角度选择解
   // 如果装甲板左倾（angle > 0），选择Yaw为负的解
   // 如果装甲板右倾（angle < 0），选择Yaw为正的解
-  if ((angle > 0 && rpy1[2] > 0 && rpy2[2] < 0) ||
-      (angle < 0 && rpy1[2] < 0 && rpy2[2] > 0)) {
+  if ((angle > 0 && rpy1[2] > 0 && rpy2[2] < 0) || (angle < 0 && rpy1[2] < 0 && rpy2[2] > 0)) {
     std::swap(rvec1, rvec2);
     std::swap(tvec1, tvec2);
     FYT_DEBUG("armor_detector", "PnP Solution 2 Selected");
   }
 }
 
-} // namespace fyt::auto_aim
+}  // namespace fyt::auto_aim

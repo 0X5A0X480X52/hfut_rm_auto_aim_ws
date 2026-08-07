@@ -1,158 +1,26 @@
 // Copyright (c) 2025
 // Licensed under the MIT License.
 
+#include <chrono>
+#include <cstring>
+
 #include "ros2_hik_camera/hik_camera_node.hpp"
 
-#include <chrono>
-#include <condition_variable>
-#include <cstring>
-#include <deque>
-#include <fstream>
-#include <mutex>
+namespace ros2_hik_camera {
 
-namespace ros2_hik_camera
-{
-
-class RawStreamRecorder
-{
-public:
-  RawStreamRecorder() = default;
-  ~RawStreamRecorder()
-  {
-    stop();
-  }
-
-  bool start(const std::string & path, int width, int height, uint64_t pixel_type, double fps, int interval)
-  {
-    stop();
-    file_.open(path, std::ios::binary);
-    if (!file_) {
-      return false;
-    }
-
-    file_ << "YAWFMT\n";
-    file_ << "WIDTH " << width << "\n";
-    file_ << "HEIGHT " << height << "\n";
-    file_ << "PIXELTYPE " << pixel_type << "\n";
-    file_ << "FPS " << fps << "\n";
-    file_ << "INTERVAL " << interval << "\n";
-    file_ << "===DATA===\n";
-    file_.flush();
-
-    running_ = true;
-    stop_requested_ = false;
-    recorded_frames_ = 0;
-    worker_thread_ = std::thread(&RawStreamRecorder::worker, this);
-    return true;
-  }
-
-  void stop()
-  {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (!running_) {
-        return;
-      }
-      stop_requested_ = true;
-    }
-    cond_.notify_one();
-    if (worker_thread_.joinable()) {
-      worker_thread_.join();
-    }
-
-    if (file_) {
-      file_ << "===META===\nFRAMES " << recorded_frames_ << "\n";
-      file_.flush();
-      file_.close();
-    }
-    running_ = false;
-    stop_requested_ = false;
-    queue_.clear();
-  }
-
-  bool isRunning() const
-  {
-    return running_;
-  }
-
-  bool enqueue(const void * data, size_t length)
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!running_ || stop_requested_ || queue_.size() >= kMaxQueueSize) {
-      return false;
-    }
-
-    FrameItem item;
-    item.buffer.resize(length);
-    std::memcpy(item.buffer.data(), data, length);
-    item.timestamp_us = static_cast<uint64_t>(
-      std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::system_clock::now().time_since_epoch())
-        .count());
-    queue_.push_back(std::move(item));
-    cond_.notify_one();
-    return true;
-  }
-
-private:
-  void worker()
-  {
-    while (true) {
-      FrameItem item;
-      {
-        std::unique_lock<std::mutex> lock(mutex_);
-        cond_.wait(lock, [this]() { return stop_requested_ || !queue_.empty(); });
-        if (queue_.empty()) {
-          if (stop_requested_) {
-            break;
-          }
-          continue;
-        }
-        item = std::move(queue_.front());
-        queue_.pop_front();
-      }
-
-      if (!file_) {
-        continue;
-      }
-
-      file_.write(reinterpret_cast<const char *>(&item.timestamp_us), sizeof(item.timestamp_us));
-      uint32_t len = static_cast<uint32_t>(item.buffer.size());
-      file_.write(reinterpret_cast<const char *>(&len), sizeof(len));
-      file_.write(reinterpret_cast<const char *>(item.buffer.data()), len);
-      recorded_frames_++;
-    }
-  }
-
-  struct FrameItem
-  {
-    std::vector<uint8_t> buffer;
-    uint64_t timestamp_us = 0;
-  };
-
-  static constexpr size_t kMaxQueueSize = 256;
-  mutable std::mutex mutex_;
-  std::condition_variable cond_;
-  std::deque<FrameItem> queue_;
-  std::thread worker_thread_;
-  std::ofstream file_;
-  bool running_ = false;
-  bool stop_requested_ = false;
-  size_t recorded_frames_ = 0;
-};
-
-HikCameraNode::HikCameraNode(const rclcpp::NodeOptions & options)
-: Node("hik_camera", options), capturing_(false)
-{
+HikCameraNode::HikCameraNode(const rclcpp::NodeOptions &options)
+: Node("hik_camera", options), capturing_(false) {
   RCLCPP_INFO(this->get_logger(), "Starting HikCameraNode!");
 
-  RCLCPP_INFO(this->get_logger(), "MV env: %s", getenv("MVCAM_COMMON_RUNENV") ? getenv("MVCAM_COMMON_RUNENV") : "null");
+  RCLCPP_INFO(this->get_logger(),
+              "MV env: %s",
+              getenv("MVCAM_COMMON_RUNENV") ? getenv("MVCAM_COMMON_RUNENV") : "null");
 
   // Initialize HIKVision SDK
   // Enumerate devices
   memset(&device_list_, 0, sizeof(MV_CC_DEVICE_INFO_LIST));
   int status = MV_CC_EnumDevices(MV_GIGE_DEVICE | MV_USB_DEVICE, &device_list_);
-  
+
   RCLCPP_INFO(this->get_logger(), "Enumerate status = %d", status);
   RCLCPP_INFO(this->get_logger(), "Found camera count = %d", device_list_.nDeviceNum);
 
@@ -163,19 +31,24 @@ HikCameraNode::HikCameraNode(const rclcpp::NodeOptions & options)
 
   // 打印所有检测到的相机信息
   for (unsigned int i = 0; i < device_list_.nDeviceNum; i++) {
-    MV_CC_DEVICE_INFO* dev_info = device_list_.pDeviceInfo[i];
+    MV_CC_DEVICE_INFO *dev_info = device_list_.pDeviceInfo[i];
     std::string camera_name = "Unknown";
     std::string serial_number = "Unknown";
-    
+
     if (dev_info->nTLayerType == MV_GIGE_DEVICE) {
-      camera_name = std::string(reinterpret_cast<char*>(dev_info->SpecialInfo.stGigEInfo.chModelName));
-      serial_number = std::string(reinterpret_cast<char*>(dev_info->SpecialInfo.stGigEInfo.chSerialNumber));
+      camera_name =
+        std::string(reinterpret_cast<char *>(dev_info->SpecialInfo.stGigEInfo.chModelName));
+      serial_number =
+        std::string(reinterpret_cast<char *>(dev_info->SpecialInfo.stGigEInfo.chSerialNumber));
     } else if (dev_info->nTLayerType == MV_USB_DEVICE) {
-      camera_name = std::string(reinterpret_cast<char*>(dev_info->SpecialInfo.stUsb3VInfo.chModelName));
-      serial_number = std::string(reinterpret_cast<char*>(dev_info->SpecialInfo.stUsb3VInfo.chSerialNumber));
+      camera_name =
+        std::string(reinterpret_cast<char *>(dev_info->SpecialInfo.stUsb3VInfo.chModelName));
+      serial_number =
+        std::string(reinterpret_cast<char *>(dev_info->SpecialInfo.stUsb3VInfo.chSerialNumber));
     }
-    
-    RCLCPP_INFO(this->get_logger(), "Camera %d: %s (SN: %s)", i, camera_name.c_str(), serial_number.c_str());
+
+    RCLCPP_INFO(
+      this->get_logger(), "Camera %d: %s (SN: %s)", i, camera_name.c_str(), serial_number.c_str());
   }
 
   // Initialize camera
@@ -226,36 +99,38 @@ HikCameraNode::HikCameraNode(const rclcpp::NodeOptions & options)
     // Allocate image data buffer
     MV_FRAME_OUT_INFO_EX frame_info;
     memset(&frame_info, 0, sizeof(MV_FRAME_OUT_INFO_EX));
-    
+
     // Get maximum image size
     MVCC_INTVALUE payload_size;
     MV_CC_GetIntValue(camera_handle_, "PayloadSize", &payload_size);
     frame_buffer_ = new unsigned char[payload_size.nCurValue];
-    
+
     while (rclcpp::ok() && capturing_) {
       memset(&frame_info, 0, sizeof(MV_FRAME_OUT_INFO_EX));
-      
+
       // Use MV_CC_GetOneFrameTimeout with appropriate timeout (2 seconds to accommodate frame rate)
-      int status = MV_CC_GetOneFrameTimeout(camera_handle_, frame_buffer_, 
-                                             payload_size.nCurValue, &frame_info, 2000);
+      int status = MV_CC_GetOneFrameTimeout(
+        camera_handle_, frame_buffer_, payload_size.nCurValue, &frame_info, 2000);
       if (status == MV_OK) {
         fail_count_ = 0;  // Reset fail count on success
         if (frame_buffer_ != nullptr && frame_info.nFrameLen > 0) {
-          recordRawFrame(frame_info);
           // Log pixel type on first frame for debugging
           static bool logged_pixel_type = false;
           if (!logged_pixel_type) {
-            RCLCPP_INFO(this->get_logger(), "Source pixel type: 0x%lx, Width: %d, Height: %d, FrameLen: %d", 
-                       frame_info.enPixelType, frame_info.nWidth, frame_info.nHeight, frame_info.nFrameLen);
+            RCLCPP_INFO(this->get_logger(),
+                        "Source pixel type: 0x%lx, Width: %d, Height: %d, FrameLen: %d",
+                        frame_info.enPixelType,
+                        frame_info.nWidth,
+                        frame_info.nHeight,
+                        frame_info.nFrameLen);
             logged_pixel_type = true;
           }
-          
+
           // For Bayer formats, use OpenCV for debayering instead of HIK SDK
           if (frame_info.enPixelType == PixelType_Gvsp_BayerRG8 ||
               frame_info.enPixelType == PixelType_Gvsp_BayerGB8 ||
               frame_info.enPixelType == PixelType_Gvsp_BayerGR8 ||
               frame_info.enPixelType == PixelType_Gvsp_BayerBG8) {
-
             MV_CC_PIXEL_CONVERT_PARAM convert_param;
             memset(&convert_param, 0, sizeof(MV_CC_PIXEL_CONVERT_PARAM));
 
@@ -282,10 +157,9 @@ HikCameraNode::HikCameraNode(const rclcpp::NodeOptions & options)
 
             int convert_status = MV_CC_ConvertPixelType(camera_handle_, &convert_param);
             if (convert_status != MV_OK) {
-              RCLCPP_WARN(
-                this->get_logger(),
-                "Failed to convert Bayer to BGR, status = 0x%x",
-                convert_status);
+              RCLCPP_WARN(this->get_logger(),
+                          "Failed to convert Bayer to BGR, status = 0x%x",
+                          convert_status);
               continue;
             }
 
@@ -301,23 +175,21 @@ HikCameraNode::HikCameraNode(const rclcpp::NodeOptions & options)
             image_msg_.width = image.cols;
             image_msg_.encoding = "bgr8";
             image_msg_.step = image.cols * 3;
-            image_msg_.data.assign(
-              image.data,
-              image.data + image.total() * image.elemSize());
+            image_msg_.data.assign(image.data, image.data + image.total() * image.elemSize());
 
             camera_pub_.publish(image_msg_, camera_info_msg_);
           } else {
             // For non-Bayer formats, use HIK SDK conversion
             MV_CC_PIXEL_CONVERT_PARAM convert_param;
             memset(&convert_param, 0, sizeof(MV_CC_PIXEL_CONVERT_PARAM));
-            
+
             convert_param.nWidth = frame_info.nWidth;
             convert_param.nHeight = frame_info.nHeight;
             convert_param.pSrcData = frame_buffer_;
             convert_param.nSrcDataLen = frame_info.nFrameLen;
             convert_param.enSrcPixelType = frame_info.enPixelType;
             convert_param.enDstPixelType = PixelType_Gvsp_RGB8_Packed;
-            
+
             // Allocate buffer if needed
             unsigned int need_size = frame_info.nWidth * frame_info.nHeight * 3;
             if (bgr_buffer_size_ < need_size) {
@@ -327,38 +199,39 @@ HikCameraNode::HikCameraNode(const rclcpp::NodeOptions & options)
               bgr_buffer_ = new unsigned char[need_size];
               bgr_buffer_size_ = need_size;
             }
-            
+
             convert_param.pDstBuffer = bgr_buffer_;
             convert_param.nDstBufferSize = bgr_buffer_size_;
-            
+
             // Verify camera handle before conversion
             if (camera_handle_ == nullptr) {
               RCLCPP_ERROR(this->get_logger(), "Camera handle is null during pixel conversion!");
               continue;
             }
-            
+
             int convert_status = MV_CC_ConvertPixelType(camera_handle_, &convert_param);
             if (convert_status == MV_OK) {
               // Create OpenCV Mat
               cv::Mat image(frame_info.nHeight, frame_info.nWidth, CV_8UC3, bgr_buffer_);
-              
+
               // Flip image if required
               if (flip_image_) {
                 cv::flip(image, image, -1);  // Flip both horizontally and vertically
               }
-              
+
               // Fill image message
               camera_info_msg_.header.stamp = image_msg_.header.stamp = this->now();
               image_msg_.height = image.rows;
               image_msg_.width = image.cols;
               image_msg_.step = image.cols * 3;
               image_msg_.data.assign(image.data, image.data + image.total() * image.elemSize());
-              
+
               // Publish
               camera_pub_.publish(image_msg_, camera_info_msg_);
             } else {
-              RCLCPP_WARN(this->get_logger(), "Failed to convert pixel format, status = 0x%x", 
-                         convert_status);
+              RCLCPP_WARN(this->get_logger(),
+                          "Failed to convert pixel format, status = 0x%x",
+                          convert_status);
             }
           }
         }
@@ -370,17 +243,17 @@ HikCameraNode::HikCameraNode(const rclcpp::NodeOptions & options)
           // 2. 相机处于触发模式
           // 3. 相机停流
           if (fail_count_ == 0) {
-            RCLCPP_WARN(this->get_logger(), 
-                       "MV_E_NODATA (0x%x): No data available. Possible causes:\n"
-                       "  1. Camera frame rate is too low for the acquisition frequency\n"
-                       "  2. Camera is in trigger mode (should be continuous)\n"
-                       "  3. Camera stopped streaming\n"
-                       "  Suggestion: Check camera frame rate setting and trigger mode",
-                       status);
+            RCLCPP_WARN(this->get_logger(),
+                        "MV_E_NODATA (0x%x): No data available. Possible causes:\n"
+                        "  1. Camera frame rate is too low for the acquisition frequency\n"
+                        "  2. Camera is in trigger mode (should be continuous)\n"
+                        "  3. Camera stopped streaming\n"
+                        "  Suggestion: Check camera frame rate setting and trigger mode",
+                        status);
           } else if (fail_count_ % 10 == 0) {
             // 只每10次打印一次，避免日志过多
-            RCLCPP_WARN(this->get_logger(), 
-                       "Still no data after %d attempts (MV_E_NODATA)", fail_count_);
+            RCLCPP_WARN(
+              this->get_logger(), "Still no data after %d attempts (MV_E_NODATA)", fail_count_);
           }
         } else {
           RCLCPP_WARN(this->get_logger(), "Failed to get image buffer, status = 0x%x", status);
@@ -390,27 +263,26 @@ HikCameraNode::HikCameraNode(const rclcpp::NodeOptions & options)
 
       // 对于MV_E_NODATA，更宽容一些，因为这可能是正常现象（帧率不匹配）
       if (fail_count_ > 50 && static_cast<unsigned int>(status) == 0x80000007u) {
-        RCLCPP_ERROR(this->get_logger(), 
-                    "Persistent MV_E_NODATA error. Please check:\n"
-                    "  1. Frame rate setting (current timeout: 1000ms)\n"
-                    "  2. Trigger mode (should be OFF for continuous acquisition)\n"
-                    "  3. Camera connection and power");
+        RCLCPP_ERROR(this->get_logger(),
+                     "Persistent MV_E_NODATA error. Please check:\n"
+                     "  1. Frame rate setting (current timeout: 1000ms)\n"
+                     "  2. Trigger mode (should be OFF for continuous acquisition)\n"
+                     "  3. Camera connection and power");
         fail_count_ = 0;  // 重置计数，继续尝试
       } else if (fail_count_ > 10 && static_cast<unsigned int>(status) != 0x80000007u) {
         // 对于其他错误，更快失败
-        RCLCPP_FATAL(this->get_logger(), 
-                    "Failed to get image buffer multiple times, exit! Last status = 0x%x", 
-                    status);
+        RCLCPP_FATAL(this->get_logger(),
+                     "Failed to get image buffer multiple times, exit! Last status = 0x%x",
+                     status);
         rclcpp::shutdown();
       }
     }
   });
 }
 
-HikCameraNode::~HikCameraNode()
-{
+HikCameraNode::~HikCameraNode() {
   RCLCPP_INFO(this->get_logger(), "Shutting down HikCameraNode!");
-  
+
   // Stop capture thread
   capturing_ = false;
   if (capture_thread_.joinable()) {
@@ -419,8 +291,6 @@ HikCameraNode::~HikCameraNode()
 
   // Stop grabbing
   stopGrabbing();
-
-  stopRawStreamRecorder();
 
   // Close camera
   if (camera_handle_ != nullptr) {
@@ -439,51 +309,54 @@ HikCameraNode::~HikCameraNode()
   RCLCPP_INFO(this->get_logger(), "Camera node destroyed!");
 }
 
-bool HikCameraNode::initCamera()
-{
+bool HikCameraNode::initCamera() {
   // 获取序列号参数（如果指定）
   std::string camera_sn = this->declare_parameter("camera_sn", "");
-  
+
   // 选择要初始化的相机
-  MV_CC_DEVICE_INFO * selected_device = nullptr;
-  
+  MV_CC_DEVICE_INFO *selected_device = nullptr;
+
   if (camera_sn.empty()) {
     // 如果没有指定序列号，使用第一个相机
     selected_device = device_list_.pDeviceInfo[0];
-    
+
     std::string sn = "Unknown";
     if (selected_device->nTLayerType == MV_GIGE_DEVICE) {
-      sn = std::string(reinterpret_cast<char*>(selected_device->SpecialInfo.stGigEInfo.chSerialNumber));
+      sn = std::string(
+        reinterpret_cast<char *>(selected_device->SpecialInfo.stGigEInfo.chSerialNumber));
     } else if (selected_device->nTLayerType == MV_USB_DEVICE) {
-      sn = std::string(reinterpret_cast<char*>(selected_device->SpecialInfo.stUsb3VInfo.chSerialNumber));
+      sn = std::string(
+        reinterpret_cast<char *>(selected_device->SpecialInfo.stUsb3VInfo.chSerialNumber));
     }
-    
-    RCLCPP_INFO(this->get_logger(), "No camera_sn specified, using first camera (SN: %s)", sn.c_str());
+
+    RCLCPP_INFO(
+      this->get_logger(), "No camera_sn specified, using first camera (SN: %s)", sn.c_str());
   } else {
     // 根据序列号查找相机
     for (unsigned int i = 0; i < device_list_.nDeviceNum; i++) {
-      MV_CC_DEVICE_INFO* dev_info = device_list_.pDeviceInfo[i];
+      MV_CC_DEVICE_INFO *dev_info = device_list_.pDeviceInfo[i];
       std::string sn = "Unknown";
-      
+
       if (dev_info->nTLayerType == MV_GIGE_DEVICE) {
-        sn = std::string(reinterpret_cast<char*>(dev_info->SpecialInfo.stGigEInfo.chSerialNumber));
+        sn = std::string(reinterpret_cast<char *>(dev_info->SpecialInfo.stGigEInfo.chSerialNumber));
       } else if (dev_info->nTLayerType == MV_USB_DEVICE) {
-        sn = std::string(reinterpret_cast<char*>(dev_info->SpecialInfo.stUsb3VInfo.chSerialNumber));
+        sn =
+          std::string(reinterpret_cast<char *>(dev_info->SpecialInfo.stUsb3VInfo.chSerialNumber));
       }
-      
+
       if (sn == camera_sn) {
         selected_device = dev_info;
         RCLCPP_INFO(this->get_logger(), "Found camera with SN: %s", camera_sn.c_str());
         break;
       }
     }
-    
+
     if (selected_device == nullptr) {
       RCLCPP_ERROR(this->get_logger(), "Camera with SN '%s' not found!", camera_sn.c_str());
       return false;
     }
   }
-  
+
   // Create handle
   int status = MV_CC_CreateHandle(&camera_handle_, selected_device);
   if (status != MV_OK) {
@@ -544,7 +417,8 @@ bool HikCameraNode::initCamera()
   // Set Bayer conversion quality (1 = bilinear interpolation)
   status = MV_CC_SetBayerCvtQuality(camera_handle_, 1);
   if (status != MV_OK) {
-    RCLCPP_WARN(this->get_logger(), "Failed to set Bayer conversion quality, status = 0x%x", status);
+    RCLCPP_WARN(
+      this->get_logger(), "Failed to set Bayer conversion quality, status = 0x%x", status);
   } else {
     RCLCPP_INFO(this->get_logger(), "Bayer conversion quality set to bilinear");
   }
@@ -553,8 +427,7 @@ bool HikCameraNode::initCamera()
   return true;
 }
 
-void HikCameraNode::startGrabbing()
-{
+void HikCameraNode::startGrabbing() {
   // Get payload size before starting grabbing
   MVCC_INTVALUE payload_size;
   int status = MV_CC_GetIntValue(camera_handle_, "PayloadSize", &payload_size);
@@ -567,80 +440,35 @@ void HikCameraNode::startGrabbing()
   if (status != MV_OK) {
     RCLCPP_ERROR(this->get_logger(), "Failed to start grabbing, status = 0x%x", status);
     return;
-  } 
-  
+  }
+
   RCLCPP_INFO(this->get_logger(), "Started grabbing!");
-  
+
   // Send acquisition start command for continuous mode
   status = MV_CC_SetCommandValue(camera_handle_, "AcquisitionStart");
   if (status != MV_OK) {
-    RCLCPP_WARN(this->get_logger(), "Failed to send AcquisitionStart command, status = 0x%x. This may be normal.", status);
+    RCLCPP_WARN(this->get_logger(),
+                "Failed to send AcquisitionStart command, status = 0x%x. This may be normal.",
+                status);
   } else {
     RCLCPP_INFO(this->get_logger(), "Sent AcquisitionStart command");
   }
-  
+
   // Give camera more time to start acquiring
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
 }
 
-void HikCameraNode::stopGrabbing()
-{
+void HikCameraNode::stopGrabbing() {
   int status = MV_CC_StopGrabbing(camera_handle_);
   if (status != MV_OK) {
     RCLCPP_WARN(this->get_logger(), "Failed to stop grabbing, status = %d", status);
   }
 }
 
-void HikCameraNode::recordRawFrame(const MV_FRAME_OUT_INFO_EX & frame_info)
-{
-  if (!raw_stream_enabled_ || frame_buffer_ == nullptr || frame_info.nFrameLen == 0) {
-    return;
-  }
-
-  if (!raw_stream_recorder_) {
-    raw_stream_recorder_ = std::make_unique<RawStreamRecorder>();
-  }
-
-  if (!raw_stream_recorder_->isRunning()) {
-    if (raw_stream_path_.empty()) {
-      RCLCPP_WARN(this->get_logger(), "raw_stream.path is empty, skipping raw recording");
-      return;
-    }
-    if (!raw_stream_recorder_->start(raw_stream_path_, frame_info.nWidth, frame_info.nHeight,
-                                     frame_info.enPixelType, frame_rate_, raw_stream_interval_)) {
-      RCLCPP_ERROR(this->get_logger(), "Failed to start raw stream recorder for %s", raw_stream_path_.c_str());
-      raw_stream_recorder_.reset();
-      return;
-    }
-    raw_frame_counter_ = 0;
-  }
-
-  if (raw_stream_recorder_->isRunning()) {
-    if ((raw_frame_counter_ % raw_stream_interval_) == 0) {
-      if (!raw_stream_recorder_->enqueue(frame_buffer_, frame_info.nFrameLen)) {
-        if ((raw_frame_counter_ % 60) == 0) {
-          RCLCPP_WARN(this->get_logger(), "Raw stream queue full, dropping frames for %s", raw_stream_path_.c_str());
-        }
-      }
-    }
-    raw_frame_counter_++;
-  }
-}
-
-void HikCameraNode::stopRawStreamRecorder()
-{
-  if (raw_stream_recorder_) {
-    raw_stream_recorder_->stop();
-    raw_stream_recorder_.reset();
-  }
-  raw_frame_counter_ = 0;
-}
-
-void HikCameraNode::declareParameters()
-{
+void HikCameraNode::declareParameters() {
   rcl_interfaces::msg::ParameterDescriptor param_desc;
   int status;
-  
+
   // Exposure time
   param_desc.description = "Exposure time in microseconds";
   double exposure_time = this->declare_parameter("exposure_time", 5000.0, param_desc);
@@ -683,18 +511,6 @@ void HikCameraNode::declareParameters()
   frame_id_ = this->declare_parameter("frame_id", std::string("camera_optical_frame"));
   RCLCPP_INFO(this->get_logger(), "frame_id = %s", frame_id_.c_str());
 
-  rcl_interfaces::msg::ParameterDescriptor raw_desc;
-  raw_desc.integer_range.resize(1);
-  raw_desc.integer_range[0].step = 1;
-  raw_desc.integer_range[0].from_value = 1;
-  raw_desc.integer_range[0].to_value = 1000;
-  raw_stream_enabled_ = this->declare_parameter<bool>("raw_stream.enabled", false);
-  raw_stream_path_ = this->declare_parameter<std::string>("raw_stream.path", "/tmp/hik_camera.yaw");
-  raw_stream_interval_ = this->declare_parameter("raw_stream.interval", 1, raw_desc);
-  if (raw_stream_interval_ < 1) {
-    raw_stream_interval_ = 1;
-  }
-
   // Image resolution
   param_desc.description = "Image width (0 for camera default)";
   image_width_ = this->declare_parameter("image_width", 0, param_desc);
@@ -703,39 +519,43 @@ void HikCameraNode::declareParameters()
 
   // Set resolution if both width and height are non-zero
   if (image_width_ > 0 && image_height_ > 0) {
-    MVCC_INTVALUE stWidthMax = {0};
-    MVCC_INTVALUE stHeightMax = {0};
+    MVCC_INTVALUE stWidthMax{};
+    MVCC_INTVALUE stHeightMax{};
     status = MV_CC_GetIntValue(camera_handle_, "WidthMax", &stWidthMax);
     if (status == MV_OK) {
       status = MV_CC_GetIntValue(camera_handle_, "HeightMax", &stHeightMax);
     }
-    
+
     if (status == MV_OK) {
-      if (image_width_ <= static_cast<int>(stWidthMax.nCurValue) && 
+      if (image_width_ <= static_cast<int>(stWidthMax.nCurValue) &&
           image_height_ <= static_cast<int>(stHeightMax.nCurValue)) {
         // Set offset to 0 first to ensure ROI starts from top-left corner
         MV_CC_SetIntValue(camera_handle_, "OffsetX", 0);
         MV_CC_SetIntValue(camera_handle_, "OffsetY", 0);
-        
+
         // Set width and height
         status = MV_CC_SetIntValue(camera_handle_, "Width", image_width_);
         if (status == MV_OK) {
           status = MV_CC_SetIntValue(camera_handle_, "Height", image_height_);
         }
-        
+
         if (status == MV_OK) {
           RCLCPP_INFO(this->get_logger(), "Resolution set to %dx%d", image_width_, image_height_);
         } else {
           RCLCPP_WARN(this->get_logger(), "Failed to set resolution, status = 0x%x", status);
         }
       } else {
-        RCLCPP_WARN(this->get_logger(), 
+        RCLCPP_WARN(
+          this->get_logger(),
           "Requested resolution %dx%d exceeds camera capability %dx%d, using camera default",
-          image_width_, image_height_, 
-          static_cast<int>(stWidthMax.nCurValue), static_cast<int>(stHeightMax.nCurValue));
+          image_width_,
+          image_height_,
+          static_cast<int>(stWidthMax.nCurValue),
+          static_cast<int>(stHeightMax.nCurValue));
       }
     } else {
-      RCLCPP_WARN(this->get_logger(), "Failed to get camera resolution capability, status = 0x%x", status);
+      RCLCPP_WARN(
+        this->get_logger(), "Failed to get camera resolution capability, status = 0x%x", status);
     }
   } else {
     RCLCPP_INFO(this->get_logger(), "Using camera default resolution");
@@ -743,12 +563,11 @@ void HikCameraNode::declareParameters()
 }
 
 rcl_interfaces::msg::SetParametersResult HikCameraNode::parametersCallback(
-  const std::vector<rclcpp::Parameter> & parameters)
-{
+  const std::vector<rclcpp::Parameter> &parameters) {
   rcl_interfaces::msg::SetParametersResult result;
   result.successful = true;
-  
-  for (const auto & param : parameters) {
+
+  for (const auto &param : parameters) {
     if (param.get_name() == "exposure_time") {
       int status = MV_CC_SetFloatValue(camera_handle_, "ExposureTime", param.as_double());
       if (status != MV_OK) {
@@ -770,22 +589,6 @@ rcl_interfaces::msg::SetParametersResult HikCameraNode::parametersCallback(
       } else {
         frame_rate_ = desired_rate;
       }
-    } else if (param.get_name() == "raw_stream.enabled") {
-      raw_stream_enabled_ = param.as_bool();
-      if (!raw_stream_enabled_) {
-        stopRawStreamRecorder();
-      }
-    } else if (param.get_name() == "raw_stream.path") {
-      raw_stream_path_ = param.as_string();
-      if (raw_stream_recorder_) {
-        stopRawStreamRecorder();
-      }
-    } else if (param.get_name() == "raw_stream.interval") {
-      int interval = param.as_int();
-      if (interval < 1) {
-        interval = 1;
-      }
-      raw_stream_interval_ = interval;
     } else if (param.get_name() == "flip_image") {
       flip_image_ = param.as_bool();
     } else if (param.get_name() == "image_width") {
@@ -795,7 +598,7 @@ rcl_interfaces::msg::SetParametersResult HikCameraNode::parametersCallback(
         // Set offset to 0 first
         MV_CC_SetIntValue(camera_handle_, "OffsetX", 0);
         MV_CC_SetIntValue(camera_handle_, "OffsetY", 0);
-        
+
         int status = MV_CC_SetIntValue(camera_handle_, "Width", image_width_);
         if (status == MV_OK) {
           status = MV_CC_SetIntValue(camera_handle_, "Height", image_height_);
@@ -812,7 +615,7 @@ rcl_interfaces::msg::SetParametersResult HikCameraNode::parametersCallback(
         // Set offset to 0 first
         MV_CC_SetIntValue(camera_handle_, "OffsetX", 0);
         MV_CC_SetIntValue(camera_handle_, "OffsetY", 0);
-        
+
         int status = MV_CC_SetIntValue(camera_handle_, "Width", image_width_);
         if (status == MV_OK) {
           status = MV_CC_SetIntValue(camera_handle_, "Height", image_height_);
@@ -831,7 +634,7 @@ rcl_interfaces::msg::SetParametersResult HikCameraNode::parametersCallback(
       result.reason = "Unknown parameter: " + param.get_name();
     }
   }
-  
+
   return result;
 }
 

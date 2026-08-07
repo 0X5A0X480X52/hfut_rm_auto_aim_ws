@@ -1,4 +1,0 @@
-# Use NumPy 1.x to retain compatibility with third-party binary modules until they're rebuilt
-numpy<2
-pandas
-matplotlib

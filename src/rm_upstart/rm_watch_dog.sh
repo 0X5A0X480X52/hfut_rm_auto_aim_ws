@@ -13,7 +13,7 @@ NODE_NAMES=("armor_detector" "serial_driver" "gimbal_pipeline")  # 监控节点�
 USER="$(whoami)"
 HOME_DIR=$(eval echo ~$USER)
 WORKING_DIR="$HOME_DIR/hfut_rm_auto_aim_ws/"  # 代码目录
-LAUNCH_FILE="rm_bringup bringup_pipeline.launch.py"  # ROS2 launch 文件
+LAUNCH_FILE="rm_bringup bringup_pipeline.launch.py profile:=infantry_4_1"  # ROS2 launch 文件
 OUTPUT_FILE="$WORKING_DIR/screen.output"  # 启动日志
 
 # ===========================

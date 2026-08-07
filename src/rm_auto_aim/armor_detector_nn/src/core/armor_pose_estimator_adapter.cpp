@@ -1,14 +1,14 @@
 #include "armor_detector_nn/core/armor_pose_estimator_adapter.hpp"
 
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Quaternion.h>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
-
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/eigen.hpp>
 #include <rm_utils/logger/log.hpp>
-#include <tf2/LinearMath/Matrix3x3.h>
-#include <tf2/LinearMath/Quaternion.h>
 
 #include "armor_detector_nn/core/ba_adjuster.hpp"
 #include "armor_detector_nn/core/pose_refine/pose_refiner.hpp"
@@ -21,8 +21,7 @@ namespace {
 // 1) convert rvec->R_camera_armor
 // 2) transform by fixed R_gimbal_camera
 // 3) tf2 getRPY(roll, pitch, yaw)
-void rvecToEulerLikeArmorDetector(
-    const cv::Mat& rvec, double& yaw, double& pitch, double& roll) {
+void rvecToEulerLikeArmorDetector(const cv::Mat &rvec, double &yaw, double &pitch, double &roll) {
   cv::Mat R_cv;
   cv::Rodrigues(rvec, R_cv);
 
@@ -39,13 +38,12 @@ void rvecToEulerLikeArmorDetector(
   m.getRPY(roll, pitch, yaw);
 }
 
-double reprojectionErrorSum(
-    const std::vector<cv::Point3f>& object_points,
-    const std::vector<cv::Point2f>& image_points,
-    const cv::Mat& rvec,
-    const cv::Mat& tvec,
-    const cv::Mat& K,
-    const cv::Mat& D) {
+double reprojectionErrorSum(const std::vector<cv::Point3f> &object_points,
+                            const std::vector<cv::Point2f> &image_points,
+                            const cv::Mat &rvec,
+                            const cv::Mat &tvec,
+                            const cv::Mat &K,
+                            const cv::Mat &D) {
   std::vector<cv::Point2f> projected;
   cv::projectPoints(object_points, rvec, tvec, K, D, projected);
   double err = 0.0;
@@ -55,14 +53,13 @@ double reprojectionErrorSum(
   return err;
 }
 
-int selectIppeSolutionLikeArmorDetector(
-    const std::vector<cv::Point3f>& object_points,
-    const std::vector<cv::Point2f>& image_points,
-    const std::vector<cv::Mat>& rvecs,
-    const std::vector<cv::Mat>& tvecs,
-    const cv::Mat& K,
-    const cv::Mat& D,
-    const std::string& publish_number) {
+int selectIppeSolutionLikeArmorDetector(const std::vector<cv::Point3f> &object_points,
+                                        const std::vector<cv::Point2f> &image_points,
+                                        const std::vector<cv::Mat> &rvecs,
+                                        const std::vector<cv::Mat> &tvecs,
+                                        const cv::Mat &K,
+                                        const cv::Mat &D,
+                                        const std::string &publish_number) {
   // Baseline fallback: best positive-depth solution by reprojection error.
   int best_pos_z = -1;
   int best_any = -1;
@@ -100,8 +97,7 @@ int selectIppeSolutionLikeArmorDetector(
 
   const double err1 = errors[0];
   const double err2 = errors[1];
-  if ((err2 / std::max(err1, kEps) > kProjectErrRatioThres) ||
-      (std::abs(roll1) > kRollThresRad) ||
+  if ((err2 / std::max(err1, kEps) > kProjectErrRatioThres) || (std::abs(roll1) > kRollThresRad) ||
       (std::abs(roll2) > kRollThresRad)) {
     return fallback;
   }
@@ -117,8 +113,7 @@ int selectIppeSolutionLikeArmorDetector(
   }
 
   // Match armor_detector::sortPnPResult sign disambiguation behavior.
-  if ((angle > 0.0 && yaw1 > 0.0 && yaw2 < 0.0) ||
-      (angle < 0.0 && yaw1 < 0.0 && yaw2 > 0.0)) {
+  if ((angle > 0.0 && yaw1 > 0.0 && yaw2 < 0.0) || (angle < 0.0 && yaw1 < 0.0 && yaw2 > 0.0)) {
     if (tvecs[1].at<double>(2) > 0.0) return 1;
     return fallback;
   }
@@ -128,43 +123,42 @@ int selectIppeSolutionLikeArmorDetector(
 
 }  // namespace
 
-ArmorPoseEstimatorAdapter::ArmorPoseEstimatorAdapter(const PoseConfig& config)
-  : config_(config)
-{
-}
+ArmorPoseEstimatorAdapter::ArmorPoseEstimatorAdapter(const PoseConfig &config) : config_(config) {}
 
 ArmorPoseEstimatorAdapter::~ArmorPoseEstimatorAdapter() = default;
 
-void ArmorPoseEstimatorAdapter::setBundleAdjuster(
-    std::unique_ptr<IBundleAdjuster> adjuster) {
+void ArmorPoseEstimatorAdapter::setBundleAdjuster(std::unique_ptr<IBundleAdjuster> adjuster) {
   ba_adjuster_ = std::move(adjuster);
 }
 
-void ArmorPoseEstimatorAdapter::setRefiner(
-    std::shared_ptr<IPoseRefiner> refiner) {
+void ArmorPoseEstimatorAdapter::setRefiner(std::shared_ptr<IPoseRefiner> refiner) {
   refiner_ = std::move(refiner);
 }
 
-PoseEstimate ArmorPoseEstimatorAdapter::estimate(
-    const ArmorDetection& detection,
-    const sensor_msgs::msg::CameraInfo& camera_info,
-    const Eigen::Matrix3d& R_imu_camera)
-{
+PoseEstimate ArmorPoseEstimatorAdapter::estimate(const ArmorDetection &detection,
+                                                 const sensor_msgs::msg::CameraInfo &camera_info,
+                                                 const Eigen::Matrix3d &R_imu_camera) {
   if (detection.publish_type == "invalid") {
     return PoseEstimate{};
   }
 
   auto object_pts = getObjectPoints(detection.publish_type,
-      config_.small_armor_width, config_.small_armor_height,
-      config_.large_armor_width, config_.large_armor_height);
+                                    config_.small_armor_width,
+                                    config_.small_armor_height,
+                                    config_.large_armor_width,
+                                    config_.large_armor_height);
 
-  std::vector<cv::Point2f> image_pts(detection.keypoints.begin(),
-                                      detection.keypoints.end());
+  std::vector<cv::Point2f> image_pts(detection.keypoints.begin(), detection.keypoints.end());
 
-  cv::Mat K = (cv::Mat_<double>(3, 3)
-    << camera_info.k[0], camera_info.k[1], camera_info.k[2],
-       camera_info.k[3], camera_info.k[4], camera_info.k[5],
-       camera_info.k[6], camera_info.k[7], camera_info.k[8]);
+  cv::Mat K = (cv::Mat_<double>(3, 3) << camera_info.k[0],
+               camera_info.k[1],
+               camera_info.k[2],
+               camera_info.k[3],
+               camera_info.k[4],
+               camera_info.k[5],
+               camera_info.k[6],
+               camera_info.k[7],
+               camera_info.k[8]);
 
   cv::Mat D;
   if (!camera_info.d.empty()) {
@@ -190,10 +184,9 @@ PoseEstimate ArmorPoseEstimatorAdapter::estimate(
   if (refiner_ && config_.refiner.mode != "none") {
     std::array<cv::Point2f, 4> img_pts_arr;
     std::copy_n(detection.keypoints.begin(), 4, img_pts_arr.begin());
-    auto refined = refiner_->refine(result, img_pts_arr,
-        {object_pts[0], object_pts[1], object_pts[2], object_pts[3]}, K, D);
-    if (refined.valid &&
-        refined.mode >= EstimateMode::SINGLE_BA_VALID) {
+    auto refined = refiner_->refine(
+      result, img_pts_arr, {object_pts[0], object_pts[1], object_pts[2], object_pts[3]}, K, D);
+    if (refined.valid && refined.mode >= EstimateMode::SINGLE_BA_VALID) {
       refined.track_id = detection.track_id;
       refined.observation_stamp = detection.stamp;
       refined.publish_number = detection.publish_number;
@@ -213,23 +206,19 @@ PoseEstimate ArmorPoseEstimatorAdapter::estimate(
 }
 
 std::vector<PoseEstimate> ArmorPoseEstimatorAdapter::estimateBatch(
-    const std::vector<ArmorDetection>& detections,
-    const sensor_msgs::msg::CameraInfo& camera_info,
-    const Eigen::Matrix3d& R_imu_camera)
-{
+  const std::vector<ArmorDetection> &detections,
+  const sensor_msgs::msg::CameraInfo &camera_info,
+  const Eigen::Matrix3d &R_imu_camera) {
   std::vector<PoseEstimate> results;
   results.reserve(detections.size());
-  for (const auto& d : detections) {
+  for (const auto &d : detections) {
     results.push_back(estimate(d, camera_info, R_imu_camera));
   }
   return results;
 }
 
 std::vector<cv::Point3f> ArmorPoseEstimatorAdapter::getObjectPoints(
-    const std::string& publish_type,
-    double small_w, double small_h,
-    double large_w, double large_h)
-{
+  const std::string &publish_type, double small_w, double small_h, double large_w, double large_h) {
   double w, h;
   if (publish_type == "large") {
     w = large_w;
@@ -245,27 +234,23 @@ std::vector<cv::Point3f> ArmorPoseEstimatorAdapter::getObjectPoints(
   // Canonical order: left_bottom, left_top, right_top, right_bottom
   // X forward, Y left, Z up (ROS camera frame convention)
   return {
-    cv::Point3f(0.0,  half_w, -half_h),  // left_bottom
-    cv::Point3f(0.0,  half_w,  half_h),  // left_top
-    cv::Point3f(0.0, -half_w,  half_h),  // right_top
+    cv::Point3f(0.0, half_w, -half_h),   // left_bottom
+    cv::Point3f(0.0, half_w, half_h),    // left_top
+    cv::Point3f(0.0, -half_w, half_h),   // right_top
     cv::Point3f(0.0, -half_w, -half_h),  // right_bottom
   };
 }
 
-double ArmorPoseEstimatorAdapter::distanceToImageCenter(
-    const cv::Point2f& center,
-    const cv::Point2f& image_center)
-{
+double ArmorPoseEstimatorAdapter::distanceToImageCenter(const cv::Point2f &center,
+                                                        const cv::Point2f &image_center) {
   return cv::norm(center - image_center);
 }
 
-PoseEstimate ArmorPoseEstimatorAdapter::solvePnP(
-    const std::vector<cv::Point2f>& image_points,
-    const std::vector<cv::Point3f>& object_points,
-    const cv::Mat& camera_matrix,
-    const cv::Mat& dist_coeffs,
-    const std::string& publish_number)
-{
+PoseEstimate ArmorPoseEstimatorAdapter::solvePnP(const std::vector<cv::Point2f> &image_points,
+                                                 const std::vector<cv::Point3f> &object_points,
+                                                 const cv::Mat &camera_matrix,
+                                                 const cv::Mat &dist_coeffs,
+                                                 const std::string &publish_number) {
   PoseEstimate result;
 
   if (image_points.size() != object_points.size() || image_points.size() < 4) {
@@ -275,39 +260,44 @@ PoseEstimate ArmorPoseEstimatorAdapter::solvePnP(
   try {
     if (config_.pnp_method == "ippe") {
       std::vector<cv::Mat> rvecs, tvecs;
-      cv::solvePnPGeneric(object_points, image_points,
-                          camera_matrix, dist_coeffs,
-                          rvecs, tvecs,
+      cv::solvePnPGeneric(object_points,
+                          image_points,
+                          camera_matrix,
+                          dist_coeffs,
+                          rvecs,
+                          tvecs,
                           false,
                           cv::SOLVEPNP_IPPE);
 
       if (rvecs.empty()) return result;
 
       int best = selectIppeSolutionLikeArmorDetector(
-        object_points, image_points, rvecs, tvecs,
-        camera_matrix, dist_coeffs, publish_number);
+        object_points, image_points, rvecs, tvecs, camera_matrix, dist_coeffs, publish_number);
 
       if (best >= 0) {
         result.rvec = rvecs[best];
         result.tvec = tvecs[best];
         result.reprojection_error = reprojectionErrorSum(
-          object_points, image_points, result.rvec, result.tvec,
-          camera_matrix, dist_coeffs);
+          object_points, image_points, result.rvec, result.tvec, camera_matrix, dist_coeffs);
         result.valid = true;
       }
     } else {
       cv::Mat rvec, tvec;
-      if (cv::solvePnP(object_points, image_points,
-                       camera_matrix, dist_coeffs,
-                       rvec, tvec, false, cv::SOLVEPNP_ITERATIVE)) {
+      if (cv::solvePnP(object_points,
+                       image_points,
+                       camera_matrix,
+                       dist_coeffs,
+                       rvec,
+                       tvec,
+                       false,
+                       cv::SOLVEPNP_ITERATIVE)) {
         result.rvec = rvec;
         result.tvec = tvec;
         result.valid = true;
 
         // Compute reprojection error
         std::vector<cv::Point2f> projected;
-        cv::projectPoints(object_points, rvec, tvec,
-                          camera_matrix, dist_coeffs, projected);
+        cv::projectPoints(object_points, rvec, tvec, camera_matrix, dist_coeffs, projected);
         double err = 0.0;
         for (size_t j = 0; j < image_points.size(); ++j) {
           err += cv::norm(image_points[j] - projected[j]);
@@ -315,16 +305,14 @@ PoseEstimate ArmorPoseEstimatorAdapter::solvePnP(
         result.reprojection_error = err;
       }
     }
-  } catch (const cv::Exception& e) {
-    FYT_ERROR("armor_detector_nn", "PnP solve failed: %s", e.what());
+  } catch (const cv::Exception &e) {
+    FYT_ERROR("armor_detector_nn", "PnP solve failed: {}", e.what());
     return result;
   }
 
   if (result.valid) {
     result.translation = Eigen::Vector3d(
-      result.tvec.at<double>(0),
-      result.tvec.at<double>(1),
-      result.tvec.at<double>(2));
+      result.tvec.at<double>(0), result.tvec.at<double>(1), result.tvec.at<double>(2));
 
     cv::Mat R;
     cv::Rodrigues(result.rvec, R);
@@ -333,8 +321,7 @@ PoseEstimate ArmorPoseEstimatorAdapter::solvePnP(
     result.rotation = Eigen::Quaterniond(eigen_R);
 
     // Extract yaw/pitch/roll from rvec
-    rvecToEulerLikeArmorDetector(
-      result.rvec, result.yaw, result.pitch, result.roll);
+    rvecToEulerLikeArmorDetector(result.rvec, result.yaw, result.pitch, result.roll);
 
     // If configured, only rotate yaw by 180 degrees (keep translation)
     if (config_.force_pnp_rotate_180) {
@@ -366,8 +353,8 @@ PoseEstimate ArmorPoseEstimatorAdapter::solvePnP(
 
     // Legacy BA refinement path
     if (config_.use_ba && ba_adjuster_) {
-      result = ba_adjuster_->refine(result, image_points, object_points,
-                                     camera_matrix, dist_coeffs);
+      result =
+        ba_adjuster_->refine(result, image_points, object_points, camera_matrix, dist_coeffs);
     }
   }
 

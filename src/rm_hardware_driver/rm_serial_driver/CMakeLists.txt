@@ -24,7 +24,11 @@ ament_auto_find_build_dependencies()
 ###########
 
 ament_auto_add_library(${PROJECT_NAME} SHARED
-DIRECTORY src
+  src/protocol/infantry_protocol.cpp
+  src/protocol/infantry_protocol_32.cpp
+  src/serial_driver_node.cpp
+  src/transporter_driver/uart_transporter.cpp
+  src/virtual_serial_node.cpp
 )
 
 rclcpp_components_register_node(${PROJECT_NAME}
@@ -37,7 +41,7 @@ rclcpp_components_register_node(${PROJECT_NAME}
   EXECUTABLE virtual_serial_node
 )
 
-target_include_directories(${PROJECT_NAME}_node PUBLIC include)
+target_include_directories(${PROJECT_NAME} PUBLIC include)
 
 #############
 ## Testing ##
@@ -61,6 +65,4 @@ endif()
 ## Install ##
 #############
 
-ament_auto_package(
-  INSTALL_TO_SHARE
-)
+ament_auto_package()

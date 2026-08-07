@@ -33,7 +33,6 @@ namespace gimbal_controller
 {
 
 class ArmorPositionCalculator;
-class BallisticSolverClient;
 class LocalTrajectoryCompensator;
 class FireAdvisor;
 
@@ -175,16 +174,10 @@ public:
   CandidateImpactSolver() = default;
   ~CandidateImpactSolver() = default;
 
-  void setBallisticMode(const std::string & mode)
-  {
-    prefer_local_ballistic_ = (mode == "local");
-  }
-
   void setFacingFilterOpeningAngleDeg(double opening_angle_deg);
 
   void setComponents(
     std::shared_ptr<ArmorPositionCalculator> position_calculator,
-    std::shared_ptr<BallisticSolverClient> ballistic_client,
     std::shared_ptr<LocalTrajectoryCompensator> local_compensator);
 
   std::vector<CandidateImpactSolution> solve(
@@ -195,7 +188,6 @@ public:
 private:
   bool solveBallistic(
     const Eigen::Vector3d & target_position,
-    const Eigen::Vector3d & target_velocity,
     double bullet_speed,
     double & pitch,
     double & yaw,
@@ -209,9 +201,7 @@ private:
     int flight_time_iters) const;
 
   std::shared_ptr<ArmorPositionCalculator> position_calculator_;
-  std::shared_ptr<BallisticSolverClient> ballistic_client_;
   std::shared_ptr<LocalTrajectoryCompensator> local_compensator_;
-  bool prefer_local_ballistic_{false};
   bool facing_filter_enabled_{false};
   double facing_filter_cos_threshold_{-1.0};
 };
@@ -224,7 +214,6 @@ public:
 
   void setComponents(
     std::shared_ptr<ArmorPositionCalculator> position_calculator,
-    std::shared_ptr<BallisticSolverClient> ballistic_client,
     std::shared_ptr<LocalTrajectoryCompensator> local_compensator,
     std::shared_ptr<FireAdvisor> fire_advisor);
 
@@ -236,11 +225,6 @@ public:
   void setUseGimbalKinematics(bool use_gimbal_kinematics)
   {
     use_gimbal_kinematics_ = use_gimbal_kinematics;
-  }
-
-  void setBallisticMode(const std::string & mode)
-  {
-    candidate_solver_.setBallisticMode(mode);
   }
 
   void setFacingFilterOpeningAngleDeg(double opening_angle_deg)

@@ -23,7 +23,6 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include "gimbal_controller/armor_position_calculator.hpp"
-#include "gimbal_controller/ballistic_solver_client.hpp"
 #include "gimbal_controller/fire_advisor.hpp"
 #include "gimbal_controller/local_trajectory_compensator.hpp"
 #include "gimbal_pipeline/common/robot_description/robot_description_facade.hpp"
@@ -127,36 +126,20 @@ std::pair<double, double> GimbalPosePredictor::predictMuzzlePose(
 
 void CandidateImpactSolver::setComponents(
   std::shared_ptr<ArmorPositionCalculator> position_calculator,
-  std::shared_ptr<BallisticSolverClient> ballistic_client,
   std::shared_ptr<LocalTrajectoryCompensator> local_compensator)
 {
   position_calculator_ = position_calculator;
-  ballistic_client_ = ballistic_client;
   local_compensator_ = local_compensator;
 }
 
 bool CandidateImpactSolver::solveBallistic(
   const Eigen::Vector3d & target_position,
-  const Eigen::Vector3d & target_velocity,
   double bullet_speed,
   double & pitch,
   double & yaw,
   double & flight_time) const
 {
   const double bounded_bullet_speed = std::max(bullet_speed, kMinBulletSpeed);
-
-  // service 模式: 优先使用 service；local 模式: 完全跳过 service。
-  if (!prefer_local_ballistic_) {
-    if (ballistic_client_ && ballistic_client_->isServiceAvailable()) {
-      auto result = ballistic_client_->solve(target_position, target_velocity, bounded_bullet_speed);
-      if (result.success) {
-        pitch = result.pitch;
-        yaw = result.yaw;
-        flight_time = result.flight_time;
-        return true;
-      }
-    }
-  }
 
   if (local_compensator_) {
     local_compensator_->setBulletSpeed(bounded_bullet_speed);
@@ -237,7 +220,6 @@ CandidateImpactSolution CandidateImpactSolver::solveSingleCandidate(
 
     if (!solveBallistic(
       target_position,
-      target_velocity,
       request.bullet_speed,
       target_pitch,
       target_yaw,
@@ -313,11 +295,10 @@ std::vector<CandidateImpactSolution> CandidateImpactSolver::solve(
 
 void FireAdviceEngine::setComponents(
   std::shared_ptr<ArmorPositionCalculator> position_calculator,
-  std::shared_ptr<BallisticSolverClient> ballistic_client,
   std::shared_ptr<LocalTrajectoryCompensator> local_compensator,
   std::shared_ptr<FireAdvisor> fire_advisor)
 {
-  candidate_solver_.setComponents(position_calculator, ballistic_client, local_compensator);
+  candidate_solver_.setComponents(position_calculator, local_compensator);
   fire_advisor_ = fire_advisor;
 }
 

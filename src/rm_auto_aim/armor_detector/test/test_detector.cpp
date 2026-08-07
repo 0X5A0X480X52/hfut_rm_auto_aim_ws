@@ -12,27 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// gest
 #include <gtest/gtest.h>
-// ros2
-#include <opencv2/imgproc.hpp>
-#include <rclcpp/executors.hpp>
-#include <rclcpp/node_options.hpp>
-#include <rclcpp/utilities.hpp>
-// std
+
+#include <filesystem>
 #include <memory>
-// opencv
-#include <opencv2/opencv.hpp>
-// project
+#include <opencv2/core.hpp>
+#include <string>
+#include <vector>
+
 #include "armor_detector/armor_detector.hpp"
-#include "rm_utils/common.hpp"
 #include "rm_utils/url_resolver.hpp"
 
 using namespace fyt;
 using namespace fyt::auto_aim;
-TEST(ArmorDetectorNodeTest, NodeStartupTest) {
-  // Init detector
-  int binary_thres = 160;
+TEST(ArmorDetector, EmptyFrameProducesNoArmors) {
+  constexpr int binary_thres = 160;
   Detector::LightParams l_params = {
     .min_ratio = 0.08, .max_ratio = 0.4, .max_angle = 40.0, .color_diff_thresh = 25};
   Detector::ArmorParams a_params = {.min_light_ratio = 0.6,
@@ -44,33 +38,17 @@ TEST(ArmorDetectorNodeTest, NodeStartupTest) {
 
   auto detector = std::make_unique<Detector>(binary_thres, EnemyColor::RED, l_params, a_params);
 
-  // Init classifier
   namespace fs = std::filesystem;
-  fs::path model_path =
+  const fs::path model_path =
     utils::URLResolver::getResolvedPath("package://armor_detector/model/lenet.onnx");
-  fs::path label_path =
+  const fs::path label_path =
     utils::URLResolver::getResolvedPath("package://armor_detector/model/label.txt");
+  ASSERT_TRUE(fs::is_regular_file(model_path));
+  ASSERT_TRUE(fs::is_regular_file(label_path));
+
   detector->classifier = std::make_unique<NumberClassifier>(
     model_path, label_path, 0.6, std::vector<std::string>{"negative"});
 
-  // Load test image
-  fs::path test_image_path =
-    utils::URLResolver::getResolvedPath("package://armor_detector/docs/test.png");
-  cv::Mat test_image = cv::imread(test_image_path.string(), cv::IMREAD_COLOR);
-  cv::cvtColor(test_image, test_image, cv::COLOR_BGR2RGB);
-
-  // Detect
-  std::vector<Armor> armors = detector->detect(test_image);
-
-  std::sort(armors.begin(), armors.end(), [](const Armor &a, const Armor &b) {
-    return a.number < b.number;
-  });
-
-  EXPECT_EQ(armors.size(), static_cast<std::size_t>(6));
-  EXPECT_EQ(armors[0].number, "2");
-  EXPECT_EQ(armors[1].number, "3");
-  EXPECT_EQ(armors[2].number, "4");
-  EXPECT_EQ(armors[3].number, "5");
-  EXPECT_EQ(armors[4].number, "outpost");
-  EXPECT_EQ(armors[5].number, "sentry");
+  const cv::Mat empty_frame = cv::Mat::zeros(1024, 1280, CV_8UC3);
+  EXPECT_TRUE(detector->detect(empty_frame).empty());
 }

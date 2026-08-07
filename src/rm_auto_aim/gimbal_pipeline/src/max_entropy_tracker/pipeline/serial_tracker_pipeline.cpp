@@ -14,8 +14,6 @@ int clamp_panel(int pid) {
   return v;
 }
 
-double clamp01(double x) { return std::clamp(x, 0.0, 1.0); }
-
 binder::HeightLabel to_height_label(int panel_id) {
   return (clamp_panel(panel_id) % 2 == 0) ? binder::HeightLabel::LOWER
                                            : binder::HeightLabel::UPPER;

@@ -1,26 +1,25 @@
 #include "buff_detector_node.hpp"
 
 #include <algorithm>
-#include <vector>
 #include <limits>
 #include <utility>
+#include <vector>
 
+#include "ament_index_cpp/get_package_share_directory.hpp"
 #include "cv_bridge/cv_bridge.h"
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/imgproc.hpp"
-#include "ament_index_cpp/get_package_share_directory.hpp"
 
-namespace auto_buff
-{
+namespace auto_buff {
 
-namespace
-{
-int quantizeBladeSlot(const RunePoints & pts)
-{
+namespace {
+int quantizeBladeSlot(const RunePoints &pts) {
   const float cx = pts.center.x;
   const float cy = pts.center.y;
-  const float bx = 0.25F * (pts.bottom_right.x + pts.top_right.x + pts.top_left.x + pts.bottom_left.x);
-  const float by = 0.25F * (pts.bottom_right.y + pts.top_right.y + pts.top_left.y + pts.bottom_left.y);
+  const float bx =
+    0.25F * (pts.bottom_right.x + pts.top_right.x + pts.top_left.x + pts.bottom_left.x);
+  const float by =
+    0.25F * (pts.bottom_right.y + pts.top_right.y + pts.top_left.y + pts.bottom_left.y);
   const double angle = std::atan2(static_cast<double>(by - cy), static_cast<double>(bx - cx));
   constexpr double two_pi = 6.28318530717958647692;
   double normalized = std::fmod(angle + two_pi, two_pi);
@@ -32,15 +31,14 @@ int quantizeBladeSlot(const RunePoints & pts)
 }
 }  // namespace
 
-DetectorNode::DetectorNode()
-: Node("buff_detector_node")
-{
-  image_topic_ = declare_parameter<std::string>("image_topic", "/image_raw");
-  rune_topic_ = declare_parameter<std::string>("rune_topic", "/rune_target");
-  runes_topic_ = declare_parameter<std::string>("runes_topic", "/rune_targets");
-  result_img_topic_ = declare_parameter<std::string>("result_img_topic", "/auto_buff/debug/result_img");
+DetectorNode::DetectorNode() : Node("buff_detector_node") {
+  image_topic_ = declare_parameter<std::string>("image_topic", "image_raw");
+  rune_topic_ = declare_parameter<std::string>("rune_topic", "rune_target");
+  runes_topic_ = declare_parameter<std::string>("runes_topic", "rune_targets");
+  result_img_topic_ =
+    declare_parameter<std::string>("result_img_topic", "auto_buff/debug/result_img");
   result_img_compressed_topic_ = declare_parameter<std::string>(
-    "result_img_compressed_topic", "/auto_buff/debug/result_img/compressed");
+    "result_img_compressed_topic", "auto_buff/debug/result_img/compressed");
   is_big_rune_ = declare_parameter<bool>("is_big_rune", true);
   mode_managed_ = declare_parameter<bool>("mode_managed", true);
   debug_view_ = declare_parameter<bool>("debug_view", false);
@@ -75,24 +73,24 @@ DetectorNode::DetectorNode()
   params.merge_min_iou = static_cast<float>(merge_min_iou);
   yolo_ = std::make_unique<YOLO>(params);
 
-  rune_pub_ = create_publisher<rm_interfaces::msg::RuneTarget>(rune_topic_, rclcpp::SensorDataQoS());
+  rune_pub_ =
+    create_publisher<rm_interfaces::msg::RuneTarget>(rune_topic_, rclcpp::SensorDataQoS());
   runes_pub_ =
     create_publisher<rm_interfaces::msg::RuneTargetArray>(runes_topic_, rclcpp::SensorDataQoS());
   const auto debug_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
-  result_img_pub_ =
-    create_publisher<sensor_msgs::msg::Image>(result_img_topic_, debug_qos);
-  result_img_compressed_pub_ = create_publisher<sensor_msgs::msg::CompressedImage>(
-    result_img_compressed_topic_, debug_qos);
+  result_img_pub_ = create_publisher<sensor_msgs::msg::Image>(result_img_topic_, debug_qos);
+  result_img_compressed_pub_ =
+    create_publisher<sensor_msgs::msg::CompressedImage>(result_img_compressed_topic_, debug_qos);
   image_sub_ = create_subscription<sensor_msgs::msg::Image>(
-    image_topic_, rclcpp::SensorDataQoS(),
+    image_topic_,
+    rclcpp::SensorDataQoS(),
     std::bind(&DetectorNode::imageCallback, this, std::placeholders::_1));
   set_mode_srv_ = create_service<rm_interfaces::srv::SetMode>(
     "~/set_mode",
     std::bind(&DetectorNode::onSetMode, this, std::placeholders::_1, std::placeholders::_2));
 }
 
-void DetectorNode::imageCallback(const sensor_msgs::msg::Image::SharedPtr msg)
-{
+void DetectorNode::imageCallback(const sensor_msgs::msg::Image::SharedPtr msg) {
   if (!msg) {
     return;
   }
@@ -102,11 +100,11 @@ void DetectorNode::imageCallback(const sensor_msgs::msg::Image::SharedPtr msg)
   cv_bridge::CvImageConstPtr cv_ptr;
   try {
     cv_ptr = cv_bridge::toCvShare(msg, "bgr8");
-  } catch (const std::exception & e) {
+  } catch (const std::exception &e) {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "cv_bridge failed: %s", e.what());
     return;
   }
-  const cv::Mat & bgr = cv_ptr->image;
+  const cv::Mat &bgr = cv_ptr->image;
   if (bgr.empty()) {
     return;
   }
@@ -126,7 +124,7 @@ void DetectorNode::imageCallback(const sensor_msgs::msg::Image::SharedPtr msg)
   auto request = yolo_->requestInfer(input_tensor);
   request.infer();
   auto runes = yolo_->postProcess(request.get_output_tensor());
-  for (const auto & rune : runes) {
+  for (const auto &rune : runes) {
     if (rune.prob < min_confidence_) {
       continue;
     }
@@ -134,41 +132,50 @@ void DetectorNode::imageCallback(const sensor_msgs::msg::Image::SharedPtr msg)
     t.header = msg->header;
     t.is_big_rune = is_big_rune_;
     t.is_lost = false;
-    t.blade_type =
-      (rune.type == BuffBladeType::Inactivated)
-      ? rm_interfaces::msg::RuneTarget::BLADE_INACTIVATED
-      : rm_interfaces::msg::RuneTarget::BLADE_ACTIVATED;
+    t.blade_type = (rune.type == BuffBladeType::Inactivated)
+                     ? rm_interfaces::msg::RuneTarget::BLADE_INACTIVATED
+                     : rm_interfaces::msg::RuneTarget::BLADE_ACTIVATED;
     t.blade_slot_hint = quantizeBladeSlot(rune.points);
     t.confidence = rune.prob;
     t.track_id = static_cast<uint32_t>(out_array.targets.size() + 1u);
-    t.pts[0].x = rune.points.center.x; t.pts[0].y = rune.points.center.y;
-    t.pts[1].x = rune.points.bottom_right.x; t.pts[1].y = rune.points.bottom_right.y;
-    t.pts[2].x = rune.points.top_right.x; t.pts[2].y = rune.points.top_right.y;
-    t.pts[3].x = rune.points.top_left.x; t.pts[3].y = rune.points.top_left.y;
-    t.pts[4].x = rune.points.bottom_left.x; t.pts[4].y = rune.points.bottom_left.y;
+    t.pts[0].x = rune.points.center.x;
+    t.pts[0].y = rune.points.center.y;
+    t.pts[1].x = rune.points.bottom_right.x;
+    t.pts[1].y = rune.points.bottom_right.y;
+    t.pts[2].x = rune.points.top_right.x;
+    t.pts[2].y = rune.points.top_right.y;
+    t.pts[3].x = rune.points.top_left.x;
+    t.pts[3].y = rune.points.top_left.y;
+    t.pts[4].x = rune.points.bottom_left.x;
+    t.pts[4].y = rune.points.bottom_left.y;
     out_array.targets.push_back(t);
   }
   runes_pub_->publish(out_array);
 
   if (!runes.empty()) {
-    const auto best_it = std::max_element(
-      runes.begin(), runes.end(),
-      [](const RuneObject & a, const RuneObject & b) {return a.prob < b.prob;});
+    const auto best_it =
+      std::max_element(runes.begin(), runes.end(), [](const RuneObject &a, const RuneObject &b) {
+        return a.prob < b.prob;
+      });
     if (best_it != runes.end() && best_it->prob >= min_confidence_) {
-      const auto & pts = best_it->points;
+      const auto &pts = best_it->points;
       out.is_lost = false;
-      out.blade_type =
-        (best_it->type == BuffBladeType::Inactivated)
-        ? rm_interfaces::msg::RuneTarget::BLADE_INACTIVATED
-        : rm_interfaces::msg::RuneTarget::BLADE_ACTIVATED;
+      out.blade_type = (best_it->type == BuffBladeType::Inactivated)
+                         ? rm_interfaces::msg::RuneTarget::BLADE_INACTIVATED
+                         : rm_interfaces::msg::RuneTarget::BLADE_ACTIVATED;
       out.blade_slot_hint = quantizeBladeSlot(best_it->points);
       out.confidence = best_it->prob;
       out.track_id = 1u;
-      out.pts[0].x = pts.center.x; out.pts[0].y = pts.center.y;
-      out.pts[1].x = pts.bottom_right.x; out.pts[1].y = pts.bottom_right.y;
-      out.pts[2].x = pts.top_right.x; out.pts[2].y = pts.top_right.y;
-      out.pts[3].x = pts.top_left.x; out.pts[3].y = pts.top_left.y;
-      out.pts[4].x = pts.bottom_left.x; out.pts[4].y = pts.bottom_left.y;
+      out.pts[0].x = pts.center.x;
+      out.pts[0].y = pts.center.y;
+      out.pts[1].x = pts.bottom_right.x;
+      out.pts[1].y = pts.bottom_right.y;
+      out.pts[2].x = pts.top_right.x;
+      out.pts[2].y = pts.top_right.y;
+      out.pts[3].x = pts.top_left.x;
+      out.pts[3].y = pts.top_left.y;
+      out.pts[4].x = pts.bottom_left.x;
+      out.pts[4].y = pts.bottom_left.y;
     }
   }
 
@@ -178,7 +185,7 @@ void DetectorNode::imageCallback(const sensor_msgs::msg::Image::SharedPtr msg)
   }
   if (debug_view_) {
     for (size_t i = 0; i < out_array.targets.size(); ++i) {
-      const auto & t = out_array.targets[i];
+      const auto &t = out_array.targets[i];
       std::vector<cv::Point> poly = {
         cv::Point(static_cast<int>(t.pts[1].x), static_cast<int>(t.pts[1].y)),
         cv::Point(static_cast<int>(t.pts[2].x), static_cast<int>(t.pts[2].y)),
@@ -187,13 +194,14 @@ void DetectorNode::imageCallback(const sensor_msgs::msg::Image::SharedPtr msg)
       const cv::Scalar c = (i == 0) ? cv::Scalar(0, 255, 255) : cv::Scalar(255, 0, 0);
       cv::polylines(dbg, poly, true, c, 2);
       cv::circle(
-        dbg, cv::Point(static_cast<int>(t.pts[0].x), static_cast<int>(t.pts[0].y)), 4,
-        c, -1);
+        dbg, cv::Point(static_cast<int>(t.pts[0].x), static_cast<int>(t.pts[0].y)), 4, c, -1);
     }
     if (!out.is_lost) {
-      cv::circle(
-        dbg, cv::Point(static_cast<int>(out.pts[0].x), static_cast<int>(out.pts[0].y)), 6,
-        cv::Scalar(0, 0, 255), 2);
+      cv::circle(dbg,
+                 cv::Point(static_cast<int>(out.pts[0].x), static_cast<int>(out.pts[0].y)),
+                 6,
+                 cv::Scalar(0, 0, 255),
+                 2);
     }
   }
 
@@ -213,10 +221,8 @@ void DetectorNode::imageCallback(const sensor_msgs::msg::Image::SharedPtr msg)
   rune_pub_->publish(out);
 }
 
-void DetectorNode::onSetMode(
-  const std::shared_ptr<rm_interfaces::srv::SetMode::Request> request,
-  std::shared_ptr<rm_interfaces::srv::SetMode::Response> response)
-{
+void DetectorNode::onSetMode(const std::shared_ptr<rm_interfaces::srv::SetMode::Request> request,
+                             std::shared_ptr<rm_interfaces::srv::SetMode::Response> response) {
   response->success = true;
   if (!request) {
     response->success = false;
@@ -231,14 +237,12 @@ void DetectorNode::onSetMode(
     return;
   }
 
-  if (mode == 2 || mode == 3)
-  {
+  if (mode == 2 || mode == 3) {
     is_big_rune_ = false;
     response->message = "switched to small rune";
     return;
   }
-  if (mode == 4 || mode == 5)
-  {
+  if (mode == 4 || mode == 5) {
     is_big_rune_ = true;
     response->message = "switched to big rune";
     return;
@@ -248,8 +252,7 @@ void DetectorNode::onSetMode(
 
 }  // namespace auto_buff
 
-int main(int argc, char ** argv)
-{
+int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
   rclcpp::spin(std::make_shared<auto_buff::DetectorNode>());
   rclcpp::shutdown();

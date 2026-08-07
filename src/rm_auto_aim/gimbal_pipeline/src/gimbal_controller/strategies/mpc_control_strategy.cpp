@@ -602,7 +602,6 @@ rm_interfaces::msg::GimbalCmd MpcControlStrategy::solve(
   //           << context.target_robot.yaw_velocity << " rad/s." << std::endl;
 
   if (!context.is_tracking && !context.is_temp_lost) {
-    std::cout << "Target not in tracking/temp_lost state, skipping MPC control.  " << std::endl;
     markDelayAuditInvalid(getName(), false);
     has_prev_state_ = false;
     U_prev_.resize(0);
